@@ -50,6 +50,7 @@ source = ["educelab.devices"]
 branch = true
 
 [tool.mypy]
+python_version = "3.11"
 files = ["src", "tests"]
 mypy_path = ["src", "tests"]
 explicit_package_bases = true

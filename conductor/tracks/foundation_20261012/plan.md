@@ -57,7 +57,7 @@ Tooling first, then the `Device` base and value types, then the role ABCs (with 
 
 - [x] Task 4.1: Write contract test classes per role in `tests/contracts/`, parameterized by a device factory fixture.
 - [x] Task 4.2: Implement `SimulatedLight`, `SimulatedHub`, `SimulatedFocusDrive`; pass contracts.
-- [ ] Task 4.3: Implement `SimulatedStage` (configurable axes, simulated move duration, optional homing requirement, interruptible by `stop()`); pass contracts.
+- [x] Task 4.3: Implement `SimulatedStage` (configurable axes, simulated move duration, optional homing requirement, interruptible by `stop()`); pass contracts.
 - [ ] Task 4.4: Implement `SimulatedCamera` (synthetic frames, exposure/gain/pixel_format settings) and `SimulatedFileCamera`; pass contracts.
 
 ### Verification

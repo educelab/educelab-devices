@@ -15,6 +15,7 @@ from educelab.devices.cameras.base import (
     Setting,
     SettingValue,
 )
+from educelab.devices.cameras.focus import FocusDrive, FocusLimit
 
 __all__ = [
     "APERTURE",
@@ -26,6 +27,8 @@ __all__ = [
     "Camera",
     "CameraFile",
     "FileCamera",
+    "FocusDrive",
+    "FocusLimit",
     "Frame",
     "FrameCamera",
     "Setting",

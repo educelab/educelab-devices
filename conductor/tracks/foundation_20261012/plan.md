@@ -77,14 +77,15 @@ Tooling first, then the `Device` base and value types, then the role ABCs (with 
 
 ### Verification
 
-- [ ] `el-devices --help`, `el-devices discover`, and `el-devices simulate` work in a fresh venv with no extras installed.
+- [x] `el-devices --help`, `el-devices discover`, and `el-devices simulate` work in a fresh venv with no extras installed.
+  - Checked with non-editable installs in fresh Python 3.11, 3.12, and 3.13 venvs; only numpy was installed. `python -m educelab.devices` works too.
 
 ## Final Verification
 
-- [ ] All acceptance criteria met
-- [ ] Tests passing on the full CI matrix
-- [ ] Documentation updated
-- [ ] Ready for review
+- [x] All acceptance criteria met
+- [ ] Tests passing on the full CI matrix (not run: branch not pushed. Locally, 259 tests pass on macOS with Python 3.11–3.14, and mypy is clean)
+- [x] Documentation updated
+- [~] Ready for review: approval gates outstanding, see approvals.md
 
 ---
 

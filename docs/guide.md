@@ -36,8 +36,8 @@ remembers only what it learned since `open()`. Most of what follows comes from t
 ```python
 from educelab.devices.lights import SimulatedLight
 
-light = SimulatedLight()     # stores configuration; no I/O
-light.open()                 # connects
+light = SimulatedLight()  # stores configuration; no I/O
+light.open()  # connects
 try:
     light.set_level("uv", 0.5)
 finally:
@@ -142,9 +142,11 @@ these to listeners:
 ```python
 from educelab.devices import Disconnected
 
+
 def on_event(event):
     if isinstance(event, Disconnected):
         print(f"{event.device!r} lost its connection: {event.reason}")
+
 
 device.add_listener(on_event)
 ```
@@ -164,6 +166,7 @@ protocol traffic is at `DEBUG`. Devices never `print`. To see traffic:
 
 ```python
 import logging
+
 logging.getLogger("educelab.devices").setLevel(logging.DEBUG)
 ```
 

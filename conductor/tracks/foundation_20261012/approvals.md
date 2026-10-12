@@ -7,6 +7,19 @@ The maintainer was away while this track ran, so phase checkpoints and approval 
 Later phases build on the unapproved earlier ones, so a change requested in an early item
 may ripple forward. Each item names where to look.
 
+## Do first
+
+0. **Commit the staged changes.** Commit signing (SSH through 1Password) started failing
+   near the end with `1Password: failed to fill whole buffer`, probably because 1Password
+   needed an unlock or approval while you were away. I didn't bypass signing. The
+   remaining changes are staged in the working tree:
+   `git commit -m "Finish foundation track bookkeeping"`. They include untracking
+   `.coverage`, which my first commit picked up by accident (squash-merge drops it), and
+   ruff formatting of the guide's code blocks, without which CI's format check would
+   fail.
+   - The earlier commits on the branch show `%G?` = `N`. They were created with the same
+     signing config, so check they're signed the way you expect.
+
 ## Phase checkpoints
 
 1. **Phase 1, tooling.** `pytest`, `ruff check .`, `ruff format --check .`, and `mypy` pass
@@ -130,4 +143,52 @@ may ripple forward. Each item names where to look.
      `power_cycle_off_time = 1.0` (a convention, not measured). Hooks `_set_power()`,
      `_is_powered()`.
 
+5. **Phase 5, CLI and docs.** `src/educelab/devices/app/`, `docs/guide.md`,
+   `docs/hardware/README.md`, `README.md`. The CLI works in fresh 3.11, 3.12, and 3.13
+   venvs with no extras.
+   - Subcommands are modules in `app/` listed in `cli.SUBCOMMANDS`, each with
+     `register(subparsers)`. Backends for `discover` are listed in
+     `app/discover.BACKENDS` as `(name, module, class name)` strings. It's empty until
+     the first driver lands, so `el-devices discover` prints "No devices found."
+   - `discover` reports a backend that is missing its SDK, or that raises a
+     `DeviceError`, as one line and moves on. The exit status is 0.
+   - `main()` turns an uncaught `DeviceError` into a one-line message with exit code 1,
+     and Ctrl-C into 130.
+   - The README extras table lists every planned extra, but none are declared in
+     `pyproject.toml` yet; each driver track adds its own. **Question:** declare the
+     extras up front instead?
+   - `docs/hardware/README.md` has an index of planned models, **verified / assumed /
+     unknown** markers (matching the Foldio `PROTOCOL.md`), the generalising rule, and a
+     standard set of sections. Please check the model list and names.
+6. **Track completion.** All 22 tasks are done, but I left the track `[~]` in
+   `tracks.md` and `in_progress` in `metadata.json` until the gates above are approved
+   and CI is green. Once they are, conductor's completion steps remain: mark the track
+   complete, offer a doc sync of `product.md` and `tech-stack.md` (I didn't touch them;
+   nothing in them is contradicted), and archive or keep the track.
+7. **Push and PR.** Not done. Per workflow.md, it's one PR for the track, opened when
+   you ask.
+
 ## Decisions and deviations
+
+- **Tests were written alongside each ABC** (Tasks 3.1–3.4) instead of all in Task 3.5.
+  Task 3.5 added a test that one device can offer several roles (Stage + Light). Noted
+  in plan.md.
+- **`DeviceInfo` landed in Task 2.2**, not 2.4, because the lifecycle tests needed it.
+- **Role state lives in class-attribute defaults** (`_homed`, `_focus_steps`), not role
+  `__init__`s, so multi-role devices need no init coordination. `_reset_state()`
+  chains through `super()`.
+- **Additions not named in the spec:** `synchronized`, `Listener`, `DeviceEvent` and
+  `Disconnected`, `CANONICAL_UNITS` and the canonical setting constants,
+  `Setting.validate()`, `Axis.check()`, `Axis.unit`, `Stage.move_timeout`,
+  `Hub.power_cycle_off_time`, `FocusDrive.last_limit`, `ChannelKind`, the `RGB` alias,
+  and `SimulatedLight.levels`.
+- **Tooling additions:** pytest `pythonpath = ["tests"]`; mypy `python_version = "3.11"`
+  and `mypy_path = ["src", "tests"]`; `.coverage` added to `.gitignore`; a mypy step in
+  CI's lint job with `continue-on-error: true`. CI actions were already on `@v7`, so
+  there was nothing deprecated to update.
+- **`CLAUDE.md`** gained a mention of the advisory mypy step and the contract suite. I
+  didn't change `CONTEXT.md` (that needs approval). Terms you might want to add to it:
+  *contract suite*, *event/listener*, *focus limit*.
+- **mypy notes:** test functions without annotations produce `annotation-unchecked`
+  notes, which are noise rather than errors. Setting `check_untyped_defs = true` would
+  check them instead.

@@ -4,16 +4,42 @@
   "type": "feature",
   "status": "in_progress",
   "created": "2026-10-12T00:00:00Z",
-  "updated": "2026-10-12T12:00:00Z",
+  "updated": "2026-10-12T18:00:00Z",
   "phases": {
     "total": 5,
-    "completed": 0
+    "completed": 5
   },
   "tasks": {
     "total": 22,
-    "completed": 0
+    "completed": 22
   },
-  "current_phase": 1,
-  "current_task": "1.1",
-  "commits": []
+  "current_phase": 5,
+  "current_task": null,
+  "commits": [
+    "b135093: Add numpy, coverage, mypy, and the hardware test marker",
+    "196f247: Run mypy in CI as an advisory check",
+    "62bade6: Add role subpackages and errors module skeleton",
+    "e34f77d: Add the DeviceError hierarchy and import_optional helper",
+    "9e7911d: Add the Device base with its open/close lifecycle",
+    "1da950a: Add device events and listeners",
+    "ed1d1cc: Pin the discover() convention in tests",
+    "89dcfe6: Add the Camera roles, Setting, Frame, and CameraFile",
+    "f23a0e9: Add the Light role and Channel",
+    "332482c: Add the Stage role and Axis",
+    "891a585: Add the Hub and FocusDrive roles",
+    "87f7726: Test that one device can offer several roles",
+    "bc30f4a: Record Phase 3 approval items",
+    "3d637b2: Add the shared contract test suite",
+    "72d17a2: Add simulated light, hub, and focus drive",
+    "b83e91b: Add a simulated stage",
+    "dfbb5f7: Add simulated frame and file cameras",
+    "ba2ddd2: Close contract gaps found by mutation spot-check",
+    "c23722c: Record Phase 4 checkpoint",
+    "e1fbb38: Add the el-devices entry point",
+    "5849a9e: Add el-devices discover and simulate",
+    "8e13b5b: Write the device usage guide",
+    "b7cf7c7: Define hardware doc conventions",
+    "be0e1c7: Document install, extras, and CLI usage in the README"
+  ],
+  "notes": "All tasks done; waiting on maintainer approval gates (approvals.md) and CI."
 }

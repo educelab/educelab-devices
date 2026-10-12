@@ -1,0 +1,90 @@
+{
+  "status": "complete",
+  "project_type": "brownfield",
+  "current_section": null,
+  "current_question": null,
+  "completed_sections": [
+    "product",
+    "guidelines",
+    "tech_stack",
+    "workflow",
+    "styleguides"
+  ],
+  "answers": {
+    "product": {
+      "project_name": "educelab-devices (educelab.devices)",
+      "description": "Python APIs for EduceLab imaging hardware (cameras, lights, stages, USB hubs); the basis for all hardware-interfacing projects in the lab",
+      "problem": "Device code is duplicated per project and coupled to each project's framework (Qt in pgs-scan, tkinter threads in the spectral prototype); copies drift, carry their own bugs (#71, #83, #84, #90), and hardware knowledge is scattered or lost",
+      "target_users": "Primary: lab developers building acquisition applications (pgs-scan now, future rigs). Secondary: rig operators running el-devices hardware checks",
+      "key_goals": [
+        "One blocking, framework-free API per hardware type that any consumer can wrap",
+        "Port spectral devices first (MISHA, Foldio360, gphoto2 + focus), then pgs-scan dev devices (XLC, X-Carve, Spinnaker), then the Acroname hub",
+        "Simulated devices and a shared contract test suite for hardware-free development",
+        "Hardware reference docs capturing everything known, published with API docs on GitHub Pages",
+        "pgs-scan migrated as the first full consumer"
+      ],
+      "source": "inferred from the 2026-10-12 design session (CONTEXT.md, docs/adr/); confirmed by maintainer"
+    },
+    "guidelines": {
+      "voice_and_tone": "Precise, technical, evidence-first; explicit about uncertainty (verified/assumed/unknown)",
+      "design_principles": [
+        "Framework-free and blocking (ADR 0001)",
+        "Fail loudly, never hang",
+        "Report what the hardware did, not what we wished (ADR 0002, ADR 0003)",
+        "Write down what the hardware actually does",
+        "Minimal dependencies"
+      ],
+      "source": "inferred from design session and flex-recon conventions; confirmed by maintainer"
+    },
+    "tech_stack": {
+      "languages": [
+        "Python >=3.11 (CI: 3.11-3.14 on ubuntu/macos/windows); Spinnaker driver 3.12 only"
+      ],
+      "packaging": "setuptools, PEP 621 pyproject.toml, educelab namespace package; pip and uv both supported, nothing may require uv",
+      "frontend": "none (library + single el-devices argparse CLI)",
+      "backend": "none",
+      "database": "none; library persists nothing (CameraFile.save() is the only writer)",
+      "core_dependencies": [
+        "numpy"
+      ],
+      "optional_extras": {
+        "gphoto2": "gphoto2 (sys_platform != 'win32') + Pillow",
+        "foldio360": "bleak",
+        "serial": "pyserial",
+        "acroname": "brainstem",
+        "all": "all of the above",
+        "spinnaker": "PySpin not on PyPI; manual install from Spinnaker SDK, no extra"
+      },
+      "dev_tooling": "pytest (hardware marker), ruff check + format, pytest-cov (reported, no threshold), mypy (advisory)",
+      "docs_tooling": "MkDocs Material + mkdocstrings in a docs dependency group",
+      "infrastructure": "GitHub Actions CI (pip), docs deployed to GitHub Pages; consumers install from git tags, 0.x semver, PyPI later",
+      "source": "detected from pyproject.toml and .github/workflows/tests.yml plus design session; confirmed by maintainer"
+    },
+    "workflow": {
+      "tdd_strictness": "moderate; fake-transport protocol tests and shared contract tests (real + simulated) required for every driver; hardware-marked tests written but non-blocking",
+      "commit_strategy": "descriptive imperative subjects, no Conventional Commits prefix",
+      "code_review": "at most one PR per track (squash-merged to main); never a PR per task or phase; small doc/glossary fixes commit directly to main. Maintainer dislikes PR-heavy workflows",
+      "verification_checkpoints": "after each phase; maintainer approval for role ABC signature, CONTEXT.md glossary, and ADR changes; driver tracks end with a manual el-devices hardware check",
+      "source": "adapted from flex-recon/pgs-scan defaults; confirmed by maintainer"
+    },
+    "styleguides": {
+      "languages_included": [
+        "general",
+        "python"
+      ],
+      "existing_configs_incorporated": "pyproject.toml [tool.ruff] (src) and [tool.ruff.lint] extend-select I, UP, B; ruff defaults otherwise. Adapted from flex-recon's guides, condensed, plus user CLAUDE.md comment/docstring rules"
+    }
+  },
+  "files_created": [
+    "conductor/index.md",
+    "conductor/product.md",
+    "conductor/product-guidelines.md",
+    "conductor/tech-stack.md",
+    "conductor/workflow.md",
+    "conductor/tracks.md",
+    "conductor/code_styleguides/general.md",
+    "conductor/code_styleguides/python.md"
+  ],
+  "started_at": "2026-10-12T00:00:00Z",
+  "last_updated": "2026-10-12T00:00:00Z"
+}

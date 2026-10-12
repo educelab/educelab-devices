@@ -39,6 +39,27 @@ may ripple forward. Each item names where to look.
      → `KeyError`, bad value → `ValueError`. Stage targets out of limits are the one
      exception and raise `PositionError`, as the spec requires.
 
+4. **Phase 4, contracts and simulated devices.** `tests/contracts/` plus the simulated
+   devices in each role subpackage (`*/simulated.py`). Review:
+   - How the contracts are wired. Driver tests subclass e.g. `LightContract` and override
+     the `make_device` fixture. `pythonpath = ["tests"]` (pytest) and
+     `mypy_path = ["src", "tests"]` make `contracts` importable. `tests/contracts/` is the
+     one directory under `tests/` with an `__init__.py`.
+   - The stage contract's stop test grabs `device._lock` from another thread to stand in
+     for a running move, so it reaches into a private attribute.
+   - Simulated device behaviour worth knowing:
+     - `SimulatedStage`: moves take distance/speed seconds and update position as they
+       go. Moving while jogging raises `DeviceBusy`. Homing drives every axis to its
+       minimum (or 0).
+     - `SimulatedCamera` and `SimulatedFileCamera`: captures sleep for `exposure_time`.
+       ISO is mapped onto gain for brightness (ISO 100 = 0 dB).
+     - `SimulatedFocusDrive`: the hidden lens position survives reopen, but the counter
+       doesn't.
+   - The timing-based stage tests passed 20 of 20 runs locally. They use lower bounds or
+     wide margins, but slow CI runners are the risk to watch.
+   - mypy now targets Python 3.11 (`python_version = "3.11"`) after I twice wrote PEP 695
+     generics that 3.11 can't parse.
+
 ## Approval gates
 
 3. **Role ABC signatures (Phase 3 gate; workflow.md requires approval).** Phase 4 and 5

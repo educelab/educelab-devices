@@ -29,11 +29,12 @@ Tooling first, then the `Device` base and value types, then the role ABCs (with 
 - [x] Task 2.1: Write tests for the `DeviceError` hierarchy and the missing-extra `ImportError` helper; implement.
 - [x] Task 2.2: Write tests for `Device` lifecycle (no I/O in constructor, open/close idempotence, context manager, `NotConnected` when closed); implement.
 - [x] Task 2.3: Write tests for locking (concurrent calls serialize) and listeners (add/remove, events delivered, listener exceptions logged not raised); implement.
-- [ ] Task 2.4: Implement `DeviceInfo` and the `discover()` classmethod convention.
+- [x] Task 2.4: Implement `DeviceInfo` and the `discover()` classmethod convention.
+  - Deviation: `DeviceInfo` landed with Task 2.2 because the lifecycle tests needed `info`.
 
 ### Verification
 
-- [ ] Base tests pass; maintainer reviews the `Device` base API.
+- [~] Base tests pass; maintainer reviews the `Device` base API. (Tests pass; review pending, see approvals.md.)
 
 ## Phase 3: Role ABCs
 

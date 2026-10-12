@@ -118,3 +118,21 @@ def test_device_info_is_frozen():
 
 def test_discover_defaults_to_empty_list():
     assert Recorder.discover() == []
+
+
+def test_device_info_optional_fields_default_to_none():
+    info = DeviceInfo(backend="test", model="Recorder")
+    assert info.address is None
+    assert info.serial_number is None
+    assert info.firmware_version is None
+
+
+def test_drivers_override_discover_as_a_classmethod():
+    class Enumerating(Recorder):
+        @classmethod
+        def discover(cls) -> list[DeviceInfo]:
+            return [DeviceInfo(backend="test", model="Recorder", address="COM3")]
+
+    found = Enumerating.discover()
+    assert [info.address for info in found] == ["COM3"]
+    assert Enumerating().calls == []

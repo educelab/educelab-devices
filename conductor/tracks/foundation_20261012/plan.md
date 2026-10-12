@@ -73,7 +73,7 @@ Tooling first, then the `Device` base and value types, then the role ABCs (with 
 - [x] Task 5.2: `el-devices discover` and `el-devices simulate`; tests via `capsys`.
 - [x] Task 5.3: Write `docs/guide.md` (device contract, adapting the generic parts of the Foldio360 `CLIENT_GUIDE.md`).
 - [x] Task 5.4: Write `docs/hardware/README.md` (conventions, verified/assumed/unknown markers, generalising rule, index).
-- [ ] Task 5.5: Update `README.md` with install, extras table, and CLI usage.
+- [x] Task 5.5: Update `README.md` with install, extras table, and CLI usage.
 
 ### Verification
 

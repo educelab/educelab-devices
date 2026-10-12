@@ -7,11 +7,18 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Concatenate, ParamSpec, Self, TypeVar
+from typing import Concatenate, ParamSpec, Protocol, Self, TypeVar
 
 from educelab.devices.errors import NotConnected
 
-__all__ = ["Device", "DeviceInfo", "synchronized"]
+__all__ = [
+    "Device",
+    "DeviceEvent",
+    "DeviceInfo",
+    "Disconnected",
+    "Listener",
+    "synchronized",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +48,30 @@ class DeviceInfo:
     firmware_version: str | None = None
 
 
+@dataclass(frozen=True, eq=False)
+class DeviceEvent:
+    """Something a device reports on its own, outside any method call.
+
+    Roles and drivers subclass this for specific events; listeners can
+    dispatch on the type.
+    """
+
+    device: "Device"
+
+
+@dataclass(frozen=True, eq=False)
+class Disconnected(DeviceEvent):
+    """The device's connection was lost without `close()` being called."""
+
+    reason: str
+
+
+class Listener(Protocol):
+    """Callback that receives a device's events."""
+
+    def __call__(self, event: DeviceEvent, /) -> None: ...
+
+
 class Device(ABC):
     """Base class for every device.
 
@@ -51,6 +82,10 @@ class Device(ABC):
     Public methods are blocking and thread-safe: each takes the device's
     reentrant lock, so calls from different threads run one at a time.
 
+    Events the device produces on its own (e.g. a lost connection) go to
+    listeners registered with `add_listener()`. Listeners may be called from a
+    driver's internal thread, so they should return quickly.
+
     Drivers implement `_open()`, `_close()`, and `info`, plus the hooks of the
     roles they offer.
     """
@@ -58,6 +93,9 @@ class Device(ABC):
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._is_open = False
+        # Separate from _lock so events can be delivered while a call is running.
+        self._listeners_lock = threading.Lock()
+        self._listeners: list[Listener] = []
 
     @property
     @abstractmethod
@@ -105,6 +143,21 @@ class Device(ABC):
                 self._is_open = False
                 self._reset_state()
 
+    def add_listener(self, listener: Listener) -> None:
+        """Call ``listener`` with each event this device reports.
+
+        Adding the same listener twice has no effect.
+        """
+        with self._listeners_lock:
+            if listener not in self._listeners:
+                self._listeners.append(listener)
+
+    def remove_listener(self, listener: Listener) -> None:
+        """Stop calling ``listener``. Does nothing if it was never added."""
+        with self._listeners_lock:
+            if listener in self._listeners:
+                self._listeners.remove(listener)
+
     def __enter__(self) -> Self:
         self.open()
         return self
@@ -134,6 +187,16 @@ class Device(ABC):
         Roles that track such state override this and call ``super()``.
         """
         return
+
+    def _emit(self, event: DeviceEvent) -> None:
+        """Deliver ``event`` to every listener, logging any listener's exception."""
+        with self._listeners_lock:
+            listeners = list(self._listeners)
+        for listener in listeners:
+            try:
+                listener(event)
+            except Exception:
+                logger.exception("%r listener %r failed on %r", self, listener, event)
 
     def _require_open(self) -> None:
         if not self._is_open:

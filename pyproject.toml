@@ -51,7 +51,7 @@ branch = true
 
 [tool.mypy]
 files = ["src", "tests"]
-mypy_path = "src"
+mypy_path = ["src", "tests"]
 explicit_package_bases = true
 
 [tool.ruff]

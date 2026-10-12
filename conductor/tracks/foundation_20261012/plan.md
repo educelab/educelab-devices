@@ -70,7 +70,7 @@ Tooling first, then the `Device` base and value types, then the role ABCs (with 
 ### Tasks
 
 - [x] Task 5.1: `el-devices` entry point in `educelab/devices/app/` with subcommand registration and lazy backend imports; `python -m educelab.devices` runs it.
-- [ ] Task 5.2: `el-devices discover` and `el-devices simulate`; tests via `capsys`.
+- [x] Task 5.2: `el-devices discover` and `el-devices simulate`; tests via `capsys`.
 - [ ] Task 5.3: Write `docs/guide.md` (device contract, adapting the generic parts of the Foldio360 `CLIENT_GUIDE.md`).
 - [ ] Task 5.4: Write `docs/hardware/README.md` (conventions, verified/assumed/unknown markers, generalising rule, index).
 - [ ] Task 5.5: Update `README.md` with install, extras table, and CLI usage.

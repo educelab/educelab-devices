@@ -1,6 +1,6 @@
 from importlib.metadata import PackageNotFoundError, version
 
 try:
-    __version__ = version("educelab-module")
+    __version__ = version("educelab-devices")
 except PackageNotFoundError:
     __version__ = "0.0.0"

@@ -3,11 +3,11 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "educelab-module"
+name = "educelab-devices"
 version = "0.1.0"
-description = "Module description"
+description = "Python APIs for EduceLab imaging hardware"
 readme = "README.md"
-authors = [{ name = "First Last", email = "email@example.com" }]
+authors = [{ name = "Seth Parker", email = "c.seth.parker@uky.edu" }]
 license = "AGPL-3.0-or-later"
 license-files = ["LICENSE", "NOTICE"]
 requires-python = ">=3.11"
@@ -23,11 +23,8 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/educelab/educelab-pymodule"
-Repository = "https://github.com/educelab/educelab-pymodule"
-
-[project.scripts]
-el-hello-world = "educelab.module.app.main:main"
+Homepage = "https://github.com/educelab/educelab-devices"
+Repository = "https://github.com/educelab/educelab-devices"
 
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.6"]

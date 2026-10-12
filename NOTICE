@@ -1,6 +1,6 @@
-educelab-pymodule
-A Python module template
-Copyright (C) 2024 EduceLab
+educelab-devices
+Python APIs for EduceLab imaging hardware
+Copyright (C) 2026 EduceLab
 
 This program is free software: you can redistribute it and/or modify
 it under the terms of the GNU Affero General Public License as published

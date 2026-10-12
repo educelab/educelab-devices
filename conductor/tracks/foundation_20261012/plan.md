@@ -15,7 +15,7 @@ Tooling first, then the `Device` base and value types, then the role ABCs (with 
 
 - [x] Task 1.1: Add numpy to `dependencies`; add pytest-cov and mypy to the `dev` group.
 - [x] Task 1.2: Configure pytest (`hardware` marker, `--strict-markers`, hardware tests deselected by default), `[tool.coverage.run]`, and `[tool.mypy]`.
-- [ ] Task 1.3: Add an advisory mypy step to CI (`continue-on-error: true`).
+- [x] Task 1.3: Add an advisory mypy step to CI (`continue-on-error: true`).
 - [ ] Task 1.4: Create `cameras`, `lights`, `stages`, `hubs` subpackages and an `errors` module skeleton.
 
 ### Verification

@@ -17,6 +17,9 @@ jobs:
       - run: pip install -e . --group dev
       - run: ruff check .
       - run: ruff format --check .
+      - name: mypy (advisory)
+        run: mypy
+        continue-on-error: true
 
   test:
     runs-on: ${{ matrix.os }}

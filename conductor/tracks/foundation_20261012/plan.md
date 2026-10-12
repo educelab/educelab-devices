@@ -44,11 +44,12 @@ Tooling first, then the `Device` base and value types, then the role ABCs (with 
 - [x] Task 3.2: `Channel`, `Light` (level range and channel-ID validation, RGB only on RGB channels).
 - [x] Task 3.3: `Axis`, `Stage` (limit checks, wrap handling, default timeouts, homing guard, `stop()` callable while a move holds the lock).
 - [x] Task 3.4: `Hub` and `FocusDrive`.
-- [ ] Task 3.5: Unit tests for the shared validation in each ABC.
+- [x] Task 3.5: Unit tests for the shared validation in each ABC.
+  - Deviation: each ABC's tests were written with it in Tasks 3.1–3.4 (`tests/test_{cameras,lights,stages,hubs,focus}.py`). This task added `tests/test_multi_role.py`, which checks that one device can offer several roles.
 
 ### Verification
 
-- [ ] **Approval gate:** maintainer approves all role ABC signatures before Phase 4.
+- [~] **Approval gate:** maintainer approves all role ABC signatures before Phase 4. (Pending, see approvals.md; Phase 4 proceeded at the maintainer's request.)
 
 ## Phase 4: Contract suite and simulated devices
 

@@ -42,7 +42,7 @@ Tooling first, then the `Device` base and value types, then the role ABCs (with 
 
 - [x] Task 3.1: `Setting`, `Frame`, `CameraFile` (with overwrite-refusing `save`), `Camera`, `FrameCamera`, `FileCamera`, canonical setting names.
 - [x] Task 3.2: `Channel`, `Light` (level range and channel-ID validation, RGB only on RGB channels).
-- [ ] Task 3.3: `Axis`, `Stage` (limit checks, wrap handling, default timeouts, homing guard, `stop()` callable while a move holds the lock).
+- [x] Task 3.3: `Axis`, `Stage` (limit checks, wrap handling, default timeouts, homing guard, `stop()` callable while a move holds the lock).
 - [ ] Task 3.4: `Hub` and `FocusDrive`.
 - [ ] Task 3.5: Unit tests for the shared validation in each ABC.
 

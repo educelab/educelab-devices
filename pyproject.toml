@@ -22,6 +22,9 @@ classifiers = [
 ]
 dependencies = ["numpy>=1.26"]
 
+[project.scripts]
+el-devices = "educelab.devices.app.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/educelab/educelab-devices"
 Repository = "https://github.com/educelab/educelab-devices"

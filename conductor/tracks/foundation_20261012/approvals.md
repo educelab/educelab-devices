@@ -41,4 +41,72 @@ may ripple forward. Each item names where to look.
 
 ## Approval gates
 
+3. **Role ABC signatures (Phase 3 gate; workflow.md requires approval).** Phase 4 and 5
+   were built on these unapproved, so changes here will touch the simulated devices and
+   contract suite too. Files: `cameras/base.py`, `cameras/focus.py`, `lights/base.py`,
+   `stages/base.py`, `hubs/base.py`.
+
+   Common pattern: the public method is `@synchronized`, validates against what the
+   driver declares, then calls a protected hook.
+
+   **Camera** (`Camera`, `FrameCamera`, `FileCamera`)
+   - `settings() -> dict[str, Setting]`, `setting(name) -> Setting`,
+     `set_setting(name, value)`, `preview_frame() -> NDArray[uint8]`.
+     Hooks: `_settings()`, `_set_setting()`, `_preview_frame()`, optional `_setting()`.
+   - `FrameCamera.capture_frame() -> Frame`; `FileCamera.capture_files() -> list[CameraFile]`.
+   - `Setting(name, value, minimum, maximum, choices, unit, read_only)` with `validate()`.
+     The type comes from `value`; an int is accepted for a float setting; a wrong type
+     raises `TypeError`.
+   - Canonical names are module constants: `EXPOSURE_TIME` (s), `GAIN` (dB), `ISO`,
+     `APERTURE` (f-number), `PIXEL_FORMAT`, with units in `CANONICAL_UNITS`. **Question:**
+     are these the right canonical set? The spec only named `exposure_time`.
+   - `preview_frame()` is typed `uint8` (display-ready). **Question:** OK, or should it
+     allow any dtype?
+   - `Frame(pixels, pixel_format, timestamp: datetime, metadata)`.
+   - `CameraFile(name, data)`, `.suffix`. `save(dest_dir, stem, overwrite=False) -> Path`
+     keeps the camera's extension, opens with `"xb"` (so the refusal is atomic), rejects
+     stems with path separators, and does **not** create `dest_dir`.
+
+   **FocusDrive**
+   - `step(steps: int)` (positive = toward far), `drive_to_limit("near" | "far")`,
+     `focus_steps -> int | None`, `last_limit -> "near" | "far" | None`.
+     Hooks: `_step()`, `_drive_to_limit()`.
+   - A `_step()` that raises `FocusLimitReached(limit)` resets the counter to 0 at that
+     limit. The counter is forgotten on close.
+   - **Question:** I picked positive = far. Is that the Nikon/gphoto2 convention you want?
+
+   **Light**
+   - `channels -> tuple[Channel, ...]` (abstract property), `set_level(id, level)`,
+     `set_color(id, (r, g, b))`, `all_off()`. Hooks: `_set_level(channel, level)`,
+     `_set_color(channel, rgb)`, optional `_all_off()` (the default zeroes each channel).
+   - `Channel(id, kind=ChannelKind.MONO | RGB, wavelength_nm=None)`.
+   - **Decision:** `set_level()` on an RGB channel sets r = g = b = level rather than
+     raising. Hooks receive the `Channel` object, not just the ID.
+   - There is no getter for current levels (not in spec; lab firmware may not report it).
+
+   **Stage**
+   - `axes`, `move_to(targets: Mapping[str, float], timeout=None)`,
+     `move_by(offsets, timeout=None)`, `jog(axis, direction: ±1)`, `stop()`,
+     `position() -> dict[str, float]`, `home(timeout=None)`, `is_homed`,
+     class attributes `move_timeout = 60.0` and `requires_homing = False`.
+   - Moves take a mapping so multi-axis stages (X-Carve) can move axes together.
+   - `stop()` and `position()` **don't take the device lock** (so they work mid-move);
+     their hooks must be thread-safe. An interrupted move raises `PositionError`.
+   - `Axis(name, kind, minimum, maximum, wraps)`, `.unit`, `.check()`. Wrapping axes have
+     no limits, report [0, 360), and `move_to` takes the shorter way round (as the Foldio
+     client does). `move_by` defaults to an absolute move; drivers with native relative
+     moves (Foldio: multi-turn moves taken literally) override `_move_by()`.
+   - `home()` on a stage with `requires_homing = False` raises `NotImplementedError`.
+     **Question:** is that the right error? Also, there's no way to say "can home but
+     doesn't have to" (e.g. GRBL with homing optional).
+   - Speed isn't part of the ABC (the Foldio has speeds 1, 2, 3; GRBL has a feed rate in mm/min).
+     **Question:** leave speed as driver-specific constructor or attribute config?
+   - `jog()` doesn't check limits; the hardware's soft limits apply.
+
+   **Hub**
+   - `ports -> tuple[int, ...]`, `power_on(port)`, `power_off(port)`,
+     `is_powered(port)`, `power_cycle(port, off_time=None)`, class attribute
+     `power_cycle_off_time = 1.0` (a convention, not measured). Hooks `_set_power()`,
+     `_is_powered()`.
+
 ## Decisions and deviations

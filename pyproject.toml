@@ -39,6 +39,8 @@ namespaces = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# Lets driver tests import the shared contract suite as `contracts`.
+pythonpath = ["tests"]
 # Hardware tests are deselected by default; run them with `pytest -m hardware`.
 addopts = ["--import-mode=importlib", "--strict-markers", "-m", "not hardware"]
 markers = ["hardware: needs real hardware attached; never runs in CI"]

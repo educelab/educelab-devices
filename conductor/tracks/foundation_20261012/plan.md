@@ -62,7 +62,8 @@ Tooling first, then the `Device` base and value types, then the role ABCs (with 
 
 ### Verification
 
-- [ ] Every simulated device passes its role's contract suite; mutation spot-check (break one contract rule in a simulated device and confirm the suite fails).
+- [x] Every simulated device passes its role's contract suite; mutation spot-check (break one contract rule in a simulated device and confirm the suite fails).
+  - Three mutations, each reverted: the stage stops wrapping positions, the hub ignores power-off, and the focus drive doesn't raise at its far limit. All three failed tests, but at first two were caught only by tests specific to the simulation. The contracts gained a wrap-crossing check and a stepping-past-a-limit check, and now catch all three.
 
 ## Phase 5: CLI skeleton and docs
 

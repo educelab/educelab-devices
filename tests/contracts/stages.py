@@ -88,6 +88,15 @@ class StageContract(DeviceContract):
             assert device.position()[axis.name] == pytest.approx(
                 10.0, abs=position_tolerance
             )
+            device.move_to({axis.name: 350.0})
+            assert device.position()[axis.name] == pytest.approx(
+                350.0, abs=position_tolerance
+            )
+            device.move_by({axis.name: 20.0})
+            assert 0.0 <= device.position()[axis.name] < 360.0
+            assert device.position()[axis.name] == pytest.approx(
+                10.0, abs=position_tolerance
+            )
 
     def test_unknown_axis_raises_key_error(self, device):
         ready(device)

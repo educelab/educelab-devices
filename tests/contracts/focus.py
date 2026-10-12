@@ -1,7 +1,7 @@
 import pytest
 
 from contracts.device import DeviceContract
-from educelab.devices.errors import NotConnected
+from educelab.devices.errors import FocusLimitReached, NotConnected
 
 
 class FocusDriveContract(DeviceContract):
@@ -23,6 +23,14 @@ class FocusDriveContract(DeviceContract):
         assert (device.last_limit, device.focus_steps) == ("far", 0)
         device.step(-4)
         assert device.focus_steps == -4
+
+    @pytest.mark.parametrize(("limit", "steps"), [("near", -1), ("far", 1)])
+    def test_stepping_past_a_limit_raises(self, device, limit, steps):
+        device.drive_to_limit(limit)
+        with pytest.raises(FocusLimitReached) as info:
+            device.step(steps)
+        assert info.value.limit == limit
+        assert (device.last_limit, device.focus_steps) == (limit, 0)
 
     def test_unknown_limit_raises(self, device):
         with pytest.raises(ValueError):

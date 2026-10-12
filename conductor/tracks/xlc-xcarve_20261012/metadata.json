@@ -1,0 +1,16 @@
+{
+  "id": "xlc-xcarve_20261012",
+  "title": "XLC Lights and X-Carve Stage",
+  "type": "feature",
+  "status": "pending",
+  "created": "2026-10-12T00:00:00Z",
+  "updated": "2026-10-12T00:00:00Z",
+  "phases": {
+    "total": 3,
+    "completed": 0
+  },
+  "tasks": {
+    "total": 14,
+    "completed": 0
+  }
+}

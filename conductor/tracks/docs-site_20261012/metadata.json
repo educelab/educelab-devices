@@ -1,0 +1,16 @@
+{
+  "id": "docs-site_20261012",
+  "title": "Documentation Site",
+  "type": "chore",
+  "status": "pending",
+  "created": "2026-10-12T00:00:00Z",
+  "updated": "2026-10-12T00:00:00Z",
+  "phases": {
+    "total": 2,
+    "completed": 0
+  },
+  "tasks": {
+    "total": 7,
+    "completed": 0
+  }
+}

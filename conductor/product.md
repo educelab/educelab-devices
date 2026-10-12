@@ -23,7 +23,7 @@ Device code has been written separately in each project, coupled to that project
 
 ## Roadmap
 
-Planned tracks, in order. Create each with `/conductor:new-track` when it starts.
+Planned tracks, in order. All are registered in [tracks.md](./tracks.md).
 
 | # | Track | Notes |
 |---|-------|-------|

@@ -47,6 +47,7 @@ Build the shared serial transport and its fake first, then the MISHA driver agai
 - [x] Task 3.4: Run the `Light` contract suite against `MishaLight` on the fake transport.
 - [x] Task 3.5: Read the panel's state with `STATE` on open instead of turning it off; use `OFF` for `all_off()` and `close()`.
 - [x] Task 3.6: Make `port` optional: with none, `open()` finds the panel itself, resetting each board it probes only once.
+- [x] Task 3.7: Find panels without opening ports (maintainer review, 2026-10-13). Opening a port resets the Arduino behind it, so probing could reset an X-Carve and lose its homing, and it contradicted `Device.discover()` ("without opening them"). `discover()` and a port-less `open()` now match USB descriptors only: the panel's CP2102N bridge (`10C4:EA60`) with a serial number written to contain `MISHA`. `serial_number=` picks a unit; unnamed units need `port=` or `serial_number=`. ID probing is removed.
 
 ### Verification
 

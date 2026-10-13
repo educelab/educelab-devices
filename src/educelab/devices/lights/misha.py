@@ -5,7 +5,13 @@ Protocol, timing, and firmware history: docs/hardware/misha.md.
 
 import logging
 
-from educelab.devices._serial import PortMatch, SerialTransport, handshake, list_ports
+from educelab.devices._serial import (
+    PortInfo,
+    PortMatch,
+    SerialTransport,
+    handshake,
+    list_ports,
+)
 from educelab.devices.device import DeviceInfo
 from educelab.devices.errors import CommandRejected, DeviceError, DeviceNotFound
 from educelab.devices.lights.base import RGB, Channel, Light
@@ -21,10 +27,10 @@ RESET_SETTLE_S = 2.0
 HANDSHAKE_TIMEOUT_S = 2.0
 REPLY_TIMEOUT_S = 1.0
 
-# USB-serial bridges a board may sit behind (CH340, CP210x, FTDI, Prolific,
-# Arduino, SparkFun), from pgs-scan's spectral prototype. Discovery writes to
-# these ports only; other devices' ports aren't ours to send commands to.
-CANDIDATE_PORTS = PortMatch(vid={0x1A86, 0x10C4, 0x0403, 0x067B, 0x2341, 0x1B4F})
+# Panels are found from their USB descriptors alone, since opening a port to
+# ask resets whatever board is behind it. A named panel is a CP2102N bridge
+# whose serial number contains "MISHA" (docs/hardware/misha.md#naming).
+NAMED_PANELS = PortMatch(vid=0x10C4, pid=0xEA60, serial_number="MISHA")
 
 # First field of the ID reply, compared ignoring case.
 ACCEPTED_NAMES = frozenset({"misha led panels"})
@@ -52,24 +58,39 @@ class MishaLight(Light):
     Closing turns everything off. Needs firmware 2.0.0 or newer.
 
     Args:
-        port: Serial port, e.g. ``"COM3"`` or ``"/dev/ttyUSB0"``. If omitted,
-            each `open()` uses the first panel it finds, probing the same
-            ports as `discover()`. Pass a port when more than one panel is
-            attached, or when other Arduino-based boards are: probing resets
-            them (docs/hardware/misha.md#hazards).
+        port: Serial port, e.g. ``"COM3"`` or ``"/dev/ttyUSB0"``.
+        serial_number: USB serial number of the panel's port, matched exactly
+            but ignoring case, e.g. ``"MISHA-1"``. Found again on each
+            `open()`, so it survives the port being renamed after a replug.
         transport: Connection to use instead of opening ``port`` with
             pyserial. For tests.
+
+    With neither ``port`` nor ``serial_number``, `open()` uses the one named
+    panel attached, failing if there are none or several, and later opens
+    look for that same panel. Ports are only ever opened once matched, since
+    opening one resets the board behind it.
+
+    Raises:
+        ValueError: Both ``port`` and ``serial_number`` were given.
     """
 
     def __init__(
-        self, port: str | None = None, *, transport: SerialTransport | None = None
+        self,
+        port: str | None = None,
+        *,
+        serial_number: str | None = None,
+        transport: SerialTransport | None = None,
     ) -> None:
+        if port is not None and serial_number is not None:
+            raise ValueError("give a MISHA a port or a serial number, not both")
         super().__init__()
-        self._search = port is None and transport is None
         if transport is None and port is not None:
             transport = _default_transport(port)
         self._transport = transport
-        self._port = port if transport is None else transport.port
+        # Without a fixed transport, each open() looks for the panel again.
+        self._find = transport is None
+        self._port = None if transport is None else transport.port
+        self._serial_number = serial_number
         self._firmware_version: str | None = None
         self._hardware_version: str | None = None
 
@@ -79,36 +100,30 @@ class MishaLight(Light):
             backend="misha",
             model="MISHA",
             address=self._port,
+            serial_number=self._serial_number,
             firmware_version=self._firmware_version,
         )
 
     @classmethod
     def discover(cls) -> list[DeviceInfo]:
-        """Find MISHA panels by asking each USB-serial port to identify itself.
+        """List the named panels attached, without opening their ports.
 
-        Slow: opening a port resets the board behind it, so each candidate
-        port takes a few seconds. Boards with firmware too old to open are
-        still listed.
+        Panels whose USB serial number hasn't been set to a MISHA name aren't
+        listed (docs/hardware/misha.md#naming). The firmware version is only
+        known once a panel is opened.
 
         Raises:
             ImportError: pyserial isn't installed.
         """
-        found = []
-        for port in CANDIDATE_PORTS.matching(list_ports()):
-            transport = _default_transport(port.device)
-            identity = _probe(transport)
-            transport.close()
-            if identity is not None:
-                found.append(
-                    DeviceInfo(
-                        backend="misha",
-                        model="MISHA",
-                        address=port.device,
-                        serial_number=port.serial_number,
-                        firmware_version=identity[2],
-                    )
-                )
-        return found
+        return [
+            DeviceInfo(
+                backend="misha",
+                model="MISHA",
+                address=port.device,
+                serial_number=port.serial_number,
+            )
+            for port in NAMED_PANELS.matching(list_ports())
+        ]
 
     @property
     def hardware_version(self) -> str | None:
@@ -120,30 +135,24 @@ class MishaLight(Light):
         return CHANNELS
 
     def __repr__(self) -> str:
-        return f"<MishaLight {self._port or '(port not found yet)'}>"
+        where = self._port or self._serial_number or "(not found yet)"
+        return f"<MishaLight {where}>"
 
     def _open(self) -> None:
-        if self._search:
-            transport, identity = _find()
-            self._transport, self._port = transport, transport.port
-        else:
-            transport = self._require_transport()
-            transport.open()
-            try:
-                answer = handshake(
-                    transport, "ID", _parse_identity, HANDSHAKE_TIMEOUT_S
-                )
-            except BaseException:
-                transport.close()
-                raise
-            if answer is None:
-                transport.close()
+        if self._find:
+            port = self._find_port()
+            self._transport = _default_transport(port.device)
+            self._port = port.device
+            self._serial_number = port.serial_number
+        transport = self._require_transport()
+        transport.open()
+        try:
+            identity = handshake(transport, "ID", _parse_identity, HANDSHAKE_TIMEOUT_S)
+            if identity is None:
                 raise DeviceNotFound(
                     f"no MISHA answered on {self._port!r}; check the port, "
                     "or that the board isn't held by another program"
                 )
-            identity = answer
-        try:
             _, hardware, firmware = identity
             if _version(firmware) < MIN_FIRMWARE:
                 minimum = ".".join(map(str, MIN_FIRMWARE))
@@ -158,6 +167,30 @@ class MishaLight(Light):
         except BaseException:
             transport.close()
             raise
+
+    def _find_port(self) -> PortInfo:
+        ports = list_ports()
+        if self._serial_number is not None:
+            wanted = self._serial_number.casefold()
+            for port in ports:
+                if port.serial_number and port.serial_number.casefold() == wanted:
+                    return port
+            raise DeviceNotFound(
+                f"no serial port has USB serial number {self._serial_number!r}"
+            )
+        panels = NAMED_PANELS.matching(ports)
+        if not panels:
+            raise DeviceNotFound(
+                "no named MISHA panel is attached. Pass port= or serial_number= "
+                "for a panel that isn't named (docs/hardware/misha.md#naming)."
+            )
+        if len(panels) > 1:
+            choices = ", ".join(f"{p.serial_number} at {p.device}" for p in panels)
+            raise DeviceError(
+                f"several MISHA panels are attached ({choices}); "
+                "choose one with serial_number="
+            )
+        return panels[0]
 
     def _close(self) -> None:
         try:
@@ -206,34 +239,9 @@ class MishaLight(Light):
         raise DeviceError(f"{self!r} answered {command!r} with {reply!r}")
 
     def _require_transport(self) -> SerialTransport:
-        # Only None before a port-less light first finds its panel.
+        # Only None before a light without a port first finds its panel.
         assert self._transport is not None, "no transport before open()"
         return self._transport
-
-
-def _find() -> tuple[SerialTransport, tuple[str, str, str]]:
-    """Open the first candidate port with a MISHA behind it."""
-    for port in CANDIDATE_PORTS.matching(list_ports()):
-        transport = _default_transport(port.device)
-        identity = _probe(transport)
-        if identity is not None:
-            return transport, identity
-        transport.close()
-    raise DeviceNotFound(
-        "no MISHA answered on any USB-serial port; check that it's plugged in "
-        "and not held by another program, or pass port="
-    )
-
-
-def _probe(transport: SerialTransport) -> tuple[str, str, str] | None:
-    """Open ``transport`` and ask what's there; None if it isn't a MISHA."""
-    try:
-        transport.open()
-        return handshake(transport, "ID", _parse_identity, HANDSHAKE_TIMEOUT_S)
-    except DeviceError as exc:
-        # Usually a port held by another program, so not one we could use.
-        logger.debug("skipping %s: %s", transport.port, exc)
-        return None
 
 
 def _default_transport(port: str) -> SerialTransport:

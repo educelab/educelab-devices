@@ -14,11 +14,11 @@ def test_levels_reflect_commands():
     with SimulatedLight() as light:
         light.set_level("white", 0.5)
         light.set_color("rgb", (1.0, 0.0, 0.25))
-        assert light.levels["white"] == 0.5
-        assert light.levels["rgb"] == (1.0, 0.0, 0.25)
+        assert light.level("white") == 0.5
+        assert light.color("rgb") == (1.0, 0.0, 0.25)
         light.all_off()
-        assert light.levels["white"] == 0.0
-        assert light.levels["rgb"] == (0.0, 0.0, 0.0)
+        assert light.level("white") == 0.0
+        assert light.color("rgb") == (0.0, 0.0, 0.0)
 
 
 def test_channels_are_configurable():
@@ -26,6 +26,7 @@ def test_channels_are_configurable():
     assert [c.id for c in light.channels] == ["ring"]
 
 
-def test_lights_start_off():
+def test_lights_report_off_before_anything_is_set():
     with SimulatedLight() as light:
-        assert set(light.levels.values()) <= {0.0, (0.0, 0.0, 0.0)}
+        assert light.level("uv") == 0.0
+        assert light.color("rgb") == (0.0, 0.0, 0.0)

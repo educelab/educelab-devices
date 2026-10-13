@@ -13,7 +13,7 @@ class Turntable(Stage, Light):
     def __init__(self) -> None:
         super().__init__()
         self.angle = 0.0
-        self.level = 0.0
+        self.halo_level = 0.0
 
     @property
     def info(self) -> DeviceInfo:
@@ -49,7 +49,7 @@ class Turntable(Stage, Light):
         self.angle = 0.0
 
     def _set_level(self, channel: Channel, level: float) -> None:
-        self.level = level
+        self.halo_level = level
 
     def _set_color(self, channel: Channel, color: RGB) -> None:
         raise AssertionError("no RGB channels")
@@ -61,7 +61,7 @@ def test_device_offers_both_roles():
         table.move_to({"theta": 90.0})
         table.set_level("halo", 0.5)
         assert table.position() == {"theta": 90.0}
-        assert table.level == 0.5
+        assert table.halo_level == 0.5
 
 
 def test_close_resets_every_role_state():

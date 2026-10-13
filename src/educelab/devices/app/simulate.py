@@ -21,9 +21,9 @@ def _light() -> None:
                 light.set_color(channel.id, (1.0, 0.5, 0.0))
             else:
                 light.set_level(channel.id, 1.0)
-        print(f"  levels: {light.levels}")
+        print(f"  levels: {_levels(light)}")
         light.all_off()
-        print(f"  after all_off: {light.levels}")
+        print(f"  after all_off: {_levels(light)}")
 
 
 def _stage() -> None:
@@ -104,6 +104,13 @@ def run(args: argparse.Namespace) -> int:
         print(f"[{role}]")
         ROLES[role]()
     return 0
+
+
+def _levels(light: SimulatedLight) -> str:
+    return ", ".join(
+        f"{c.id}={light.color(c.id) if c.kind is ChannelKind.RGB else light.level(c.id)}"
+        for c in light.channels
+    )
 
 
 def _format(position: dict[str, float]) -> str:

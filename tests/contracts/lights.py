@@ -35,9 +35,33 @@ class LightContract(DeviceContract):
                 with pytest.raises(ValueError):
                     device.set_color(channel.id, (1.0, 0.5, 0.0))
 
+    def test_getters_report_what_was_set(self, device):
+        for channel in device.channels:
+            if channel.kind is ChannelKind.RGB:
+                device.set_color(channel.id, (1.0, 0.5, 0.0))
+                assert device.color(channel.id) == pytest.approx((1.0, 0.5, 0.0))
+            else:
+                device.set_level(channel.id, 0.5)
+                assert device.level(channel.id) == pytest.approx(0.5)
+
+    def test_getters_match_channel_kind(self, device):
+        for channel in device.channels:
+            if channel.kind is ChannelKind.RGB:
+                with pytest.raises(ValueError):
+                    device.level(channel.id)
+            else:
+                with pytest.raises(ValueError):
+                    device.color(channel.id)
+
     def test_all_off(self, device):
-        device.set_level(device.channels[0].id, 1.0)
+        for channel in device.channels:
+            device.set_level(channel.id, 1.0)
         device.all_off()
+        for channel in device.channels:
+            if channel.kind is ChannelKind.RGB:
+                assert device.color(channel.id) == (0.0, 0.0, 0.0)
+            else:
+                assert device.level(channel.id) == 0.0
 
     def test_closed_light_raises_not_connected(self, make_device):
         light = make_device()

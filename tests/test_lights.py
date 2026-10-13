@@ -95,3 +95,51 @@ def test_light_methods_need_open_device():
         light.set_level("uv", 0.5)
     with pytest.raises(NotConnected):
         light.all_off()
+
+
+def test_levels_are_unknown_until_set(light):
+    assert light.level("uv") is None
+    assert light.color("ring") is None
+
+
+def test_getters_report_last_value_set(light):
+    light.set_level("uv", 0.5)
+    light.set_color("ring", (1.0, 0.0, 0.5))
+    assert light.level("uv") == 0.5
+    assert light.color("ring") == (1.0, 0.0, 0.5)
+
+
+def test_set_level_on_rgb_channel_is_reported_as_color(light):
+    light.set_level("ring", 0.25)
+    assert light.color("ring") == (0.25, 0.25, 0.25)
+
+
+def test_all_off_is_reported(light):
+    light.all_off()
+    assert light.level("uv") == 0.0
+    assert light.color("ring") == (0.0, 0.0, 0.0)
+
+
+def test_getters_match_channel_kind(light):
+    with pytest.raises(ValueError, match="color"):
+        light.level("ring")
+    with pytest.raises(ValueError, match="level"):
+        light.color("uv")
+
+
+def test_failed_write_is_not_remembered(light):
+    def broken(channel: Channel, level: float) -> None:
+        raise OSError("port gone")
+
+    light._set_level = broken  # type: ignore[method-assign]
+    with pytest.raises(OSError):
+        light.set_level("uv", 0.5)
+    assert light.level("uv") is None
+
+
+def test_levels_are_forgotten_on_close():
+    light = StubLight()
+    with light:
+        light.set_level("uv", 0.5)
+    with light:
+        assert light.level("uv") is None

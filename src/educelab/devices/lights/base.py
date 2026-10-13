@@ -37,8 +37,11 @@ class Light(Device):
     """A device that emits illumination through one or more channels.
 
     Levels are fractions from 0.0 (off) to 1.0 (full). Drivers declare
-    `channels` and implement `_set_level()` and `_set_color()`.
+    `channels` and implement `_set_level()` and `_set_color()`. Drivers whose
+    hardware reports its levels also override `_get_level()` and `_get_color()`.
     """
+
+    _remembered: dict[str, float | RGB] | None = None
 
     @property
     @abstractmethod
@@ -57,10 +60,13 @@ class Light(Device):
         """
         channel = self._channel(channel_id)
         _check_level(level, "level")
+        level = float(level)
         if channel.kind is ChannelKind.RGB:
             self._set_color(channel, (level, level, level))
+            self._remember(channel, (level, level, level))
         else:
             self._set_level(channel, level)
+            self._remember(channel, level)
 
     @synchronized
     def set_color(self, channel_id: str, color: RGB) -> None:
@@ -78,18 +84,76 @@ class Light(Device):
             raise ValueError(f"color needs three components, not {len(color)}")
         for name, value in zip("rgb", color, strict=True):
             _check_level(value, name)
-        self._set_color(channel, (color[0], color[1], color[2]))
+        rgb = (float(color[0]), float(color[1]), float(color[2]))
+        self._set_color(channel, rgb)
+        self._remember(channel, rgb)
 
     @synchronized
     def all_off(self) -> None:
         """Turn every channel off."""
         self._all_off()
+        for channel in self.channels:
+            off = (0.0, 0.0, 0.0) if channel.kind is ChannelKind.RGB else 0.0
+            self._remember(channel, off)
+
+    @synchronized
+    def level(self, channel_id: str) -> float | None:
+        """A monochromatic channel's level.
+
+        Unless the hardware reports it, this is the last level set since
+        `open()`, or ``None`` if none has been.
+
+        Raises:
+            KeyError: No channel has this ID.
+            ValueError: The channel is RGB; use `color()`.
+        """
+        channel = self._channel(channel_id)
+        if channel.kind is ChannelKind.RGB:
+            raise ValueError(f"channel {channel_id!r} of {self!r} is RGB; use color()")
+        return self._get_level(channel)
+
+    @synchronized
+    def color(self, channel_id: str) -> RGB | None:
+        """An RGB channel's color.
+
+        Unless the hardware reports it, this is the last color set since
+        `open()`, or ``None`` if none has been.
+
+        Raises:
+            KeyError: No channel has this ID.
+            ValueError: The channel isn't RGB; use `level()`.
+        """
+        channel = self._channel(channel_id)
+        if channel.kind is not ChannelKind.RGB:
+            raise ValueError(
+                f"channel {channel_id!r} of {self!r} is not RGB; use level()"
+            )
+        return self._get_color(channel)
 
     def _channel(self, channel_id: str) -> Channel:
         for channel in self.channels:
             if channel.id == channel_id:
                 return channel
         raise KeyError(f"{self!r} has no channel {channel_id!r}")
+
+    def _remember(self, channel: Channel, value: float | RGB) -> None:
+        if self._remembered is None:
+            self._remembered = {}
+        self._remembered[channel.id] = value
+
+    def _reset_state(self) -> None:
+        super()._reset_state()
+        self._remembered = None
+
+    def _get_level(self, channel: Channel) -> float | None:
+        """Read a monochromatic channel's level. Defaults to the last one set."""
+        value = (self._remembered or {}).get(channel.id)
+        return value if isinstance(value, float | int) else None
+
+    def _get_color(self, channel: Channel) -> RGB | None:
+        """Read an RGB channel's color. Defaults to the last one set."""
+        value = (self._remembered or {}).get(channel.id)
+        return value if isinstance(value, tuple) else None
 
     @abstractmethod
     def _set_level(self, channel: Channel, level: float) -> None:

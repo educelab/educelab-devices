@@ -17,7 +17,7 @@ DEFAULT_CHANNELS = (
 
 
 class SimulatedLight(Light):
-    """A light that records the level of each channel.
+    """A light that remembers each channel's level, starting with all off.
 
     Args:
         channels: The channels to offer. Defaults to a white, a 365 nm, and
@@ -38,11 +38,6 @@ class SimulatedLight(Light):
     def channels(self) -> tuple[Channel, ...]:
         return self._channels
 
-    @property
-    def levels(self) -> dict[str, float | RGB]:
-        """Current level (mono) or color (RGB) of each channel."""
-        return dict(self._levels)
-
     def _open(self) -> None:
         self._turn_off()
 
@@ -56,6 +51,14 @@ class SimulatedLight(Light):
     def _set_color(self, channel: Channel, color: RGB) -> None:
         logger.debug("%s color %s", channel.id, color)
         self._levels[channel.id] = color
+
+    def _get_level(self, channel: Channel) -> float | None:
+        value = self._levels[channel.id]
+        return value if isinstance(value, float) else None
+
+    def _get_color(self, channel: Channel) -> RGB | None:
+        value = self._levels[channel.id]
+        return value if isinstance(value, tuple) else None
 
     def _turn_off(self) -> None:
         for channel in self._channels:

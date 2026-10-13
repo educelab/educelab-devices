@@ -11,6 +11,14 @@
   },
   "tasks": {
     "total": 17,
-    "completed": 0
-  }
+    "completed": 4
+  },
+  "current_phase": 1,
+  "current_task": "1.4",
+  "commits": [
+    "babf191: Declare the serial extra and load pyserial lazily",
+    "74ba596: Match serial ports only when every criterion matches",
+    "0b509dc: Add a line-oriented serial transport and handshake helper",
+    "7ec1e75: Add a scripted serial fake for driver tests"
+  ]
 }

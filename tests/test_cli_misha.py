@@ -7,10 +7,10 @@ from fakes.misha import MishaFirmware
 from fakes.serial_port import ScriptedSerial
 
 PANEL = PortInfo(
-    "/dev/cu.usbserial-MISHA_e6a00ad8",
+    "/dev/cu.usbserial-MISHA_2108d7a8",
     vid=0x10C4,
     pid=0xEA60,
-    serial_number="MISHA-e6a00ad8",
+    serial_number="MISHA-2108d7a8",
 )
 
 
@@ -34,7 +34,7 @@ def test_steps_through_every_band_and_turns_off(panel, capsys):
     fake, firmware = panel
     assert main(["misha", "--dwell", "0", "--level", "0.25"]) == 0
     out = capsys.readouterr().out
-    assert "MISHA-e6a00ad8" in out
+    assert "MISHA-2108d7a8" in out
     assert "firmware 2.0.0" in out
     assert "365nm" in out and "940nm" in out
     lit = [line for line in fake.written if line.endswith(",25")]
@@ -51,12 +51,12 @@ def test_reports_what_was_lit_before(panel, capsys):
 
 
 def test_selects_a_panel_by_serial_number(panel, capsys):
-    assert main(["misha", "--dwell", "0", "--serial-number", "misha-e6a00ad8"]) == 0
+    assert main(["misha", "--dwell", "0", "--serial-number", "misha-2108d7a8"]) == 0
 
 
 def test_port_and_serial_number_are_exclusive(capsys):
     with pytest.raises(SystemExit) as info:
-        main(["misha", "--port", "COM3", "--serial-number", "MISHA-e6a00ad8"])
+        main(["misha", "--port", "COM3", "--serial-number", "MISHA-2108d7a8"])
     assert info.value.code == 2
 
 

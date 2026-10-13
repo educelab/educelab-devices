@@ -23,17 +23,17 @@ Driver: `educelab.devices.lights.misha.MishaLight`. Manual check: `el-devices mi
   switching one band on both, plus one PWM output (Arduino pin 3) that sets the
   brightness for all bands. **Assumed** from the firmware source.
 - **USB-serial bridge**: Silicon Labs CP2102N, VID:PID `10C4:EA60`, with a factory
-  unique 128-bit serial number. **Verified** 2026-10-13 on the panel with factory
-  serial `c6f2674f…` and on `MISHA-e6a00ad8` (not recorded whether these are the
-  same unit). **Unknown** whether other units use the same bridge.
+  unique 128-bit serial number. **Verified** on one unit, 2026-10-13: factory serial
+  `c6f2674f…`, since named `MISHA-2108d7a8` (same USB location before and after, so
+  most likely the same unit). **Unknown** whether other units use the same bridge.
 
 ### How a panel shows up on the host
 
 | | Before naming | After naming |
 |---|---|---|
-| USB serial number | 32 hex digits, e.g. `c6f2674f1fc0ef1181095c04cce47fdf` | e.g. `MISHA-e6a00ad8` |
-| USB description | `CP2102N USB to UART Bridge Controller` | the product string, if set |
-| macOS port | e.g. `/dev/cu.usbserial-110` (named by USB location) | `/dev/cu.usbserial-MISHA_e6a00ad8` (named by serial, `-` becomes `_`) |
+| USB serial number | 32 hex digits, e.g. `c6f2674f1fc0ef1181095c04cce47fdf` | e.g. `MISHA-2108d7a8` |
+| USB description | `CP2102N USB to UART Bridge Controller` | the product string, e.g. `MISHA LED Panels` (**verified** on macOS; on Linux **assumed**; Windows shows its driver's name instead, **assumed**) |
+| macOS port | e.g. `/dev/cu.usbserial-110` (named by USB location) | `/dev/cu.usbserial-MISHA_2108d7a8` (named by serial, `-` becomes `_`) |
 
 The macOS port names are **verified**, 2026-10-13. On Linux the port
 is `/dev/ttyUSB<n>`, and Windows gives a renamed device a new COM port number
@@ -52,7 +52,7 @@ Names are `MISHA-` and 8 random hex digits, so nobody has to keep a sequence:
 python3 -c "import secrets; print('MISHA-' + secrets.token_hex(4))"
 ```
 
-To write the name (**verified** on `MISHA-e6a00ad8`, 2026-10-13):
+To write the name (**verified** on `MISHA-2108d7a8`, 2026-10-13, including writing a second name over the first):
 
 1. Install **Simplicity Studio 5**. Studio 6 doesn't support CP210x devices or Xpress
    Configurator (Silicon Labs community answer, 2026-10-13).

@@ -19,7 +19,7 @@ def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") 
     )
     where = parser.add_mutually_exclusive_group()
     where.add_argument("--port", help="serial port, e.g. COM3 or /dev/ttyUSB0")
-    where.add_argument("--serial-number", help="USB serial number, e.g. MISHA-e6a00ad8")
+    where.add_argument("--serial-number", help="USB serial number, e.g. MISHA-2108d7a8")
     parser.add_argument(
         "--level",
         type=_level,

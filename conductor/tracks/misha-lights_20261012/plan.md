@@ -59,6 +59,7 @@ Build the shared serial transport and its fake first, then the MISHA driver agai
 ### Tasks
 
 - [ ] Task 4.1: Write `docs/hardware/misha.md` (protocol including the firmware version history, timing, quirks, unknowns).
+  - Include naming a panel: write a `MISHA-<8 hex>` USB serial with Xpress Configurator in Simplicity Studio 5. Studio 6 doesn't support CP210x devices or Xpress Configurator (Silicon Labs community answer, 2026-10-13). Keep the VID/PID; never set the lock. Naming is optional, since `serial_number=` takes the factory serial.
 - [ ] Task 4.2: Add the `el-devices misha` subcommand.
 
 ### Verification

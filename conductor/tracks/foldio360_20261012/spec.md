@@ -19,9 +19,10 @@ As a developer of spectral photogrammetry software, I want to rotate the turntab
 
 ## Acceptance Criteria
 
-- [ ] `Foldio360` (`educelab.devices.stages.foldio360`) is a `Device` and `Stage` with one rotary, wrapping axis `"theta"` (degrees, machine/device counter coordinates); `requires_homing` is false.
+- [ ] `Foldio360` (`educelab.devices.stages.foldio360`) is a `Device` and `Stage` with one rotary, wrapping axis `"theta"` (degrees, machine/device counter coordinates); `can_home` and `requires_homing` are false (the counter has no hardware reference).
 - [ ] `move_to` takes the shortest path; `move_by` is literal (`+720` turns twice); default timeouts come from the predicted move time (`watchdog_seconds`); arrival is verified against `get_device_position` within a tolerance, raising `PositionError` otherwise.
-- [ ] `jog(axis, direction, speed)` returns once spin-up is acknowledged; `stop()` interrupts a move running on another thread, completing the pending move as cancelled and draining stray replies.
+- [ ] `speed()` lists the three firmware speeds as `choices` in deg/s, converted with the timing model (speeds 2 and 3 are **assumed**); `set_speed()` applies to later moves and jogs.
+- [ ] `jog(axis, direction)` returns once spin-up is acknowledged; `stop()` interrupts a move running on another thread, completing the pending move as cancelled and draining stray replies.
 - [ ] `position()` returns the last known position while a move is in progress (never blocks, never estimates).
 - [ ] The origin API (`origin`, `set_origin`, `clear_origin`, `home()` as move-to-origin) is removed, per ADR 0003; the power-cycle counter reset is documented in the hardware doc.
 - [ ] `foldio.halo` is a `Light` with one mono channel `"halo"` sharing the connection; brightness ack unreliability under load is handled (paced writes or tolerant ack draining).

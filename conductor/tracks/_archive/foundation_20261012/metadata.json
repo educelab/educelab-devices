@@ -2,9 +2,9 @@
   "id": "foundation_20261012",
   "title": "Foundation",
   "type": "feature",
-  "status": "in_progress",
+  "status": "complete",
   "created": "2026-10-12T00:00:00Z",
-  "updated": "2026-10-12T18:00:00Z",
+  "updated": "2026-10-13T18:00:00Z",
   "phases": {
     "total": 5,
     "completed": 5
@@ -39,7 +39,15 @@
     "5849a9e: Add el-devices discover and simulate",
     "8e13b5b: Write the device usage guide",
     "b7cf7c7: Define hardware doc conventions",
-    "be0e1c7: Document install, extras, and CLI usage in the README"
+    "be0e1c7: Document install, extras, and CLI usage in the README",
+    "02b3400: Finish foundation track bookkeeping",
+    "72aaf85: Add Setting.step and Setting.nearest()",
+    "98a0cb1: Add Light.level() and Light.color() getters",
+    "b4cc760: Separate Stage.can_home from requires_homing",
+    "08d88fd: Document PySpin's numpy<2 requirement and test against it in CI",
+    "3e3599f: Add Stage.speed() and set_speed()",
+    "6cebbcf: Record green CI for the foundation track"
   ],
-  "notes": "All tasks done; waiting on maintainer approval gates (approvals.md) and CI."
+  "archived": true,
+  "pull_request": 1
 }

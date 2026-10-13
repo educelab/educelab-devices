@@ -3,7 +3,7 @@
 **Track ID:** foundation_20261012
 **Spec:** [spec.md](./spec.md)
 **Created:** 2026-10-12
-**Status:** [~] In Progress
+**Status:** [x] Complete
 
 ## Overview
 
@@ -85,7 +85,7 @@ Tooling first, then the `Device` base and value types, then the role ABCs (with 
 - [x] All acceptance criteria met
 - [x] Tests passing on the full CI matrix (PR #1: Linux, macOS, and Windows × 3.11–3.14, plus 3.12 with numpy<2; mypy clean)
 - [x] Documentation updated
-- [x] Ready for review (PR #1). Only the `CONTEXT.md` *Setting* change awaits approval
+- [x] Ready for review (PR #1). `CONTEXT.md` *Setting* change approved 2026-10-13
 
 ---
 

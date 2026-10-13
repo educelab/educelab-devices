@@ -42,12 +42,12 @@ Second round:
   abstract hooks `_speed()` and `_set_speed()`. Fixed-speed stages list `choices`, and
   others give a range. To support this, `Setting` moved to `educelab.devices.settings`;
   `educelab.devices.cameras` still re-exports it.
-  - **Needs approval:** `CONTEXT.md` now defines *Setting* as a device parameter, not
-    only a camera parameter.
+  - `CONTEXT.md` now defines *Setting* as a device parameter, not only a camera
+    parameter (approved 2026-10-13).
 - **Extras:** each driver track declares its own.
 - **Phase checkpoints:** approved.
 
-CI is green on PR #1. Still open: approving the `CONTEXT.md` *Setting* change, then merging.
+CI is green on PR #1. Everything is approved; the track is complete and archived. What's left is merging PR #1.
 
 ## Phase checkpoints
 

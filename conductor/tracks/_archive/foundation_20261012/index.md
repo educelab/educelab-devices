@@ -1,7 +1,7 @@
 # Track: Foundation
 
 **ID:** foundation_20261012
-**Status:** In Progress
+**Status:** Complete (archived)
 
 ## Documents
 
@@ -10,10 +10,10 @@
 
 ## Progress
 
-- Phases: 5/5 complete (approval gates pending)
+- Phases: 5/5 complete
 - Tasks: 22/22 complete
 
 ## Quick Links
 
-- [Back to Tracks](../../tracks.md)
-- [Product Context](../../product.md)
+- [Back to Tracks](../../../tracks.md)
+- [Product Context](../../../product.md)

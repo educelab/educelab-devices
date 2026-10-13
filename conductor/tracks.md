@@ -2,7 +2,7 @@
 
 | Status | Track ID | Title | Created | Updated |
 | ------ | -------- | ----- | ------- | ------- |
-| [~] | [foundation_20261012](./tracks/foundation_20261012/index.md) | Foundation | 2026-10-12 | 2026-10-12 |
+| [x] | [foundation_20261012](./tracks/_archive/foundation_20261012/index.md) | Foundation | 2026-10-12 | 2026-10-13 |
 | [ ] | [misha-lights_20261012](./tracks/misha-lights_20261012/index.md) | MISHA Lights | 2026-10-12 | 2026-10-12 |
 | [ ] | [foldio360_20261012](./tracks/foldio360_20261012/index.md) | Foldio360 Turntable | 2026-10-12 | 2026-10-12 |
 | [ ] | [gphoto2-camera_20261012](./tracks/gphoto2-camera_20261012/index.md) | gphoto2 Camera | 2026-10-12 | 2026-10-12 |

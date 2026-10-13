@@ -11,7 +11,7 @@ Port the FLIR/Teledyne Spinnaker cameras from `pgs-scan` `dev` to a `SpinnakerSy
 
 ## Context
 
-On `dev`, `SpinnakerCameraController(QObject)` (`pgs_scan/components/cameras.py`) and `CardinalDirectionRig` (`camera_rigs.py`) mix enumeration, rig-wide settings, broadcast capture, and stale-frame rejection, all over Qt signals. Known defects: the stale-frame loop leaks PySpin buffers and is unbounded (#83), the incomplete-image check is skipped on the returned frame, and `_remove_cameras` clears the list it iterates (#90). PySpin is not on PyPI and only ships cp310/cp312 wheels.
+On `dev`, `SpinnakerCameraController(QObject)` (`pgs_scan/components/cameras.py`) and `CardinalDirectionRig` (`camera_rigs.py`) mix enumeration, rig-wide settings, broadcast capture, and stale-frame rejection, all over Qt signals. Known defects: the stale-frame loop leaks PySpin buffers and is unbounded (#83), the incomplete-image check is skipped on the returned frame, and `_remove_cameras` clears the list it iterates (#90). PySpin is not on PyPI, and as of Spinnaker SDK 4.4.0 it only ships cp310/cp312 wheels and requires numpy<2.
 
 ## User Story
 
@@ -27,7 +27,7 @@ As the `pgs-scan` developer, I want each Spinnaker camera behind the `FrameCamer
 - [ ] `preview_frame()` returns the newest frame.
 - [ ] Acquisition start/stop semantics are decided and documented (implicit on demand vs. explicit), recorded in the hardware doc.
 - [ ] Tests run against a fake PySpin module; `Camera`/`FrameCamera` contract suites pass.
-- [ ] `docs/hardware/spinnaker.md`: SDK install, Python 3.12 only, numpy notes, version coupling.
+- [ ] `docs/hardware/spinnaker.md`: SDK install, Python 3.12 only, numpy<2 requirement, version coupling.
 - [ ] `el-devices spinnaker` subcommand: list cameras, capture N frames, capture-latency benchmark (like `pgs-scan` `utils/system_check.py`).
 
 ## Dependencies

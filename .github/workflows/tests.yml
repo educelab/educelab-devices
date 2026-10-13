@@ -17,6 +17,9 @@ jobs:
       - run: pip install -e . --group dev
       - run: ruff check .
       - run: ruff format --check .
+      - name: mypy (advisory)
+        run: mypy
+        continue-on-error: true
 
   test:
     runs-on: ${{ matrix.os }}
@@ -32,4 +35,16 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install --upgrade pip
       - run: pip install -e . --group dev
+      - run: pytest
+
+  # PySpin (Spinnaker SDK 4.4.0) requires numpy<2 and has no 3.11 wheel.
+  numpy1:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e . --group dev "numpy<2"
       - run: pytest

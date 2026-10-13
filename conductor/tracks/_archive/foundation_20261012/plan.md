@@ -1,0 +1,92 @@
+# Implementation Plan: Foundation
+
+**Track ID:** foundation_20261012
+**Spec:** [spec.md](./spec.md)
+**Created:** 2026-10-12
+**Status:** [x] Complete
+
+## Overview
+
+Tooling first, then the `Device` base and value types, then the role ABCs (with an approval checkpoint on their signatures), then simulated devices validated by the contract suite, and finally the CLI skeleton and docs.
+
+## Phase 1: Tooling and package skeleton
+
+### Tasks
+
+- [x] Task 1.1: Add numpy to `dependencies`; add pytest-cov and mypy to the `dev` group.
+- [x] Task 1.2: Configure pytest (`hardware` marker, `--strict-markers`, hardware tests deselected by default), `[tool.coverage.run]`, and `[tool.mypy]`.
+- [x] Task 1.3: Add an advisory mypy step to CI (`continue-on-error: true`).
+- [x] Task 1.4: Create `cameras`, `lights`, `stages`, `hubs` subpackages and an `errors` module skeleton.
+
+### Verification
+
+- [x] `pytest`, `ruff check .`, `ruff format --check .`, and `mypy` run cleanly locally; CI green (not yet run: branch not pushed).
+
+## Phase 2: Device base, errors, value types
+
+### Tasks
+
+- [x] Task 2.1: Write tests for the `DeviceError` hierarchy and the missing-extra `ImportError` helper; implement.
+- [x] Task 2.2: Write tests for `Device` lifecycle (no I/O in constructor, open/close idempotence, context manager, `NotConnected` when closed); implement.
+- [x] Task 2.3: Write tests for locking (concurrent calls serialize) and listeners (add/remove, events delivered, listener exceptions logged not raised); implement.
+- [x] Task 2.4: Implement `DeviceInfo` and the `discover()` classmethod convention.
+  - Deviation: `DeviceInfo` landed with Task 2.2 because the lifecycle tests needed `info`.
+
+### Verification
+
+- [x] Base tests pass; maintainer reviews the `Device` base API. (Approved 2026-10-13.)
+
+## Phase 3: Role ABCs
+
+### Tasks
+
+- [x] Task 3.1: `Setting`, `Frame`, `CameraFile` (with overwrite-refusing `save`), `Camera`, `FrameCamera`, `FileCamera`, canonical setting names.
+- [x] Task 3.2: `Channel`, `Light` (level range and channel-ID validation, RGB only on RGB channels).
+- [x] Task 3.3: `Axis`, `Stage` (limit checks, wrap handling, default timeouts, homing guard, `stop()` callable while a move holds the lock).
+- [x] Task 3.4: `Hub` and `FocusDrive`.
+- [x] Task 3.5: Unit tests for the shared validation in each ABC.
+  - Deviation: each ABC's tests were written with it in Tasks 3.1–3.4 (`tests/test_{cameras,lights,stages,hubs,focus}.py`). This task added `tests/test_multi_role.py`, which checks that one device can offer several roles.
+
+### Verification
+
+- [x] **Approval gate:** maintainer approves all role ABC signatures before Phase 4. (Approved 2026-10-13 with changes: `Setting.step` and `nearest()`, `Light.level()` and `color()`, `Stage.can_home`, `Stage.speed()` and `set_speed()`. See approvals.md.)
+
+## Phase 4: Contract suite and simulated devices
+
+### Tasks
+
+- [x] Task 4.1: Write contract test classes per role in `tests/contracts/`, parameterized by a device factory fixture.
+- [x] Task 4.2: Implement `SimulatedLight`, `SimulatedHub`, `SimulatedFocusDrive`; pass contracts.
+- [x] Task 4.3: Implement `SimulatedStage` (configurable axes, simulated move duration, optional homing requirement, interruptible by `stop()`); pass contracts.
+- [x] Task 4.4: Implement `SimulatedCamera` (synthetic frames, exposure/gain/pixel_format settings) and `SimulatedFileCamera`; pass contracts.
+
+### Verification
+
+- [x] Every simulated device passes its role's contract suite; mutation spot-check (break one contract rule in a simulated device and confirm the suite fails).
+  - Three mutations, each reverted: the stage stops wrapping positions, the hub ignores power-off, and the focus drive doesn't raise at its far limit. All three failed tests, but at first two were caught only by tests specific to the simulation. The contracts gained a wrap-crossing check and a stepping-past-a-limit check, and now catch all three.
+
+## Phase 5: CLI skeleton and docs
+
+### Tasks
+
+- [x] Task 5.1: `el-devices` entry point in `educelab/devices/app/` with subcommand registration and lazy backend imports; `python -m educelab.devices` runs it.
+- [x] Task 5.2: `el-devices discover` and `el-devices simulate`; tests via `capsys`.
+- [x] Task 5.3: Write `docs/guide.md` (device contract, adapting the generic parts of the Foldio360 `CLIENT_GUIDE.md`).
+- [x] Task 5.4: Write `docs/hardware/README.md` (conventions, verified/assumed/unknown markers, generalising rule, index).
+- [x] Task 5.5: Update `README.md` with install, extras table, and CLI usage.
+
+### Verification
+
+- [x] `el-devices --help`, `el-devices discover`, and `el-devices simulate` work in a fresh venv with no extras installed.
+  - Checked with non-editable installs in fresh Python 3.11, 3.12, and 3.13 venvs; only numpy was installed. `python -m educelab.devices` works too.
+
+## Final Verification
+
+- [x] All acceptance criteria met
+- [x] Tests passing on the full CI matrix (PR #1: Linux, macOS, and Windows × 3.11–3.14, plus 3.12 with numpy<2; mypy clean)
+- [x] Documentation updated
+- [x] Ready for review (PR #1). `CONTEXT.md` *Setting* change approved 2026-10-13
+
+---
+
+_Generated by Conductor. Tasks will be marked [~] in progress and [x] complete._

@@ -3,7 +3,7 @@
 **Track ID:** foundation_20261012
 **Type:** Feature
 **Created:** 2026-10-12
-**Status:** Draft
+**Status:** Complete
 
 ## Summary
 
@@ -19,19 +19,19 @@ As a lab developer building an acquisition application, I want stable per-role i
 
 ## Acceptance Criteria
 
-- [ ] `Device` base: constructor does no I/O; `open()`/`close()`/`is_open`; context manager; per-device reentrant lock serializing public methods; `add_listener()`/`remove_listener()` for unsolicited events; `info` returns a `DeviceInfo`; `discover()` classmethod returning `list[DeviceInfo]`.
-- [ ] `DeviceError` hierarchy: `DeviceNotFound`, `NotConnected`, `DeviceTimeout`, `CommandRejected`, `DeviceBusy`, `PositionError`, `FocusLimitReached`, plus an `ImportError` helper that names the extra to install.
-- [ ] Role ABCs, with shared validation done once in the base class and backends implementing protected hooks:
+- [x] `Device` base: constructor does no I/O; `open()`/`close()`/`is_open`; context manager; per-device reentrant lock serializing public methods; `add_listener()`/`remove_listener()` for unsolicited events; `info` returns a `DeviceInfo`; `discover()` classmethod returning `list[DeviceInfo]`.
+- [x] `DeviceError` hierarchy: `DeviceNotFound`, `NotConnected`, `DeviceTimeout`, `CommandRejected`, `DeviceBusy`, `PositionError`, `FocusLimitReached`, plus an `ImportError` helper that names the extra to install.
+- [x] Role ABCs, with shared validation done once in the base class and backends implementing protected hooks:
   - `Camera` (settings as `Setting` descriptors, canonical names incl. `exposure_time` in seconds, `preview_frame() -> ndarray`), `FrameCamera.capture_frame() -> Frame`, `FileCamera.capture_files() -> list[CameraFile]`; `CameraFile.save(dest_dir, stem, overwrite=False)` refuses to overwrite by default.
   - `Light` with string-ID `Channel`s (mono or RGB, optional wavelength), `set_level(id, 0.0–1.0)`, `set_color(id, (r, g, b))`, `all_off()`.
   - `Stage` with typed `Axis` (linear mm / rotary degrees, limits, wrap), blocking `move_to`/`move_by` with default timeouts, `jog`/`stop`, explicit `home()` where `requires_homing`, out-of-limit targets raise, `position()` documented as possibly stale while moving.
   - `Hub` with per-port power on/off/state and `power_cycle()`.
   - `FocusDrive` with signed `step(n)`, `drive_to_limit("near" | "far")`, and a step counter relative to the last limit (or `None`).
-- [ ] Simulated devices for every role (`SimulatedCamera` as a frame camera, `SimulatedFileCamera`, `SimulatedLight`, `SimulatedStage`, `SimulatedHub`, `SimulatedFocusDrive`), living in their role subpackages.
-- [ ] Contract test suite in `tests/contracts/` that each driver's tests reuse; all simulated devices pass it.
-- [ ] `el-devices` console script with subcommand registration and lazy backend imports; `el-devices discover` lists what installed backends can find; `el-devices simulate` exercises the simulated devices.
-- [ ] Tooling: numpy as the core dependency; `hardware` pytest marker (skipped unless selected, `--strict-markers`); pytest-cov configured (opt-in, no threshold); mypy configured and running advisory in CI.
-- [ ] `docs/guide.md` describes the device contract (lifecycle, threading, errors, events, logging, persistence boundary); `docs/hardware/README.md` defines the hardware-doc conventions and index.
+- [x] Simulated devices for every role (`SimulatedCamera` as a frame camera, `SimulatedFileCamera`, `SimulatedLight`, `SimulatedStage`, `SimulatedHub`, `SimulatedFocusDrive`), living in their role subpackages.
+- [x] Contract test suite in `tests/contracts/` that each driver's tests reuse; all simulated devices pass it.
+- [x] `el-devices` console script with subcommand registration and lazy backend imports; `el-devices discover` lists what installed backends can find; `el-devices simulate` exercises the simulated devices.
+- [x] Tooling: numpy as the core dependency; `hardware` pytest marker (skipped unless selected, `--strict-markers`); pytest-cov configured (opt-in, no threshold); mypy configured and running advisory in CI.
+- [x] `docs/guide.md` describes the device contract (lifecycle, threading, errors, events, logging, persistence boundary); `docs/hardware/README.md` defines the hardware-doc conventions and index.
 
 ## Dependencies
 

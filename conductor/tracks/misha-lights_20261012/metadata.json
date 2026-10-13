@@ -21,6 +21,7 @@
     "0b509dc: Add a line-oriented serial transport and handshake helper",
     "7ec1e75: Add a scripted serial fake for driver tests",
     "a6bba16: Copy the MISHA firmware in unchanged",
-    "4d67d5a: Acknowledge every MISHA command with OK or ERR"
+    "4d67d5a: Acknowledge every MISHA command with OK or ERR",
+    "2edb06c: Document the MISHA 2.0.0 protocol in the firmware README"
   ]
 }

@@ -33,8 +33,8 @@ Build the shared serial transport and its fake first, then the MISHA driver agai
 
 ### Verification
 
-- [ ] Firmware compiles; maintainer reviews the protocol change.
-  - Compiles for the Nano (ATmega328P) with arduino:avr 1.8.8, no sketch warnings: 10708 B flash (34%), 793 B RAM (38%); 1.0.0 was 11574 B / 740 B. Awaiting protocol review.
+- [x] Firmware compiles; maintainer reviews the protocol change.
+  - Compiles for the Nano (ATmega328P) with arduino:avr 1.8.8, no sketch warnings: 10708 B flash (34%), 793 B RAM (38%); 1.0.0 was 11574 B / 740 B. Protocol approved 2026-10-13.
 
 ## Phase 3: MISHA driver
 

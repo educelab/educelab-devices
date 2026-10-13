@@ -7,18 +7,36 @@ The maintainer was away while this track ran, so phase checkpoints and approval 
 Later phases build on the unapproved earlier ones, so a change requested in an early item
 may ripple forward. Each item names where to look.
 
-## Do first
+## Maintainer feedback, 2026-10-13
 
-0. **Commit the staged changes.** Commit signing (SSH through 1Password) started failing
-   near the end with `1Password: failed to fill whole buffer`, probably because 1Password
-   needed an unlock or approval while you were away. I didn't bypass signing. The
-   remaining changes are staged in the working tree:
-   `git commit -m "Finish foundation track bookkeeping"`. They include untracking
-   `.coverage`, which my first commit picked up by accident (squash-merge drops it), and
-   ruff formatting of the guide's code blocks, without which CI's format check would
-   fail.
-   - The earlier commits on the branch show `%G?` = `N`. They were created with the same
-     signing config, so check they're signed the way you expect.
+Resolved and implemented:
+
+- **Commit signing:** fixed once 1Password was available. Commits are signed; `%G?`
+  shows `N` only because there's no local `allowed_signers` file to check against.
+- **PySpin:** as of Spinnaker SDK 4.4.0 it needs Python 3.10 or 3.12 and numpy<2.
+  Recorded in `tech-stack.md`, `CLAUDE.md`, and the Spinnaker track spec. A CI job runs
+  the suite on 3.12 with numpy<2; it passes locally with numpy 1.26.4.
+- **Gain and ISO** stay separate canonical settings. **Binning**, and a DSLR's image
+  size, use native setting names on the camera that has them.
+- **`preview_frame()`** stays `uint8`.
+- **Focus:** positive steps move toward far.
+- **Discrete setting values:** `Setting` gained `step` and
+  `nearest(value, direction="nearest" | "down" | "up")`. Ties go to the lower value,
+  and values out of range clamp to the nearest end. Documented in the guide, along with
+  "a setting is a snapshot". There's also a contract check that every camera accepts its
+  own `nearest()` results.
+- **Light getters:** `level(id)` and `color(id)` return the hardware's value if the
+  driver can read it, otherwise the last value set since `open()`, or `None`.
+  `SimulatedLight.levels` was removed in favor of these.
+- **Homing:** new `Stage.can_home`, separate from `requires_homing`. `home()` raises
+  `NotImplementedError` only when `can_home` is false. `open()` raises `ValueError` if
+  `requires_homing` is set without `can_home`.
+- **`move_to` on wrapping axes** stays absolute and repeatable. Whole turns use
+  `move_by`; turn-counting positions use a rotary axis that doesn't wrap. The guide and
+  the `Stage` docstring explain this, and a contract test pins it.
+
+Still open: stage speed in the ABC (item 3), declaring extras up front (item 5), sign-off
+on the phase checkpoints, and CI.
 
 ## Phase checkpoints
 
@@ -92,7 +110,8 @@ may ripple forward. Each item names where to look.
      The type comes from `value`; an int is accepted for a float setting; a wrong type
      raises `TypeError`.
    - Canonical names are module constants: `EXPOSURE_TIME` (s), `GAIN` (dB), `ISO`,
-     `APERTURE` (f-number), `PIXEL_FORMAT`, with units in `CANONICAL_UNITS`. **Question:**
+     `APERTURE` (f-number), `PIXEL_FORMAT`, with units in `CANONICAL_UNITS`. *(Resolved
+     2026-10-13: kept.)* Original question:
      are these the right canonical set? The spec only named `exposure_time`.
    - `preview_frame()` is typed `uint8` (display-ready). **Question:** OK, or should it
      allow any dtype?

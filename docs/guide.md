@@ -199,14 +199,54 @@ code.
 | `FrameCamera` | adds `capture_frame() -> Frame` |
 | `FileCamera` | adds `capture_files() -> list[CameraFile]`; save with `CameraFile.save(dir, stem)`, which refuses to overwrite unless asked |
 | `FocusDrive` | `step(n)` (positive = toward far), `drive_to_limit("near" \| "far")`, `focus_steps`, `last_limit` |
-| `Light` | `channels`, `set_level(id, 0.0–1.0)`, `set_color(id, (r, g, b))`, `all_off()` |
-| `Stage` | `axes`, `move_to({axis: pos})`, `move_by({axis: offset})`, `jog(axis, ±1)`, `stop()`, `position()`, `home()`, `is_homed`, `requires_homing` |
+| `Light` | `channels`, `set_level(id, 0.0–1.0)`, `set_color(id, (r, g, b))`, `level(id)`, `color(id)`, `all_off()` |
+| `Stage` | `axes`, `move_to({axis: pos})`, `move_by({axis: offset})`, `jog(axis, ±1)`, `stop()`, `position()`, `home()`, `is_homed`, `can_home`, `requires_homing` |
 | `Hub` | `ports`, `power_on(port)`, `power_off(port)`, `is_powered(port)`, `power_cycle(port)` |
 
 Units: seconds for time, millimetres for linear axes, degrees for rotary axes, and
 fractions from 0.0 to 1.0 for light levels. Canonical camera settings (`exposure_time` in
 seconds, `gain` in dB, `iso`, `aperture` as an f-number, `pixel_format`) mean the same thing
-on every camera. Other settings use the camera's own names.
+on every camera. Other settings use the camera's own names. Gain and ISO are both
+canonical but are not interchangeable: converting between them needs a camera's base ISO,
+so each camera exposes whichever it has natively. Features only one camera has so far,
+such as binning or a DSLR's image size, also use native names.
+
+### Camera settings
+
+A `Setting` says what it accepts:
+
+- `choices`: only these values (e.g. a DSLR's shutter speeds, as seconds).
+- `minimum` and `maximum`: any value in range, when there are no choices.
+- `step`: the hardware takes only `minimum + k * step` and rounds anything else itself.
+
+Code that searches for a value, like automatic exposure calibration, should use
+`setting.nearest(value)` to get one the camera will keep exactly. It picks the closest
+allowed value, breaking ties toward the lower one. `direction="down"` picks the largest
+allowed value not above `value`, and `direction="up"` the smallest not below it. A value
+outside the allowed range gives the closest end of the range.
+
+A `Setting` is a snapshot. What one setting accepts can depend on others (maximum exposure
+on frame rate, shutter speeds on the exposure mode), so read it again after changing
+anything else.
+
+### Light levels
+
+`level(id)` and `color(id)` report the hardware's levels when the driver can read them.
+Otherwise they report the last value set since `open()`, or `None` if nothing has been set.
+`open()` doesn't change the lights, so reconnecting mid-session leaves them as they were.
+
+### Homing and rotary axes
+
+`can_home` says the stage has a hardware reference, such as limit switches, that `home()`
+can find. `home()` raises `NotImplementedError` on stages without one. `requires_homing`
+(which implies `can_home`) means the stage refuses to move until it has been homed on the
+current connection.
+
+`move_to()` is absolute. On a wrapping axis, 720° is the same position as 0°, so
+`move_to({"theta": 720})` from 0 doesn't move, and repeating any `move_to()` does nothing.
+Whole turns are relative moves: `move_by({"theta": 720})` turns twice. If you want
+positions that count turns, use a rotary axis that doesn't wrap. Its position keeps
+counting past 360, at the cost of losing the count on a reconnect or power cycle.
 
 ---
 

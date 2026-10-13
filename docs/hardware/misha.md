@@ -8,9 +8,11 @@ maintains the firmware in [`firmware/misha/`](../../firmware/misha/README.md). B
 the design is external, units may differ in parts such as the USB-serial bridge.
 Record what each unit has.
 
-The schematic is `2021_08_28_V1_1_MISHA_PCBWay_PCBWay Community.pdf` in the lab's
-OneDrive (EduceLab - General › FLEX › Photo Lab Outfitting › MISHA Spectral System).
-Facts below marked "from the schematic" come from it, not from inspecting a board.
+The schematic (`2021_08_28_V1_1_MISHA_PCBWay_PCBWay Community.pdf`) and the bill of
+materials with the LED design sheet (`MISHA Public BOM_PCBWay Community.xlsx`) are in
+the lab's OneDrive (EduceLab - General › FLEX › Photo Lab Outfitting › MISHA Spectral
+System). Facts below marked "from the schematic" or "from the BOM" come from them, not
+from inspecting a board.
 
 Driver: `educelab.devices.lights.misha.MishaLight`. Manual check: `el-devices misha`.
 
@@ -29,21 +31,23 @@ Driver: `educelab.devices.lights.misha.MishaLight`. Manual check: `el-devices mi
 - **Microcontroller**: a plug-in Arduino Nano module (part 102010268, an ATmega328P
   at 16 MHz) on the main board. From the schematic. Its USB bridge is the CP2102N
   below.
-- **The second board** isn't in the schematic. It's **assumed** to be the same PCB
-  without the Arduino: the schematic notes the expander's address with `EXP_ADDR`
-  high, and the firmware drives two expanders. The rest of this list describes the main
-  board.
+- **The second board** is the same PCB without the Arduino: the BOM populates the
+  drivers and their capacitors on "Both" panels and the Arduino header on "Main" only.
+  From the BOM.
 - **Band switching**: an MCP23017 I/O expander at I²C `0x21` (its `A0` is driven high by
   Arduino pin 4, and pulled low by 10 kΩ otherwise, which would put the second board's
   at `0x20`). Each output pin is one band's enable, pulled down by 10 kΩ, so bands are
   off while the expander is in reset. From the schematic and the firmware.
 - **LED drivers**: one ST STCS2A linear constant-current driver per band. Each sets its
   current with a 0.2 Ω sense resistor against a 100 mV reference, **0.5 A per
-  driver**, and has a 22 nF slope capacitor, C5 (see [Timing](#timing)). The PCB
-  layout has a C5 footprint on all 16 drivers; whether they're fitted on our boards is
-  **unknown** (look for a capacitor at pin 9 of each driver). From the schematic and
-  the STCS2A datasheet (Rev 3, July 2008). The STCS2 without the "A" has no slope pin
-  and a 4 µs ramp; its datasheet doesn't apply here.
+  driver** (the design sheet lists 500 mA for every band), and has a 22 nF slope
+  capacitor, C5 (see [Timing](#timing)). The BOM fits C5 on all 32 drivers (Yageo
+  AC1206KRX7R0BB223); that ours have them is **assumed** until someone looks for a
+  capacitor at pin 9 of a driver. From the schematic, the BOM, and the STCS2A datasheet
+  (Rev 3, July 2008). The STCS2 without the "A" has no slope pin and a 4 µs ramp; its
+  datasheet doesn't apply here.
+- **LEDs per band, per board**: one LED star for 365–420 nm, two for 450–850 nm, and
+  three for 940 nm, in series on the band's driver. From the BOM design sheet.
 - **Brightness**: Arduino pin D3 drives every driver's PWM input, and goes to the
   second board through the cable. It's pulled up by 10 kΩ, but the enables are pulled
   down, so a resetting Arduino doesn't light anything. From the schematic.
@@ -181,15 +185,15 @@ plus the time the reply takes to arrive, so allow at least that before exposing.
   current settle: it climbs to full above 50% duty and falls to zero below it, so
   dimming stops working. Faster PWM needs smaller slope capacitors on every driver
   (the datasheet gives about 4 µs with none, at the cost of more EMI), which is a
-  hardware change to an external design. If the C5 capacitors turn out not to be
-  fitted, this hazard doesn't apply and the PWM can go much faster.
-- **Power and heat.** A lit band draws about 1 A (0.5 A on each board, **assumed**
-  for the second board) from a 9 V,
+  hardware change to an external design. If our boards turn out not to have C5
+  fitted, despite the BOM, this hazard doesn't apply and the PWM can go much faster.
+- **Power and heat.** A lit band draws about 1 A (0.5 A on each board) from a 9 V,
   4 A supply. The firmware lights one band at a time, about 9 W; four bands would
   reach the supply's limit. The drivers are linear, so the difference between 9 V and
   the LEDs' forward voltage is burned in the drivers, most for the low-voltage IR
-  bands. The boards have heat-sink mounting and a fan. From the schematic;
-  temperatures not measured.
+  bands. The design sheet estimates 5.8–7.6 W of driver dissipation per band, highest
+  for 850 nm. The boards have heat-sink mounting and a fan. From the schematic and the
+  BOM; temperatures not measured.
 - **UV bands.** 365, 385, and 395 nm are ultraviolet. `close()` turns everything off,
   but a crashed program can leave a band lit; the board keeps its state until it's
   told otherwise or reset.
@@ -199,7 +203,7 @@ plus the time the reply takes to arrive, so allow at least that before exposing.
 
 - Whether units beyond the two checked use the CP2102N, and what else they might use.
 - How long the board actually takes to boot after a reset.
-- Whether the C5 slope capacitors are fitted, and so the actual current ramp time.
+- The actual current ramp time, and that C5 is fitted as the BOM says.
 - The actual PWM frequency and how steady 100% is.
 - Brightness against PWM percentage, especially below 10%.
 - Driver temperatures with a band lit for a long time.

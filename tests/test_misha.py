@@ -11,9 +11,8 @@ from educelab.devices.errors import (
 )
 from educelab.devices.lights import misha
 from educelab.devices.lights.misha import MishaLight
+from fakes.misha import IDENTITY, MishaFirmware
 from fakes.serial_port import ScriptedSerial
-
-IDENTITY = "MISHA LED Panels,1.1,2.0.0"
 
 
 @pytest.fixture(autouse=True)
@@ -21,18 +20,29 @@ def quick_handshake(monkeypatch):
     monkeypatch.setattr(misha, "HANDSHAKE_TIMEOUT_S", 0.05)
 
 
-def firmware(line):
-    """Answers commands the way MISHA firmware 2.0.0 does."""
-    if line in ("ID", "?"):
-        return [IDENTITY]
-    wavelength, _, intensity = line.partition(",")
-    if not (wavelength.isdigit() and intensity.isdigit()):
-        return ["ERR invalid command"]
-    if int(intensity) > 100:
-        return ["ERR intensity out of range"]
-    if int(wavelength) not in (0, *misha.WAVELENGTHS_NM):
-        return ["ERR unknown wavelength"]
-    return ["OK"]
+def make_transport(fake, port="/dev/ttyMISHA"):
+    return SerialTransport(port, baudrate=9600, timeout=0.05, opener=fake.open)
+
+
+def make_light(fake, port="/dev/ttyMISHA"):
+    return MishaLight(port, transport=make_transport(fake, port))
+
+
+def opened(fake):
+    light = make_light(fake)
+    light.open()
+    return light
+
+
+def scripted(*steps):
+    """A panel that opens with everything off, then expects ``steps``."""
+    return ScriptedSerial([("ID", [IDENTITY]), ("STATE", ["OK 0,0"]), *steps])
+
+
+def emulated(firmware=None):
+    """A panel running emulated firmware, and the firmware."""
+    firmware = firmware or MishaFirmware()
+    return ScriptedSerial(respond=firmware), firmware
 
 
 class TestMishaContract(LightContract):
@@ -42,32 +52,26 @@ class TestMishaContract(LightContract):
 
     @pytest.fixture
     def make_device(self):
-        return lambda: make_light(ScriptedSerial(respond=firmware))
+        return lambda: make_light(emulated()[0])
 
 
-def test_firmware_emulation_matches_the_documented_errors():
+def test_firmware_emulation_matches_the_documented_protocol():
+    firmware = MishaFirmware()
     assert firmware("600,50") == ["ERR unknown wavelength"]
     assert firmware("590,101") == ["ERR intensity out of range"]
     assert firmware("590,") == ["ERR invalid command"]
+    firmware("590,50")
+    firmware("420,0")
+    assert firmware("STATE") == ["OK 590,50"]
+    firmware("OFF")
+    assert firmware("STATE") == ["OK 0,0"]
 
 
-def make_light(fake, port="/dev/ttyMISHA"):
-    transport = SerialTransport(port, baudrate=9600, timeout=0.05, opener=fake.open)
-    return MishaLight(port, transport=transport)
+# Opening
 
 
-def scripted(*steps):
-    return ScriptedSerial([("ID", [IDENTITY]), ("0,0", ["OK"]), *steps])
-
-
-def opened(fake):
-    light = make_light(fake)
-    light.open()
-    return light
-
-
-def test_open_identifies_the_board_and_turns_everything_off():
-    fake = ScriptedSerial([("ID", [IDENTITY]), ("0,0", ["OK"])])
+def test_open_identifies_the_board_and_reads_its_state():
+    fake = scripted()
     light = opened(fake)
     fake.assert_done()
     assert light.info.firmware_version == "2.0.0"
@@ -75,9 +79,17 @@ def test_open_identifies_the_board_and_turns_everything_off():
     assert light.hardware_version == "1.1"
 
 
+def test_open_leaves_a_lit_band_on():
+    fake, firmware = emulated()
+    firmware.lit = (450, 50)
+    light = opened(fake)
+    assert light.level("450nm") == 0.5
+    assert fake.written == ["ID", "STATE", "STATE"]
+
+
 def test_open_skips_chatter_and_ignores_name_case():
     fake = ScriptedSerial(
-        [("ID", ["booting", " misha led panels , 1.1 , 2.1.0 "]), ("0,0", ["OK"])]
+        [("ID", ["booting", " misha led panels , 1.1 , 2.1.0 "]), ("STATE", ["OK 0,0"])]
     )
     assert opened(fake).info.firmware_version == "2.1.0"
 
@@ -111,9 +123,20 @@ def test_open_refuses_old_or_unknown_firmware(version):
     assert not fake.is_open
 
 
+@pytest.mark.parametrize("state", ["OK banana", "OK 600,50", "OK 450,150", "OK"])
+def test_open_rejects_a_state_it_cannot_read(state):
+    fake = ScriptedSerial([("ID", [IDENTITY]), ("STATE", [state])])
+    with pytest.raises(DeviceError, match="state"):
+        opened(fake)
+    assert not fake.is_open
+
+
 def test_open_fails_when_the_port_is_missing():
     with pytest.raises(DeviceNotFound):
         opened(ScriptedSerial(present=False))
+
+
+# Levels
 
 
 def test_channels_are_the_sixteen_bands():
@@ -124,62 +147,51 @@ def test_channels_are_the_sixteen_bands():
 
 
 def test_set_level_sends_percent_and_waits_for_ok():
-    fake = scripted(("450,50", ["OK"]), ("940,26", ["OK"]))
+    fake = scripted(("450,50", ["OK"]), ("940,26", ["OK"]), ("365,0", ["OK"]))
     light = opened(fake)
     light.set_level("450nm", 0.5)
     light.set_level("940nm", 0.256)
+    light.set_level("365nm", 0.0)
     fake.assert_done()
+
+
+def test_level_reads_the_panel():
+    fake, firmware = emulated()
+    light = opened(fake)
+    light.set_level("940nm", 0.256)
     assert light.level("940nm") == 0.26
+    firmware.lit = (365, 10)
+    assert light.level("365nm") == 0.1
+    assert light.level("940nm") == 0.0
 
 
 def test_lighting_a_band_turns_the_others_off():
-    light = opened(scripted(("450,50", ["OK"]), ("365,100", ["OK"])))
+    light = opened(emulated()[0])
     light.set_level("450nm", 0.5)
     light.set_level("365nm", 1.0)
     assert light.level("365nm") == 1.0
     assert light.level("450nm") == 0.0
 
 
-def test_everything_is_off_after_open():
-    light = opened(scripted())
-    assert all(light.level(c.id) == 0.0 for c in light.channels)
-
-
-def test_turning_off_the_lit_band_turns_everything_off():
-    fake = scripted(("450,50", ["OK"]), ("0,0", ["OK"]))
-    light = opened(fake)
-    light.set_level("450nm", 0.5)
-    light.set_level("450nm", 0.0)
-    fake.assert_done()
-    assert light.level("450nm") == 0.0
-
-
 def test_turning_off_an_unlit_band_leaves_the_lit_one_alone():
-    fake = scripted(("450,50", ["OK"]))
-    light = opened(fake)
+    light = opened(emulated()[0])
     light.set_level("450nm", 0.5)
     light.set_level("365nm", 0.0)
-    assert fake.written[-1] == "450,50"
     assert light.level("450nm") == 0.5
-
-
-def test_all_off_sends_one_command():
-    fake = scripted(("450,50", ["OK"]), ("0,0", ["OK"]))
-    light = opened(fake)
-    light.set_level("450nm", 0.5)
-    light.all_off()
-    fake.assert_done()
+    light.set_level("450nm", 0.0)
     assert light.level("450nm") == 0.0
 
 
-def test_err_raises_command_rejected_and_keeps_state():
-    light = opened(
-        scripted(("450,50", ["OK"]), ("365,100", ["ERR unknown wavelength"]))
-    )
-    light.set_level("450nm", 0.5)
+def test_all_off_sends_off():
+    fake = scripted(("OFF", ["OK"]))
+    opened(fake).all_off()
+    fake.assert_done()
+
+
+def test_err_raises_command_rejected():
+    light = opened(scripted(("365,100", ["ERR unknown wavelength"])))
     with pytest.raises(CommandRejected, match="unknown wavelength"):
         light.set_level("365nm", 1.0)
-    assert light.level("450nm") == 0.5
 
 
 def test_silence_raises_device_timeout():
@@ -209,13 +221,15 @@ def test_unknown_band_is_rejected_before_sending():
     light = opened(fake)
     with pytest.raises(KeyError):
         light.set_level("600nm", 0.5)
-    assert fake.written == ["ID", "0,0"]
+    assert fake.written == ["ID", "STATE"]
+
+
+# Closing
 
 
 def test_close_turns_everything_off():
-    fake = scripted(("450,50", ["OK"]), ("0,0", ["OK"]))
+    fake = scripted(("OFF", ["OK"]))
     light = opened(fake)
-    light.set_level("450nm", 0.5)
     light.close()
     fake.assert_done()
     assert not fake.is_open
@@ -230,6 +244,9 @@ def test_close_after_unplugging_still_closes(caplog):
     assert "could not turn off" in caplog.text
 
 
+# Discovery
+
+
 def fake_ports(monkeypatch, boards):
     """Attach ``boards``, a mapping of PortInfo to the ScriptedSerial behind it."""
     by_device = {port.device: fake for port, fake in boards.items()}
@@ -237,9 +254,7 @@ def fake_ports(monkeypatch, boards):
     monkeypatch.setattr(
         misha,
         "_default_transport",
-        lambda port: SerialTransport(
-            port, baudrate=9600, timeout=0.05, opener=by_device[port].open
-        ),
+        lambda port: make_transport(by_device[port], port),
     )
 
 

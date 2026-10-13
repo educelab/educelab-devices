@@ -47,7 +47,9 @@ class MishaLight(Light):
     """The MISHA LED panels: 16 monochromatic bands from 365 nm to 940 nm.
 
     Only one band is lit at a time, so setting a level above zero on one
-    channel turns the others off. Needs firmware 2.0.0 or newer.
+    channel turns the others off; setting an unlit band to zero changes
+    nothing. Levels are read from the panel, and opening leaves it as it was.
+    Closing turns everything off. Needs firmware 2.0.0 or newer.
 
     Args:
         port: Serial port, e.g. ``"COM3"`` or ``"/dev/ttyUSB0"``.
@@ -61,8 +63,6 @@ class MishaLight(Light):
         self._transport = transport or _default_transport(port)
         self._firmware_version: str | None = None
         self._hardware_version: str | None = None
-        # The lit channel and its level; None when everything is off.
-        self._lit: tuple[str, float] | None = None
 
     @property
     def info(self) -> DeviceInfo:
@@ -142,47 +142,52 @@ class MishaLight(Light):
                 )
             self._hardware_version = hardware
             self._firmware_version = firmware
-            self._all_off()
+            # Fails early on a board that can't report its state.
+            self._read_state()
         except BaseException:
             self._transport.close()
             raise
 
     def _close(self) -> None:
         try:
-            self._command("0,0")
+            self._command("OFF")
         except DeviceError as exc:
             logger.warning("%r could not turn off before closing: %s", self, exc)
         finally:
             self._transport.close()
 
     def _set_level(self, channel: Channel, level: float) -> None:
-        percent = round(level * 100)
-        if percent > 0:
-            self._command(f"{channel.wavelength_nm:.0f},{percent}")
-            self._lit = (channel.id, percent / 100)
-        elif self._lit is not None and self._lit[0] == channel.id:
-            self._all_off()
-        # Otherwise the band is already off. Sending it would turn off the lit one.
+        # At 0 the firmware turns this band off only if it's the lit one.
+        self._command(f"{channel.wavelength_nm:.0f},{round(level * 100)}")
 
     def _get_level(self, channel: Channel) -> float | None:
-        if self._lit is not None and self._lit[0] == channel.id:
-            return self._lit[1]
-        return 0.0
+        wavelength, percent = self._read_state()
+        return percent / 100 if wavelength == channel.wavelength_nm else 0.0
 
     def _all_off(self) -> None:
-        self._command("0,0")
-        self._lit = None
+        self._command("OFF")
 
     def _set_color(self, channel: Channel, color: RGB) -> None:
         raise NotImplementedError("MISHA channels are monochromatic")
 
-    def _command(self, command: str) -> None:
-        """Send a command and wait for its OK."""
+    def _read_state(self) -> tuple[int, int]:
+        """The lit wavelength and its percent, or ``(0, 0)`` if all are off."""
+        answer = self._command("STATE")
+        try:
+            wavelength, percent = (int(part) for part in answer.split(","))
+        except ValueError:
+            wavelength, percent = -1, -1
+        if wavelength not in (0, *WAVELENGTHS_NM) or not 0 <= percent <= 100:
+            raise DeviceError(f"{self!r} reported a state it can't be in: {answer!r}")
+        return wavelength, percent
+
+    def _command(self, command: str) -> str:
+        """Send a command, wait for its OK, and return any answer after it."""
         self._transport.reset_input()
         self._transport.write_line(command)
         reply = self._transport.read_line()
-        if reply == "OK":
-            return
+        if reply == "OK" or reply.startswith("OK "):
+            return reply[3:].strip()
         if reply.startswith("ERR"):
             reason = reply[3:].strip() or "no reason given"
             raise CommandRejected(f"{self!r} rejected {command!r}: {reason}")

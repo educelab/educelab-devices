@@ -10,11 +10,11 @@
     "completed": 2
   },
   "tasks": {
-    "total": 20,
-    "completed": 14
+    "total": 21,
+    "completed": 15
   },
   "current_phase": 3,
-  "current_task": "3.6",
+  "current_task": "3.7",
   "commits": [
     "babf191: Declare the serial extra and load pyserial lazily",
     "74ba596: Match serial ports only when every criterion matches",
@@ -33,6 +33,7 @@
     "eb58c03: Let lab firmware answer queries after OK",
     "5c2c13f: Add STATE and OFF to the MISHA firmware and switch bands precisely",
     "2f7a05c: Read MISHA levels from the panel instead of tracking them",
-    "947aa9d: Let MishaLight find its panel when no port is given"
+    "947aa9d: Let MishaLight find its panel when no port is given",
+    "d26d7c9: Find MISHA panels from USB descriptors instead of probing ports"
   ]
 }

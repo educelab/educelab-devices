@@ -33,6 +33,7 @@ class SimulatedStage(Stage):
         axes: The axes to offer. Defaults to linear ``x`` and ``y``
             (0–300 mm) and a wrapping rotary ``theta``.
         speed: Speed of every axis, in mm/s or deg/s.
+        can_home: Whether the stage can home.
         requires_homing: Whether the stage must be homed before moving.
     """
 
@@ -40,11 +41,15 @@ class SimulatedStage(Stage):
         self,
         axes: tuple[Axis, ...] = DEFAULT_AXES,
         speed: float = 1000.0,
+        can_home: bool = True,
         requires_homing: bool = False,
     ) -> None:
         super().__init__()
         if speed <= 0:
             raise ValueError(f"speed must be positive, not {speed}")
+        if requires_homing and not can_home:
+            raise ValueError("requires_homing needs can_home")
+        self.can_home = can_home
         self._axes = tuple(axes)
         self._speed = speed
         self.requires_homing = requires_homing

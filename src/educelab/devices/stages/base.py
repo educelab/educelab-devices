@@ -83,18 +83,25 @@ class Stage(Device):
     `move_timeout`). `stop()` may be called from another thread during a move;
     the interrupted move then raises `PositionError`.
 
-    Stages that set `requires_homing` refuse to move until `home()` has run on
-    the current connection. Homing is never a side effect of `open()`.
+    Stages with a hardware reference (e.g. limit switches) set `can_home`.
+    Those that also set `requires_homing` refuse to move until `home()` has run
+    on the current connection. Homing is never a side effect of `open()`.
+
+    On a wrapping axis, `move_to()` is absolute: 720 is the same position as
+    0, and moving there again does nothing. Use `move_by()` for whole turns.
 
     Drivers declare `axes` and implement `_move_to()`, `_jog()`, `_stop()`,
-    and `_position()`, plus `_home()` if they require homing.
+    and `_position()`, plus `_home()` if they can home.
     """
 
     move_timeout: float = 60.0
     """Default limit, in seconds, for a move or homing to finish."""
 
+    can_home: bool = False
+    """Whether the stage has a hardware reference that `home()` can find."""
+
     requires_homing: bool = False
-    """Whether the stage must be homed before it will move."""
+    """Whether the stage must be homed before it will move. Needs `can_home`."""
 
     _homed: bool = False
 
@@ -108,6 +115,11 @@ class Stage(Device):
         """Whether `home()` has completed on the current connection."""
         return self._homed
 
+    def open(self) -> None:
+        if self.requires_homing and not self.can_home:
+            raise ValueError(f"{self!r} sets requires_homing without can_home")
+        super().open()
+
     @synchronized
     def home(self, timeout: float | None = None) -> None:
         """Establish the stage's reference position from the hardware.
@@ -116,7 +128,7 @@ class Stage(Device):
             NotImplementedError: The stage has no hardware reference.
             DeviceTimeout: Homing did not finish in time.
         """
-        if not self.requires_homing:
+        if not self.can_home:
             raise NotImplementedError(f"{self!r} has no hardware reference to home to")
         self._homed = False
         self._home(self._timeout(timeout))

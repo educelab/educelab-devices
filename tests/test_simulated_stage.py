@@ -125,6 +125,17 @@ def test_move_while_jogging_raises_busy():
         stage.stop()
 
 
+class TestSimulatedStageWithoutReference(StageContract):
+    @pytest.fixture
+    def make_device(self):
+        return functools.partial(SimulatedStage, speed=FAST, can_home=False)
+
+
+def test_requires_homing_needs_can_home():
+    with pytest.raises(ValueError):
+        SimulatedStage(can_home=False, requires_homing=True)
+
+
 def test_home_moves_axes_to_reference():
     with SimulatedStage(speed=FAST, requires_homing=True) as stage:
         stage.home()

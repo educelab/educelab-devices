@@ -9,8 +9,9 @@ from educelab.devices.stages import Axis, AxisKind, Stage
 
 
 class StubStage(Stage):
-    def __init__(self, requires_homing: bool = False) -> None:
+    def __init__(self, can_home: bool = True, requires_homing: bool = False) -> None:
         super().__init__()
+        self.can_home = can_home
         self.requires_homing = requires_homing
         self.pos = {"x": 0.0, "theta": 0.0}
         self.calls: list[tuple] = []
@@ -145,9 +146,23 @@ def test_jog_starts_motion(stage):
     assert stage.calls == [("jog", "x", -1)]
 
 
-def test_home_on_stage_without_reference_raises(stage):
-    with pytest.raises(NotImplementedError):
+def test_home_on_stage_without_reference_raises():
+    with StubStage(can_home=False) as stage, pytest.raises(NotImplementedError):
         stage.home()
+
+
+def test_stage_that_can_home_moves_without_homing(stage):
+    stage.move_to({"x": 1.0})
+    stage.home()
+    assert stage.is_homed
+    assert stage.calls[-1][0] == "home"
+
+
+def test_requiring_homing_without_a_reference_is_rejected_at_open():
+    stage = StubStage(can_home=False, requires_homing=True)
+    with pytest.raises(ValueError, match="can_home"):
+        stage.open()
+    assert not stage.is_open
 
 
 def test_stage_requiring_homing_refuses_to_move_until_homed():

@@ -104,15 +104,28 @@ class StageContract(DeviceContract):
             device.move_to({"no-such-axis": 0.0})
 
     def test_homing_rules(self, device):
-        if not device.requires_homing:
+        if not device.can_home:
+            assert not device.requires_homing
             with pytest.raises(NotImplementedError):
                 device.home()
             return
         axis = device.axes[0]
-        with pytest.raises(PositionError):
-            device.move_to({axis.name: reachable_target(axis, 0.0)})
+        if device.requires_homing:
+            with pytest.raises(PositionError):
+                device.move_to({axis.name: reachable_target(axis, 0.0)})
+        assert not device.is_homed
         device.home()
         assert device.is_homed
+
+    def test_wrapping_move_to_is_absolute(self, device):
+        ready(device)
+        wrapping = [axis for axis in device.axes if axis.wraps]
+        if not wrapping:
+            pytest.skip("no wrapping axis")
+        for axis in wrapping:
+            device.move_to({axis.name: 90.0})
+            device.move_to({axis.name: 450.0})
+            assert device.position()[axis.name] == pytest.approx(90.0, abs=1e-3)
 
     def test_jog_then_stop(self, device):
         ready(device)

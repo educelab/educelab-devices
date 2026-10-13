@@ -8,6 +8,7 @@ from educelab.devices.stages import Axis, AxisKind, Stage
 
 
 class Turntable(Stage, Light):
+    can_home = True
     requires_homing = True
 
     def __init__(self) -> None:

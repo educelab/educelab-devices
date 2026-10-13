@@ -29,17 +29,24 @@ Driver: `educelab.devices.lights.misha.MishaLight`. Manual check: `el-devices mi
 - **Microcontroller**: a plug-in Arduino Nano module (part 102010268, an ATmega328P
   at 16 MHz) on the main board. From the schematic. Its USB bridge is the CP2102N
   below.
-- **Band switching**: one MCP23017 I/O expander per board, at I²C `0x21` on the main
-  board (its `A0` is driven high by Arduino pin 4) and `0x20` on the other. Each output
-  pin is one band's enable, pulled down by 10 kΩ, so bands are off while the expanders
-  are in reset. From the schematic and the firmware.
-- **LED drivers**: one ST STCS2A linear constant-current driver per band per board.
-  Each sets its current with a 0.2 Ω sense resistor against a 100 mV reference,
-  **0.5 A per driver**, and has a 22 nF slope capacitor (see [Timing](#timing)). From
-  the schematic and the STCS2A datasheet (Rev 3, July 2008).
-- **Brightness**: Arduino pin D3 drives every driver's PWM input on both boards. It's
-  pulled up by 10 kΩ, but the enables are pulled down, so a resetting Arduino doesn't
-  light anything. From the schematic.
+- **The second board** isn't in the schematic. It's **assumed** to be the same PCB
+  without the Arduino: the schematic notes the expander's address with `EXP_ADDR`
+  high, and the firmware drives two expanders. The rest of this list describes the main
+  board.
+- **Band switching**: an MCP23017 I/O expander at I²C `0x21` (its `A0` is driven high by
+  Arduino pin 4, and pulled low by 10 kΩ otherwise, which would put the second board's
+  at `0x20`). Each output pin is one band's enable, pulled down by 10 kΩ, so bands are
+  off while the expander is in reset. From the schematic and the firmware.
+- **LED drivers**: one ST STCS2A linear constant-current driver per band. Each sets its
+  current with a 0.2 Ω sense resistor against a 100 mV reference, **0.5 A per
+  driver**, and has a 22 nF slope capacitor, C5 (see [Timing](#timing)). The PCB
+  layout has a C5 footprint on all 16 drivers; whether they're fitted on our boards is
+  **unknown** (look for a capacitor at pin 9 of each driver). From the schematic and
+  the STCS2A datasheet (Rev 3, July 2008). The STCS2 without the "A" has no slope pin
+  and a 4 µs ramp; its datasheet doesn't apply here.
+- **Brightness**: Arduino pin D3 drives every driver's PWM input, and goes to the
+  second board through the cable. It's pulled up by 10 kΩ, but the enables are pulled
+  down, so a resetting Arduino doesn't light anything. From the schematic.
 - **USB-serial bridge**: Silicon Labs CP2102N, VID:PID `10C4:EA60`, with a factory
   unique 128-bit serial number. **Verified** on two units, 2026-10-13:
   `MISHA-e6a00ad8` and `MISHA-2108d7a8` (one of them had factory serial
@@ -172,10 +179,12 @@ plus the time the reply takes to arrive, so allow at least that before exposing.
 - **Don't raise the PWM frequency without changing the slope capacitors.** With
   1.8 ms ramps, a period near or below 4 ms (above about 250 Hz) never lets the
   current settle: it climbs to full above 50% duty and falls to zero below it, so
-  dimming stops working. Faster PWM needs smaller slope capacitors on all 32 drivers
-  (the datasheet gives about 3 µs with none, at the cost of more EMI), which is a
-  hardware change to an external design.
-- **Power and heat.** A lit band draws about 1 A (0.5 A on each board) from a 9 V,
+  dimming stops working. Faster PWM needs smaller slope capacitors on every driver
+  (the datasheet gives about 4 µs with none, at the cost of more EMI), which is a
+  hardware change to an external design. If the C5 capacitors turn out not to be
+  fitted, this hazard doesn't apply and the PWM can go much faster.
+- **Power and heat.** A lit band draws about 1 A (0.5 A on each board, **assumed**
+  for the second board) from a 9 V,
   4 A supply. The firmware lights one band at a time, about 9 W; four bands would
   reach the supply's limit. The drivers are linear, so the difference between 9 V and
   the LEDs' forward voltage is burned in the drivers, most for the low-voltage IR
@@ -190,7 +199,8 @@ plus the time the reply takes to arrive, so allow at least that before exposing.
 
 - Whether units beyond the two checked use the CP2102N, and what else they might use.
 - How long the board actually takes to boot after a reset.
-- The actual PWM frequency, current ramp time, and how steady 100% is.
+- Whether the C5 slope capacitors are fitted, and so the actual current ramp time.
+- The actual PWM frequency and how steady 100% is.
 - Brightness against PWM percentage, especially below 10%.
 - Driver temperatures with a band lit for a long time.
 

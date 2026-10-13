@@ -1,16 +1,22 @@
 """The stage role and its axes."""
 
 import math
+import numbers
+import time
 from abc import abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 
 from educelab.devices.device import Device, synchronized
-from educelab.devices.errors import PositionError
+from educelab.devices.errors import DeviceTimeout, PositionError
 from educelab.devices.settings import Setting
 
 __all__ = ["Axis", "AxisKind", "Stage"]
+
+# Longest turn of a wrapping axis in one absolute move, so the shorter way
+# round is unambiguously the intended direction.
+_MAX_WRAPPING_LEG = 120.0
 
 
 class AxisKind(StrEnum):
@@ -65,7 +71,9 @@ class Axis:
             PositionError: ``position`` is outside the axis's limits.
         """
         if self.wraps:
-            return position % 360.0
+            wrapped = position % 360.0
+            # A tiny negative position rounds up to exactly 360.
+            return 0.0 if wrapped == 360.0 else wrapped
         if (self.minimum is not None and position < self.minimum) or (
             self.maximum is not None and position > self.maximum
         ):
@@ -95,7 +103,8 @@ class Stage(Device):
 
     Drivers declare `axes` and implement `_move_to()`, `_jog()`, `_stop()`,
     `_position()`, `_speed()`, and `_set_speed()`, plus `_home()` if they can
-    home.
+    home. Drivers that track `stop()` requests clear them in
+    `_motion_starting()`.
     """
 
     move_timeout: float = 60.0
@@ -132,6 +141,7 @@ class Stage(Device):
             NotImplementedError: The stage has no hardware reference.
             DeviceTimeout: Homing did not finish in time.
         """
+        self._motion_starting()
         if not self.can_home:
             raise NotImplementedError(f"{self!r} has no hardware reference to home to")
         self._homed = False
@@ -156,6 +166,7 @@ class Stage(Device):
                 needs homing, or `stop()` interrupted the move.
             DeviceTimeout: The move did not finish in time.
         """
+        self._motion_starting()
         checked = {
             axis.name: axis.check(position)
             for axis, position in self._resolve(targets).items()
@@ -172,15 +183,17 @@ class Stage(Device):
 
         Raises the same errors as `move_to()`.
         """
+        self._motion_starting()
         resolved = self._resolve(offsets)
         self._check_homed()
         if not resolved:
             return
-        current = self._position()
+        start = dict(self._position())
         for axis, offset in resolved.items():
-            axis.check(current[axis.name] + offset)
+            axis.check(start[axis.name] + offset)
         self._move_by(
             {axis.name: offset for axis, offset in resolved.items()},
+            start,
             self._timeout(timeout),
         )
 
@@ -197,11 +210,12 @@ class Stage(Device):
             ValueError: ``direction`` is not ``+1`` or ``-1``.
             PositionError: The stage needs homing.
         """
+        self._motion_starting()
         if direction not in (1, -1) or isinstance(direction, bool):
             raise ValueError(f"direction must be +1 or -1, not {direction!r}")
         self._axis(axis)
         self._check_homed()
-        self._jog(axis, direction)
+        self._jog(axis, int(direction))
 
     @synchronized
     def speed(self) -> Setting:
@@ -218,10 +232,10 @@ class Stage(Device):
         """Set the speed for later moves and jogs.
 
         Raises:
+            TypeError: ``speed`` is not a number.
             ValueError: The stage doesn't accept ``speed``.
         """
-        self._speed().validate(speed)
-        self._set_speed(speed)
+        self._set_speed(float(self._speed().validate(speed)))
 
     def stop(self) -> None:
         """Stop all motion as soon as possible. Safe when nothing is moving.
@@ -252,10 +266,10 @@ class Stage(Device):
         raise KeyError(f"{self!r} has no axis {name!r}")
 
     def _resolve(self, values: Mapping[str, float]) -> dict[Axis, float]:
-        resolved = {}
+        resolved: dict[Axis, float] = {}
         for name, value in values.items():
             axis = self._axis(name)
-            if isinstance(value, bool) or not isinstance(value, int | float):
+            if isinstance(value, bool) or not isinstance(value, numbers.Real):
                 raise TypeError(f"{name} must be a number, not {type(value).__name__}")
             if not math.isfinite(value):
                 raise ValueError(f"{name} must be finite, not {value}")
@@ -277,16 +291,40 @@ class Stage(Device):
     def _move_to(self, targets: Mapping[str, float], timeout: float) -> None:
         """Move to checked absolute targets, blocking until arrival."""
 
-    def _move_by(self, offsets: Mapping[str, float], timeout: float) -> None:
-        """Move by checked offsets. Override when the hardware moves relatively."""
-        current = self._position()
-        self._move_to(
-            {
-                name: self._axis(name).check(current[name] + offset)
-                for name, offset in offsets.items()
-            },
-            timeout,
-        )
+    def _move_by(
+        self, offsets: Mapping[str, float], start: Mapping[str, float], timeout: float
+    ) -> None:
+        """Move by checked offsets from ``start``, the position they were
+        checked against. Override when the hardware moves relatively.
+
+        The default makes absolute moves, splitting turns of a wrapping axis
+        into legs short enough that each goes the intended way.
+        """
+        turns = [
+            abs(offset) for name, offset in offsets.items() if self._axis(name).wraps
+        ]
+        legs = max([1, *(math.ceil(turn / _MAX_WRAPPING_LEG) for turn in turns)])
+        deadline = time.monotonic() + timeout
+        for leg in range(1, legs + 1):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise DeviceTimeout(
+                    f"{self!r} move did not finish within {timeout:g} s"
+                )
+            self._move_to(
+                {
+                    name: self._axis(name).check(start[name] + offset * leg / legs)
+                    for name, offset in offsets.items()
+                },
+                remaining,
+            )
+
+    def _motion_starting(self) -> None:
+        """Called first in every move, homing, and jog, with the lock held.
+
+        A `stop()` from another thread before this belongs to an earlier
+        motion; drivers that record stop requests clear them here.
+        """
 
     @abstractmethod
     def _jog(self, axis: str, direction: int) -> None:

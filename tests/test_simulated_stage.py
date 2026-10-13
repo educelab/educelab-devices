@@ -141,7 +141,7 @@ class TestSimulatedStageWithoutReference(StageContract):
 
 def test_requires_homing_needs_can_home():
     with pytest.raises(ValueError):
-        SimulatedStage(can_home=False, requires_homing=True)
+        SimulatedStage(can_home=False, requires_homing=True).open()
 
 
 def test_home_moves_axes_to_reference():
@@ -150,3 +150,26 @@ def test_home_moves_axes_to_reference():
         stage.move_to({"x": 10.0, "theta": 90.0})
         stage.home()
         assert stage.position() == {"x": 0.0, "y": 0.0, "theta": 0.0}
+
+
+def test_stop_during_move_setup_interrupts_the_move(monkeypatch):
+    with SimulatedStage(speed=FAST) as stage:
+        resolve = stage._resolve
+
+        def stop_then_resolve(values):
+            stage.stop()
+            return resolve(values)
+
+        monkeypatch.setattr(stage, "_resolve", stop_then_resolve)
+        with pytest.raises(PositionError):
+            stage.move_to({"x": 50.0})
+        monkeypatch.undo()
+        stage.move_to({"x": 50.0})
+        assert stage.position()["x"] == pytest.approx(50.0)
+
+
+def test_speed_range_matches_the_setting():
+    with pytest.raises(ValueError):
+        SimulatedStage(speed=0.0005)
+    with SimulatedStage(speed=0.001) as stage:
+        stage.set_speed(stage.speed().value)

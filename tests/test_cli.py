@@ -42,3 +42,15 @@ def test_module_runs_the_cli():
     )
     assert result.returncode == 0
     assert "el-devices" in result.stdout
+
+
+def test_cli_starts_without_importing_devices():
+    code = (
+        "import sys; from educelab.devices.app.cli import build_parser; "
+        "build_parser(); "
+        "print(sorted(m for m in sys.modules if m == 'numpy' or '.simulated' in m))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, check=True
+    )
+    assert result.stdout.strip() == "[]"

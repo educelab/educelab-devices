@@ -2,19 +2,17 @@
 
 import argparse
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
-from educelab.devices.cameras import (
-    EXPOSURE_TIME,
-    SimulatedCamera,
-    SimulatedFileCamera,
-    SimulatedFocusDrive,
-)
-from educelab.devices.hubs import SimulatedHub
-from educelab.devices.lights import ChannelKind, SimulatedLight
-from educelab.devices.stages import SimulatedStage
+# Device modules are imported where they're used, so other subcommands and
+# --version don't pay for them (or for numpy).
+if TYPE_CHECKING:
+    from educelab.devices.lights import Light
 
 
 def _light() -> None:
+    from educelab.devices.lights import ChannelKind, SimulatedLight
+
     with SimulatedLight() as light:
         for channel in light.channels:
             if channel.kind is ChannelKind.RGB:
@@ -27,6 +25,8 @@ def _light() -> None:
 
 
 def _stage() -> None:
+    from educelab.devices.stages import SimulatedStage
+
     with SimulatedStage() as stage:
         stage.move_to({"x": 100.0, "y": 50.0})
         print(f"  after move_to: {_format(stage.position())}")
@@ -35,6 +35,8 @@ def _stage() -> None:
 
 
 def _camera() -> None:
+    from educelab.devices.cameras import EXPOSURE_TIME, SimulatedCamera
+
     with SimulatedCamera() as camera:
         camera.set_setting(EXPOSURE_TIME, 0.005)
         frame = camera.capture_frame()
@@ -45,12 +47,16 @@ def _camera() -> None:
 
 
 def _file_camera() -> None:
+    from educelab.devices.cameras import SimulatedFileCamera
+
     with SimulatedFileCamera() as camera:
         for file in camera.capture_files():
             print(f"  file: {file.name}, {len(file.data)} bytes")
 
 
 def _hub() -> None:
+    from educelab.devices.hubs import SimulatedHub
+
     with SimulatedHub() as hub:
         hub.power_cycle(hub.ports[0], off_time=0.1)
         states = {port: hub.is_powered(port) for port in hub.ports}
@@ -58,6 +64,8 @@ def _hub() -> None:
 
 
 def _focus() -> None:
+    from educelab.devices.cameras import SimulatedFocusDrive
+
     with SimulatedFocusDrive() as drive:
         drive.drive_to_limit("near")
         drive.step(120)
@@ -106,7 +114,9 @@ def run(args: argparse.Namespace) -> int:
     return 0
 
 
-def _levels(light: SimulatedLight) -> str:
+def _levels(light: "Light") -> str:
+    from educelab.devices.lights import ChannelKind
+
     return ", ".join(
         f"{c.id}={light.color(c.id) if c.kind is ChannelKind.RGB else light.level(c.id)}"
         for c in light.channels

@@ -1,5 +1,6 @@
 """The focus drive role."""
 
+import numbers
 from abc import abstractmethod
 from typing import Literal, get_args
 
@@ -16,7 +17,8 @@ class FocusDrive(Device):
 
     Positive steps move toward far, negative toward near. The drive can't
     report an absolute position, only how many steps it has moved since it
-    last reached a limit on this connection.
+    last reached a limit on this connection. A move that fails partway, other
+    than at a limit, loses that count.
 
     Drivers implement `_step()` and `_drive_to_limit()`. A `_step()` that hits
     a limit raises `FocusLimitReached`.
@@ -27,8 +29,8 @@ class FocusDrive(Device):
 
     @property
     def focus_steps(self) -> int | None:
-        """Signed steps moved since `last_limit`, or ``None`` if no limit has
-        been reached on this connection."""
+        """Signed steps moved since `last_limit`, or ``None`` if unknown: no
+        limit has been reached on this connection, or a move failed partway."""
         return self._focus_steps
 
     @property
@@ -45,14 +47,18 @@ class FocusDrive(Device):
             FocusLimitReached: A limit stopped the move early. `focus_steps`
                 is then 0 relative to that limit.
         """
-        if isinstance(steps, bool) or not isinstance(steps, int):
+        if isinstance(steps, bool) or not isinstance(steps, numbers.Integral):
             raise TypeError(f"steps must be an int, not {type(steps).__name__}")
+        steps = int(steps)
         if steps == 0:
             return
         try:
             self._step(steps)
         except FocusLimitReached as exc:
             self._at_limit(exc.limit)
+            raise
+        except BaseException:
+            self._lose_count()
             raise
         if self._focus_steps is not None:
             self._focus_steps += steps
@@ -66,17 +72,24 @@ class FocusDrive(Device):
         """
         if limit not in get_args(FocusLimit):
             raise ValueError(f"limit must be 'near' or 'far', not {limit!r}")
-        self._drive_to_limit(limit)
+        try:
+            self._drive_to_limit(limit)
+        except BaseException:
+            self._lose_count()
+            raise
         self._at_limit(limit)
 
     def _at_limit(self, limit: FocusLimit) -> None:
         self._last_limit = limit
         self._focus_steps = 0
 
-    def _reset_state(self) -> None:
-        super()._reset_state()
+    def _lose_count(self) -> None:
         self._focus_steps = None
         self._last_limit = None
+
+    def _reset_state(self) -> None:
+        super()._reset_state()
+        self._lose_count()
 
     @abstractmethod
     def _step(self, steps: int) -> None: ...

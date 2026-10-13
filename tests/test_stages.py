@@ -1,6 +1,7 @@
 import threading
 from collections.abc import Mapping
 
+import numpy as np
 import pytest
 
 from educelab.devices import DeviceInfo
@@ -243,3 +244,35 @@ def test_set_speed_checks_range(stage):
 def test_speed_needs_open_device():
     with pytest.raises(NotConnected):
         StubStage().speed()
+
+
+def _move_to_calls(stage):
+    return [call[1] for call in stage.calls if call[0] == "move_to"]
+
+
+def test_default_move_by_turns_a_wrapping_axis_the_whole_way(stage):
+    stage.move_by({"theta": 360.0})
+    legs = [targets["theta"] for targets in _move_to_calls(stage)]
+    assert legs == pytest.approx([120.0, 240.0, 0.0])
+
+
+def test_default_move_by_keeps_direction_past_half_a_turn(stage):
+    stage.move_by({"theta": 270.0, "x": 30.0})
+    legs = _move_to_calls(stage)
+    assert [targets["theta"] for targets in legs] == pytest.approx([90.0, 180.0, 270.0])
+    assert [targets["x"] for targets in legs] == pytest.approx([10.0, 20.0, 30.0])
+
+
+def test_wrapping_check_never_returns_360():
+    axis = Axis("theta", AxisKind.ROTARY, wraps=True)
+    assert axis.check(-1e-14) == 0.0
+
+
+def test_numpy_targets_are_accepted(stage):
+    stage.move_to({"x": np.float32(10.0)})
+    assert _move_to_calls(stage) == [{"x": 10.0}]
+
+
+def test_set_speed_rejects_non_numbers(stage):
+    with pytest.raises(TypeError):
+        stage.set_speed("fast")  # type: ignore[arg-type]

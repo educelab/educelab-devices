@@ -73,6 +73,14 @@ def test_set_setting_writes_valid_value(camera):
 def test_int_is_accepted_for_float_setting(camera):
     camera.set_setting(EXPOSURE_TIME, 1)
     assert camera.writes == [(EXPOSURE_TIME, 1)]
+    assert isinstance(camera.writes[0][1], float)
+    camera.set_setting(EXPOSURE_TIME, 0.5)
+
+
+def test_numpy_scalars_are_written_as_python_numbers(camera):
+    camera.set_setting(EXPOSURE_TIME, np.float32(0.5))
+    assert type(camera.writes[-1][1]) is float
+    assert type(Setting("iso", 100, 0, 6400).validate(np.int64(200))) is int
 
 
 @pytest.mark.parametrize("value", [2.0, 0.0, float("nan")])
@@ -216,3 +224,9 @@ def test_nearest_needs_a_numeric_setting():
 def test_nearest_rejects_unknown_direction():
     with pytest.raises(ValueError):
         CONTINUOUS.nearest(0.005, "sideways")  # type: ignore[arg-type]
+
+
+def test_nearest_clamps_to_the_last_step_below_an_off_grid_maximum():
+    setting = Setting("s", 0.0, minimum=0, maximum=10, step=3)
+    assert setting.nearest(11) == 9
+    assert setting.nearest(9.5, "up") == 9

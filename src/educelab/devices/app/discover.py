@@ -51,6 +51,10 @@ def run(args: argparse.Namespace) -> int:
         except DeviceError as exc:
             print(f"{backend.name}: discovery failed. {exc}")
             continue
+        except Exception as exc:  # noqa: BLE001
+            # One broken backend shouldn't hide the others.
+            print(f"{backend.name}: discovery failed. {type(exc).__name__}: {exc}")
+            continue
         for info in infos:
             found += 1
             details = [f"{info.model} at {info.address or 'unknown address'}"]

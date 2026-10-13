@@ -1,6 +1,7 @@
 """Adjustable device parameters."""
 
 import math
+import numbers
 from dataclasses import dataclass
 from typing import Literal
 
@@ -34,8 +35,13 @@ class Setting:
     unit: str | None = None
     read_only: bool = False
 
-    def validate(self, value: SettingValue) -> None:
+    def validate(self, value: SettingValue) -> SettingValue:
         """Check that ``value`` could be written to this setting.
+
+        Returns:
+            ``value`` as the setting's own type: an int for a float setting
+            becomes a float, and numpy scalars become Python numbers. Write
+            this rather than ``value``.
 
         Raises:
             TypeError: ``value`` has the wrong type.
@@ -45,24 +51,28 @@ class Setting:
         if self.read_only:
             raise ValueError(f"setting {self.name!r} is read-only")
         if self.choices is not None:
-            if value not in self.choices:
-                raise ValueError(
-                    f"{value!r} is not a choice for {self.name!r}: {self.choices}"
-                )
-            return
-        if not _same_kind(value, self.value):
+            for choice in self.choices:
+                if choice == value:
+                    return choice
+            raise ValueError(
+                f"{value!r} is not a choice for {self.name!r}: {self.choices}"
+            )
+        converted = _as_kind(value, self.value)
+        if converted is None:
             raise TypeError(
                 f"setting {self.name!r} takes {type(self.value).__name__}, "
                 f"not {type(value).__name__}"
             )
+        value = converted
         if isinstance(value, bool | str):
-            return
+            return value
         if math.isnan(value):
             raise ValueError(f"setting {self.name!r} can't be NaN")
         if self.minimum is not None and value < self.minimum:
             raise ValueError(f"{self.name}={value} is below {self.minimum}")
         if self.maximum is not None and value > self.maximum:
             raise ValueError(f"{self.name}={value} is above {self.maximum}")
+        return value
 
     def nearest(self, value: float, direction: Rounding = "nearest") -> float:
         """The allowed value closest to ``value``.
@@ -93,20 +103,23 @@ class Setting:
                 float(c) for c in self.choices if not isinstance(c, bool | str)
             )
             return _pick(allowed, value, direction)
-        result = value
+        low, high = self.minimum, self.maximum
         if self.step:
-            base = self.minimum if self.minimum is not None else 0.0
+            base = low if low is not None else 0.0
+            if high is not None:
+                # The top of the range may be off the grid.
+                high = base + math.floor((high - base) / self.step + 1e-9) * self.step
             # Tolerance so a value already on the grid isn't pushed off it by
             # floating-point error in the division.
             k = (value - base) / self.step
             below = base + math.floor(k + 1e-9) * self.step
             above = base + math.ceil(k - 1e-9) * self.step
-            result = _pick([below, above], value, direction)
-        if self.minimum is not None:
-            result = max(result, self.minimum)
-        if self.maximum is not None:
-            result = min(result, self.maximum)
-        return result
+            value = _pick([below, above], value, direction)
+        if low is not None:
+            value = max(value, low)
+        if high is not None:
+            value = min(value, high)
+        return value
 
 
 def _pick(allowed: list[float], value: float, direction: Rounding) -> float:
@@ -120,9 +133,12 @@ def _pick(allowed: list[float], value: float, direction: Rounding) -> float:
     return min(tied)
 
 
-def _same_kind(value: SettingValue, current: SettingValue) -> bool:
+def _as_kind(value: SettingValue, current: SettingValue) -> SettingValue | None:
+    """``value`` converted to the type of ``current``, or None if it can't be."""
     if isinstance(current, bool) or isinstance(value, bool):
-        return isinstance(current, bool) and isinstance(value, bool)
+        return value if isinstance(current, bool) and isinstance(value, bool) else None
+    if isinstance(current, str):
+        return value if isinstance(value, str) else None
     if isinstance(current, float):
-        return isinstance(value, int | float)
-    return type(value) is type(current)
+        return float(value) if isinstance(value, numbers.Real) else None
+    return int(value) if isinstance(value, numbers.Integral) else None

@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 
 from educelab.devices import DeviceInfo
@@ -143,3 +144,8 @@ def test_levels_are_forgotten_on_close():
         light.set_level("uv", 0.5)
     with light:
         assert light.level("uv") is None
+
+
+def test_numpy_levels_are_accepted(light):
+    light.set_level("uv", np.float32(0.5))
+    assert light.level("uv") == 0.5

@@ -211,6 +211,18 @@ canonical but are not interchangeable: converting between them needs a camera's 
 so each camera exposes whichever it has natively. Features only one camera has so far,
 such as binning or a DSLR's image size, also use native names.
 
+Numeric arguments can be Python numbers or numpy scalars (e.g. values from `np.linspace`).
+
+### Focus drives
+
+`focus_steps` counts steps from `last_limit`. A move that fails partway for any reason
+other than reaching a limit (a timeout, a lost connection) leaves the lens somewhere
+unknown, so both become `None` until the next `drive_to_limit()`.
+
+### Hubs
+
+`power_cycle()` turns the port back on even if the wait is interrupted (e.g. by Ctrl-C).
+
 ### Settings
 
 Camera settings and a stage's `speed()` are `Setting`s. A `Setting` says what it accepts:
@@ -219,11 +231,14 @@ Camera settings and a stage's `speed()` are `Setting`s. A `Setting` says what it
 - `minimum` and `maximum`: any value in range, when there are no choices.
 - `step`: the hardware takes only `minimum + k * step` and rounds anything else itself.
 
+A value is stored as the setting's own type, so an int written to a float setting such as
+`exposure_time` reads back as a float.
+
 Code that searches for a value, like automatic exposure calibration, should use
 `setting.nearest(value)` to get one the camera will keep exactly. It picks the closest
 allowed value, breaking ties toward the lower one. `direction="down"` picks the largest
 allowed value not above `value`, and `direction="up"` the smallest not below it. A value
-outside the allowed range gives the closest end of the range.
+outside the allowed range gives the closest allowed value at that end of the range.
 
 A `Setting` is a snapshot. What one setting accepts can depend on others (maximum exposure
 on frame rate, shutter speeds on the exposure mode), so read it again after changing
@@ -277,6 +292,9 @@ take the lock, check the device is open, and validate arguments against what you
 implement (`_open`, `_close`, `_set_level`, `_move_to`, and so on). Device-specific rules
 (a wavelength table, an alarm state) go in your hooks.
 
+- If your driver records `stop()` requests (as a flag or event), clear them in
+  `_motion_starting()`, which every move, homing, and jog calls first under the lock.
+  Clearing them anywhere later can lose a stop that arrived while the move was starting.
 - Import the vendor SDK lazily with `educelab.devices.errors.import_optional()`.
 - Test protocol logic against a fake transport, and subclass the role's contract class
   from `tests/contracts/` with a `make_device` fixture.

@@ -59,7 +59,7 @@ def test_power_cycle_rejects_negative_off_time(hub):
     assert hub.writes == []
 
 
-@pytest.mark.parametrize("port", [2, -1, True])
+@pytest.mark.parametrize("port", [2, -1, True, 1.0])
 def test_unknown_port_raises_key_error(hub, port):
     with pytest.raises(KeyError):
         hub.power_on(port)
@@ -68,3 +68,20 @@ def test_unknown_port_raises_key_error(hub, port):
 def test_hub_methods_need_open_device():
     with pytest.raises(NotConnected):
         StubHub().is_powered(0)
+
+
+@pytest.mark.parametrize("off_time", [float("nan"), float("inf")])
+def test_power_cycle_rejects_non_finite_off_time(hub, off_time):
+    with pytest.raises(ValueError):
+        hub.power_cycle(0, off_time=off_time)
+    assert hub.writes == []
+
+
+def test_power_cycle_restores_power_if_interrupted(hub, monkeypatch):
+    def interrupt(seconds):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr("time.sleep", interrupt)
+    with pytest.raises(KeyboardInterrupt):
+        hub.power_cycle(0)
+    assert hub.is_powered(0)

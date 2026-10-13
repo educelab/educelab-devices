@@ -1,5 +1,7 @@
 """The hub role."""
 
+import math
+import numbers
 import time
 from abc import abstractmethod
 
@@ -61,21 +63,28 @@ class Hub(Device):
 
         Raises:
             KeyError: The hub has no such port.
-            ValueError: ``off_time`` is negative.
+            ValueError: ``off_time`` is negative or not finite.
         """
         port = self._port(port)
         if off_time is None:
             off_time = self.power_cycle_off_time
-        if off_time < 0:
-            raise ValueError(f"off_time can't be negative, not {off_time}")
+        if not (math.isfinite(off_time) and off_time >= 0):
+            raise ValueError(f"off_time must be finite and >= 0, not {off_time}")
         self._set_power(port, False)
-        time.sleep(off_time)
-        self._set_power(port, True)
+        try:
+            time.sleep(off_time)
+        finally:
+            self._set_power(port, True)
 
     def _port(self, port: int) -> int:
-        if port not in self.ports or isinstance(port, bool):
+        # A float or bool equal to a port number is still not a port.
+        if (
+            isinstance(port, bool)
+            or not isinstance(port, numbers.Integral)
+            or port not in self.ports
+        ):
             raise KeyError(f"{self!r} has no port {port!r}")
-        return port
+        return int(port)
 
     @abstractmethod
     def _set_power(self, port: int, on: bool) -> None: ...

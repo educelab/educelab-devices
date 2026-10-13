@@ -81,6 +81,14 @@ def test_discover_reports_device_errors_and_continues(backends, capsys):
     assert "FakeLight" in out
 
 
+def test_discover_reports_broken_backends_and_continues(backends, capsys):
+    backends(("NoSuchClass", ""), ("FoundDevice", ""))
+    assert main(["discover"]) == 0
+    out = capsys.readouterr().out
+    assert "NoSuchClass: discovery failed" in out
+    assert "FakeLight" in out
+
+
 def test_discover_with_nothing_found(backends, capsys):
     backends()
     assert main(["discover"]) == 0

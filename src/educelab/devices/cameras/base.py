@@ -144,8 +144,7 @@ class Camera(Device):
             TypeError: ``value`` has the wrong type.
             ValueError: The setting is read-only or ``value`` is out of range.
         """
-        self._setting(name).validate(value)
-        self._set_setting(name, value)
+        self._set_setting(name, self._setting(name).validate(value))
 
     @synchronized
     def preview_frame(self) -> npt.NDArray[np.uint8]:

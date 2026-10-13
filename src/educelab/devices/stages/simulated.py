@@ -22,6 +22,7 @@ DEFAULT_AXES = (
 
 # Generous enough for fast tests; no real stage needs more.
 _MAX_SPEED = 1e6
+_MIN_SPEED = 0.001
 
 # How often a simulated motion updates its position and checks for stop().
 _TICK_S = 0.005
@@ -36,8 +37,8 @@ class SimulatedStage(Stage):
     Args:
         axes: The axes to offer. Defaults to linear ``x`` and ``y``
             (0–300 mm) and a wrapping rotary ``theta``.
-        speed: Starting speed of every axis, in mm/s or deg/s. Any speed up to
-            1,000,000 is accepted.
+        speed: Starting speed of every axis, in mm/s or deg/s. Any speed from
+            0.001 to 1,000,000 is accepted.
         can_home: Whether the stage can home.
         requires_homing: Whether the stage must be homed before moving.
     """
@@ -50,10 +51,10 @@ class SimulatedStage(Stage):
         requires_homing: bool = False,
     ) -> None:
         super().__init__()
-        if not 0 < speed <= _MAX_SPEED:
-            raise ValueError(f"speed must be in (0, {_MAX_SPEED:g}], not {speed}")
-        if requires_homing and not can_home:
-            raise ValueError("requires_homing needs can_home")
+        if not _MIN_SPEED <= speed <= _MAX_SPEED:
+            raise ValueError(
+                f"speed must be in [{_MIN_SPEED:g}, {_MAX_SPEED:g}], not {speed}"
+            )
         self.can_home = can_home
         self._axes = tuple(axes)
         self._speed_value = float(speed)
@@ -76,7 +77,7 @@ class SimulatedStage(Stage):
         return Setting(
             "speed",
             self._speed_value,
-            minimum=0.001,
+            minimum=_MIN_SPEED,
             maximum=_MAX_SPEED,
             unit="mm/s" if linear else "deg/s",
         )
@@ -104,7 +105,9 @@ class SimulatedStage(Stage):
             offsets[name] = offset
         self._travel(offsets, timeout)
 
-    def _move_by(self, offsets: Mapping[str, float], timeout: float) -> None:
+    def _move_by(
+        self, offsets: Mapping[str, float], start: Mapping[str, float], timeout: float
+    ) -> None:
         self._travel(offsets, timeout)
 
     def _home(self, timeout: float) -> None:
@@ -115,7 +118,6 @@ class SimulatedStage(Stage):
 
     def _jog(self, axis: str, direction: int) -> None:
         self._check_not_jogging()
-        self._stop_event.clear()
         self._jog_thread = threading.Thread(
             target=self._run_jog,
             args=(self._axis(axis), direction),
@@ -123,6 +125,9 @@ class SimulatedStage(Stage):
             daemon=True,
         )
         self._jog_thread.start()
+
+    def _motion_starting(self) -> None:
+        self._stop_event.clear()
 
     def _stop(self) -> None:
         self._stop_event.set()
@@ -133,7 +138,8 @@ class SimulatedStage(Stage):
 
     def _travel(self, offsets: Mapping[str, float], timeout: float) -> None:
         self._check_not_jogging()
-        self._stop_event.clear()
+        if self._stop_event.is_set():
+            raise PositionError(f"{self!r} move was interrupted by stop()")
         start = self._position()
         duration = max(abs(offset) for offset in offsets.values()) / self._speed_value
         began = time.monotonic()
@@ -171,9 +177,8 @@ class SimulatedStage(Stage):
     def _set_positions(self, positions: Mapping[str, float]) -> None:
         with self._state_lock:
             for name, position in positions.items():
-                if self._axis(name).wraps:
-                    position %= 360.0
-                self._positions[name] = position
+                axis = self._axis(name)
+                self._positions[name] = axis.check(position) if axis.wraps else position
 
     def _check_not_jogging(self) -> None:
         jog = self._jog_thread

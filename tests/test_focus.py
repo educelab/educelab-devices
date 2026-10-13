@@ -1,8 +1,9 @@
+import numpy as np
 import pytest
 
 from educelab.devices import DeviceInfo
 from educelab.devices.cameras import FocusDrive, FocusLimit
-from educelab.devices.errors import FocusLimitReached, NotConnected
+from educelab.devices.errors import DeviceTimeout, FocusLimitReached, NotConnected
 
 
 class StubFocus(FocusDrive):
@@ -86,3 +87,24 @@ def test_counter_is_forgotten_on_close():
 def test_focus_methods_need_open_device():
     with pytest.raises(NotConnected):
         StubFocus().step(1)
+
+
+@pytest.mark.parametrize("move", ["step", "drive_to_limit"])
+def test_failed_move_loses_the_counter(focus, monkeypatch, move):
+    focus.drive_to_limit("near")
+    focus.step(10)
+
+    def fail(*args):
+        raise DeviceTimeout("lens stopped responding")
+
+    monkeypatch.setattr(focus, f"_{move}", fail)
+    with pytest.raises(DeviceTimeout):
+        focus.step(500) if move == "step" else focus.drive_to_limit("far")
+    assert (focus.focus_steps, focus.last_limit) == (None, None)
+
+
+def test_numpy_step_counts_are_accepted(focus):
+    focus.drive_to_limit("near")
+    focus.step(np.int64(7))
+    assert focus.calls[-1] == 7
+    assert type(focus.focus_steps) is int

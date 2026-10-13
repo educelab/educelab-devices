@@ -1,6 +1,7 @@
 """The light role and its channels."""
 
 import math
+import numbers
 from abc import abstractmethod
 from dataclasses import dataclass
 from enum import StrEnum
@@ -173,7 +174,7 @@ class Light(Device):
 
 
 def _check_level(value: float, name: str) -> None:
-    if isinstance(value, bool) or not isinstance(value, int | float):
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
         raise TypeError(f"{name} must be a number, not {type(value).__name__}")
     if math.isnan(value) or not 0.0 <= value <= 1.0:
         raise ValueError(f"{name} must be between 0.0 and 1.0, not {value}")

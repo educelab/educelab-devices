@@ -65,6 +65,7 @@ Build the shared serial transport and its fake first, then the MISHA driver agai
 ### Verification
 
 - [ ] Docs reviewed by maintainer.
+  - Open (2026-10-13): maintainer to check one board for the C5 slope capacitor at pin 9 of an STCS2A. The BOM says it's fitted; if it is, keep the ~60 Hz SoftPWM and image at 100%. Optionally move to Timer 2 hardware PWM at ~61 Hz in 2.0.0 before flashing.
 
 ## Phase 5: Hardware verification
 

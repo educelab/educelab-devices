@@ -47,7 +47,8 @@ Build the shared serial transport and its fake first, then the MISHA driver agai
 
 ### Verification
 
-- [ ] All MISHA tests and contracts pass.
+- [x] All MISHA tests and contracts pass.
+  - 420 tests pass with and without pyserial installed. Coverage: `misha.py` 99%, `_serial.py` 93%.
 
 ## Phase 4: Docs and CLI
 

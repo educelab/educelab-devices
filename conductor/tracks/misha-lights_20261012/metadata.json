@@ -7,14 +7,14 @@
   "updated": "2026-10-13T00:00:00Z",
   "phases": {
     "total": 5,
-    "completed": 1
+    "completed": 2
   },
   "tasks": {
     "total": 17,
-    "completed": 7
+    "completed": 11
   },
-  "current_phase": 2,
-  "current_task": "2.3",
+  "current_phase": 3,
+  "current_task": "3.4",
   "commits": [
     "babf191: Declare the serial extra and load pyserial lazily",
     "74ba596: Match serial ports only when every criterion matches",
@@ -22,6 +22,11 @@
     "7ec1e75: Add a scripted serial fake for driver tests",
     "a6bba16: Copy the MISHA firmware in unchanged",
     "4d67d5a: Acknowledge every MISHA command with OK or ERR",
-    "2edb06c: Document the MISHA 2.0.0 protocol in the firmware README"
+    "2edb06c: Document the MISHA 2.0.0 protocol in the firmware README",
+    "3b27423: Record the MISHA firmware compile check",
+    "59e2748: Open MISHA panels with an ID handshake and version check",
+    "b3d91d8: Set MISHA band levels and track the one lit band",
+    "aaf6a31: Discover MISHA panels by handshaking USB-serial ports",
+    "ebbb3b3: Run the Light contract suite against MishaLight"
   ]
 }

@@ -15,7 +15,7 @@ Date: 08/01/2021
 // Device identification, reported in response to the "ID" handshake command
 #define DEVICE_NAME "MISHA LED Panels"
 #define HW_VERSION  "1.1"
-#define SW_VERSION  "1.0.0"
+#define SW_VERSION  "2.0.0"
 
 // Variables used for wavelength look-up
 const byte NUM_LEDS = 16; 
@@ -84,48 +84,84 @@ void loop() {
   // Check if a new command is available
   if(Serial.available() > 0)
   {
-    // Read the input and convert from a string to a char buffer.
-    // Buffer is 32 bytes — enough for the longest command ("940,100\n")
-    // with room to spare; the old 16-byte buffer could silently truncate.
-    char buffer[32];
     String input = Serial.readStringUntil('\n');
     input.trim();
+    if(input.length() == 0)
+    {
+      return;
+    }
 
-    // Handshake: let the host confirm which device and versions it's talking to
+    // Handshake: let the host confirm which device and versions it's talking to.
+    // This is the one command answered with something other than OK/ERR.
     if(input.equalsIgnoreCase("ID") || input == "?")
     {
       Serial.println(DEVICE_NAME "," HW_VERSION "," SW_VERSION);
       return;
     }
 
-    input.toCharArray(buffer, 32);
-    
-    // Parse the input to get the wavelength and intensity
-    int wavelength;
-    int intensity;
-    int result = sscanf(buffer, "%d,%d", &wavelength, &intensity);
-    if(result != 2)
+    // Every other command is "wavelength,intensity" and gets exactly one
+    // reply line, OK or ERR <reason>. Nothing changes unless the reply is OK.
+    int comma = input.indexOf(',');
+    long wavelength;
+    long intensity;
+    if(comma < 0
+       || !parseNumber(input.substring(0, comma), wavelength)
+       || !parseNumber(input.substring(comma + 1), intensity))
     {
-      Serial.println("Invalid command");
+      Serial.println("ERR invalid command");
       return;
     }
-    
-    // Turn off all LEDs first (handles the wavelength==0 "turn off" command
-    // and clears state before lighting a new channel).
-    turnOffAll();
+    if(intensity > 100)
+    {
+      Serial.println("ERR intensity out of range");
+      return;
+    }
+
+    // Wavelength 0 turns everything off.
+    if(wavelength == 0)
+    {
+      turnOffAll();
+      Serial.println("OK");
+      return;
+    }
 
     // Look up the 1-indexed pin number for this wavelength.
-    // getValueOf() returns 0 when the key is not found — which is now
+    // getValueOf() returns 0 when the key is not found, which is
     // unambiguously "not found" because all valid entries are >= 1.
-    int pinNumber = pinMapping.getValueOf(wavelength);
-    if(pinNumber >= 1 && pinNumber <= NUM_LEDS)
+    int pinNumber = pinMapping.getValueOf((int)wavelength);
+    if(pinNumber < 1 || pinNumber > NUM_LEDS)
     {
-      int pin = pinNumber - 1;  // convert to 0-indexed MCP pin
-      SoftPWMSetPercent(3, intensity);
-      mcp1.digitalWrite(pin, HIGH);
-      mcp2.digitalWrite(pin, HIGH);
+      Serial.println("ERR unknown wavelength");
+      return;
+    }
+
+    // Only one wavelength is lit at a time, and they share one PWM output.
+    turnOffAll();
+    int pin = pinNumber - 1;  // convert to 0-indexed MCP pin
+    SoftPWMSetPercent(3, (int)intensity);
+    mcp1.digitalWrite(pin, HIGH);
+    mcp2.digitalWrite(pin, HIGH);
+    Serial.println("OK");
+  }
+}
+
+// Parses a non-negative decimal number of at most 4 digits, with nothing else.
+bool parseNumber(String text, long &value)
+{
+  text.trim();
+  if(text.length() == 0 || text.length() > 4)
+  {
+    return false;
+  }
+  for(unsigned int idx = 0; idx < text.length(); idx++)
+  {
+    if(!isDigit(text[idx]))
+    {
+      return false;
     }
   }
+  value = text.toInt();
+  return true;
 }
 
 void turnOffAll()

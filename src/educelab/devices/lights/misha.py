@@ -105,8 +105,7 @@ class MishaLight(Light):
                 )
             self._hardware_version = hardware
             self._firmware_version = firmware
-            self._command("0,0")
-            self._lit = None
+            self._all_off()
         except BaseException:
             self._transport.close()
             raise
@@ -120,7 +119,22 @@ class MishaLight(Light):
             self._transport.close()
 
     def _set_level(self, channel: Channel, level: float) -> None:
-        raise NotImplementedError
+        percent = round(level * 100)
+        if percent > 0:
+            self._command(f"{channel.wavelength_nm:.0f},{percent}")
+            self._lit = (channel.id, percent / 100)
+        elif self._lit is not None and self._lit[0] == channel.id:
+            self._all_off()
+        # Otherwise the band is already off. Sending it would turn off the lit one.
+
+    def _get_level(self, channel: Channel) -> float | None:
+        if self._lit is not None and self._lit[0] == channel.id:
+            return self._lit[1]
+        return 0.0
+
+    def _all_off(self) -> None:
+        self._command("0,0")
+        self._lit = None
 
     def _set_color(self, channel: Channel, color: RGB) -> None:
         raise NotImplementedError("MISHA channels are monochromatic")

@@ -15,31 +15,60 @@
 6. Go to Tools → Port and select the device you want to program
 7. Can now use the regular `Upload` button
 
-### How to Control the Arduino Boards
-The board will accept a command through the virtual COM port (through USB), in the form `wavelength,intensity\n`.
-This will turn off all other LEDs and turn on the requested wavelength at the given intensity.
+### Flashing from the command line
+With [`arduino-cli`](https://arduino.github.io/arduino-cli/), from this directory:
 
-> [!NOTE]
-> The command must have a comma separating the wavelength and intensity, and it must end with a newline character.
-
-
-Examples:
-```python
-conn.write('420,100\n'.encode())  # set 420um LED to 100% intensity
-conn.write('590,50\n'.encode())   # set 590um LED to 50% intensity
-conn.write('590,\n'.encode())     # Device will report invalid command received
-conn.write('0,0\n'.encode())      # Turns off all LEDs
+```shell
+arduino-cli core install arduino:avr
+arduino-cli lib install SoftPWM "Adafruit MCP23017 Arduino Library"
+arduino-cli compile -b arduino:avr:nano:cpu=atmega328 MISHA
+arduino-cli upload -b arduino:avr:nano:cpu=atmega328 -p <port> MISHA
 ```
 
+On Apple silicon, the AVR compiler needs Rosetta 2 (`softwareupdate --install-rosetta`).
+
+## Protocol
+The board listens on its USB virtual COM port at 9600 baud. Commands are ASCII lines
+ending in `\n`. Opening the port resets the board, which ignores commands for about
+2 seconds while it boots.
+
 ### Identifying the device
-Sending `ID\n` (or `?\n`) asks the board to identify itself. It replies with a single
+Sending `ID` (or `?`) asks the board to identify itself. It replies with a single
 comma-separated line, `name,hardware revision,software version`:
 
 ```python
-conn.write('ID\n'.encode())
-conn.readline()  # b'MISHA LED Panels,1.1,1.0.0\r\n'
+conn.write(b'ID\n')
+conn.readline()  # b'MISHA LED Panels,1.1,2.0.0\r\n'
 ```
 
 Use this to confirm a serial port belongs to a MISHA board before sending LED commands.
 The hardware revision tracks the PCB (currently 1.1); the software version tracks
 `MISHA.ino` and is set by the `SW_VERSION` define at the top of that file.
+
+### Setting an LED
+`wavelength,intensity` turns off every LED, then lights the one at `wavelength` (nm) at
+`intensity` percent (0–100). Only one wavelength is lit at a time. `0,0` turns
+everything off.
+
+Every command is answered with exactly one line: `OK` if it was carried out, or
+`ERR <reason>` if it wasn't. A rejected command changes nothing.
+
+```python
+conn.write(b'420,100\n')  # b'OK': 420 nm at 100%
+conn.write(b'590,50\n')   # b'OK': 590 nm at 50%, 420 nm off
+conn.write(b'0,0\n')      # b'OK': everything off
+conn.write(b'600,50\n')   # b'ERR unknown wavelength'
+conn.write(b'590,101\n')  # b'ERR intensity out of range'
+conn.write(b'590,\n')     # b'ERR invalid command'
+```
+
+Wavelengths: 365, 385, 395, 420, 450, 470, 500, 530, 560, 590, 615, 630, 660, 730, 850,
+and 940.
+
+## Version history
+- **2.0.0**: Every command is answered with `OK` or `ERR <reason>`. Unknown
+  wavelengths, intensities above 100, and malformed commands are rejected without
+  changing the LEDs; previously an unknown wavelength turned everything off silently,
+  and only malformed commands got a reply (`Invalid command`). The `ID` reply is
+  unchanged. The `educelab-devices` MISHA driver requires this version.
+- **1.0.0**: `ID` handshake added. Commands other than `ID` are not acknowledged.

@@ -7,18 +7,20 @@
   "updated": "2026-10-13T00:00:00Z",
   "phases": {
     "total": 5,
-    "completed": 0
+    "completed": 1
   },
   "tasks": {
     "total": 17,
-    "completed": 4
+    "completed": 7
   },
-  "current_phase": 1,
-  "current_task": "1.4",
+  "current_phase": 2,
+  "current_task": "2.3",
   "commits": [
     "babf191: Declare the serial extra and load pyserial lazily",
     "74ba596: Match serial ports only when every criterion matches",
     "0b509dc: Add a line-oriented serial transport and handshake helper",
-    "7ec1e75: Add a scripted serial fake for driver tests"
+    "7ec1e75: Add a scripted serial fake for driver tests",
+    "a6bba16: Copy the MISHA firmware in unchanged",
+    "4d67d5a: Acknowledge every MISHA command with OK or ERR"
   ]
 }

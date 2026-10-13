@@ -29,7 +29,7 @@ Build the shared serial transport and its fake first, then the MISHA driver agai
 - [x] Task 2.1: Copy the current firmware into `firmware/misha/` unchanged (provenance commit).
   - Deviation: the sketch is in `firmware/misha/MISHA/`, since Arduino tools only build a sketch whose folder matches its `.ino` name. The README stays in `firmware/misha/`, as in the source repo.
 - [x] Task 2.2: Add `OK`/`ERR <reason>` replies to every command, `ERR` for unknown wavelengths, and bump the SW version.
-- [ ] Task 2.3: Document the protocol change in the firmware README.
+- [x] Task 2.3: Document the protocol change in the firmware README.
 
 ### Verification
 

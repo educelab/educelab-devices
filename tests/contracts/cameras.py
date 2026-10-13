@@ -34,6 +34,15 @@ class CameraContract(DeviceContract):
                 assert device.setting(name).value == choice
             device.set_setting(name, setting.value)
 
+    def test_nearest_values_are_accepted(self, device):
+        for name, setting in device.settings().items():
+            if setting.read_only or isinstance(setting.value, bool | str):
+                continue
+            for direction in ("nearest", "down", "up"):
+                value = setting.nearest(setting.value, direction)
+                device.set_setting(name, type(setting.value)(value))
+            device.set_setting(name, setting.value)
+
     def test_value_above_maximum_raises(self, device):
         for name, setting in device.settings().items():
             if setting.read_only or setting.maximum is None:

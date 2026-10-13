@@ -12,6 +12,7 @@ from educelab.devices.cameras.base import (
     FileCamera,
     Frame,
     FrameCamera,
+    Rounding,
     Setting,
     SettingValue,
 )
@@ -36,6 +37,7 @@ __all__ = [
     "FocusLimit",
     "Frame",
     "FrameCamera",
+    "Rounding",
     "Setting",
     "SettingValue",
     "SimulatedCamera",

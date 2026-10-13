@@ -151,3 +151,68 @@ def test_camera_file_save_overwrites_when_asked(tmp_path):
 def test_camera_file_save_rejects_path_stems(tmp_path, stem):
     with pytest.raises(ValueError):
         CameraFile("DSC_0001.NEF", b"raw").save(tmp_path, stem)
+
+
+SHUTTER = Setting(EXPOSURE_TIME, 1 / 125, choices=(1 / 250, 1 / 125, 1 / 60, 1 / 30))
+STEPPED = Setting(EXPOSURE_TIME, 0.001, 0.0002, 0.01, step=0.0002)
+CONTINUOUS = Setting(EXPOSURE_TIME, 0.001, 0.0001, 0.01)
+
+
+@pytest.mark.parametrize(
+    ("value", "direction", "expected"),
+    [
+        (1 / 100, "nearest", 1 / 125),
+        (1 / 70, "nearest", 1 / 60),
+        (1 / 70, "down", 1 / 125),
+        (1 / 100, "up", 1 / 60),
+        (1 / 60, "down", 1 / 60),
+        (1.0, "nearest", 1 / 30),
+        (1e-6, "up", 1 / 250),
+        (1e-6, "down", 1 / 250),
+    ],
+)
+def test_nearest_choice(value, direction, expected):
+    assert SHUTTER.nearest(value, direction) == expected
+
+
+def test_nearest_breaks_ties_toward_the_lower_value():
+    setting = Setting("iso", 100, choices=(100, 200))
+    assert setting.nearest(150) == 100
+
+
+@pytest.mark.parametrize(
+    ("value", "direction", "expected"),
+    [
+        (0.00125, "nearest", 0.0012),
+        (0.00131, "nearest", 0.0014),
+        (0.0013, "nearest", 0.0012),
+        (0.0013, "down", 0.0012),
+        (0.00121, "up", 0.0014),
+        (0.0012, "up", 0.0012),
+        (0.5, "nearest", 0.01),
+        (0.0, "nearest", 0.0002),
+    ],
+)
+def test_nearest_step(value, direction, expected):
+    assert STEPPED.nearest(value, direction) == pytest.approx(expected)
+
+
+def test_nearest_continuous_clamps_to_range():
+    assert CONTINUOUS.nearest(0.005) == 0.005
+    assert CONTINUOUS.nearest(1.0) == 0.01
+    assert CONTINUOUS.nearest(0.0, "down") == 0.0001
+
+
+def test_nearest_result_is_accepted_by_validate():
+    for value in (0.00031, 0.0099999, 0.5):
+        STEPPED.validate(STEPPED.nearest(value))
+
+
+def test_nearest_needs_a_numeric_setting():
+    with pytest.raises(TypeError):
+        Setting("mode", "a", choices=("a", "b")).nearest(1.0)
+
+
+def test_nearest_rejects_unknown_direction():
+    with pytest.raises(ValueError):
+        CONTINUOUS.nearest(0.005, "sideways")  # type: ignore[arg-type]

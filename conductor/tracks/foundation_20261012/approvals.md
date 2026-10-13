@@ -47,7 +47,7 @@ Second round:
 - **Extras:** each driver track declares its own.
 - **Phase checkpoints:** approved.
 
-Still open: CI (PR opened 2026-10-13).
+CI is green on PR #1. Still open: approving the `CONTEXT.md` *Setting* change, then merging.
 
 ## Phase checkpoints
 

@@ -83,9 +83,9 @@ Tooling first, then the `Device` base and value types, then the role ABCs (with 
 ## Final Verification
 
 - [x] All acceptance criteria met
-- [ ] Tests passing on the full CI matrix (not run: branch not pushed. Locally, 259 tests pass on macOS with Python 3.11–3.14, and mypy is clean)
+- [x] Tests passing on the full CI matrix (PR #1: Linux, macOS, and Windows × 3.11–3.14, plus 3.12 with numpy<2; mypy clean)
 - [x] Documentation updated
-- [~] Ready for review: approval gates outstanding, see approvals.md
+- [x] Ready for review (PR #1). Only the `CONTEXT.md` *Setting* change awaits approval
 
 ---
 

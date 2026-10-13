@@ -30,7 +30,7 @@ Build the shared serial transport and its fake first, then the MISHA driver agai
   - Deviation: the sketch is in `firmware/misha/MISHA/`, since Arduino tools only build a sketch whose folder matches its `.ino` name. The README stays in `firmware/misha/`, as in the source repo.
 - [x] Task 2.2: Add `OK`/`ERR <reason>` replies to every command, `ERR` for unknown wavelengths, and bump the SW version.
 - [x] Task 2.3: Document the protocol change in the firmware README.
-- [~] Task 2.4: Rework switching (maintainer review, 2026-10-13): add `STATE` (`OK <nm>,<pct>`, amending ADR 0004) and `OFF`; changing the lit band's level only changes brightness; `<nm>,0` turns off only that band. Still 2.0.0, since no board has it yet.
+- [x] Task 2.4: Rework switching (maintainer review, 2026-10-13): add `STATE` (`OK <nm>,<pct>`, amending ADR 0004) and `OFF`; changing the lit band's level only changes brightness; `<nm>,0` turns off only that band. Still 2.0.0, since no board has it yet.
 
 ### Verification
 

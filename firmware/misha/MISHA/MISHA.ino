@@ -26,6 +26,12 @@ HashMap<int,int> pinMapping = HashMap<int,int>( hashRawArray , NUM_LEDS + 1 );
 Adafruit_MCP23X17 mcp1;
 Adafruit_MCP23X17 mcp2;
 
+// The lit wavelength and its intensity in percent; both 0 when all are off.
+// Only one wavelength is lit at a time: they share one PWM output, and
+// whether the supply can power several at once is unknown.
+int litWavelength = 0;
+int litIntensity = 0;
+
 void setup() {
   // Configure the mapping of wavelength to 1-indexed pin number.
   // Using 1-based values so that 0 unambiguously means "not found".
@@ -99,8 +105,24 @@ void loop() {
       return;
     }
 
-    // Every other command is "wavelength,intensity" and gets exactly one
-    // reply line, OK or ERR <reason>. Nothing changes unless the reply is OK.
+    // Every other command gets exactly one reply line, OK or ERR <reason>.
+    // Nothing changes unless the reply is OK.
+    if(input.equalsIgnoreCase("STATE"))
+    {
+      Serial.print("OK ");
+      Serial.print(litWavelength);
+      Serial.print(",");
+      Serial.println(litIntensity);
+      return;
+    }
+    if(input.equalsIgnoreCase("OFF"))
+    {
+      turnOffAll();
+      Serial.println("OK");
+      return;
+    }
+
+    // "wavelength,intensity"
     int comma = input.indexOf(',');
     long wavelength;
     long intensity;
@@ -117,7 +139,7 @@ void loop() {
       return;
     }
 
-    // Wavelength 0 turns everything off.
+    // "0,0" is the 1.0.0 way of saying OFF, kept for hosts written for it.
     if(wavelength == 0)
     {
       turnOffAll();
@@ -135,12 +157,30 @@ void loop() {
       return;
     }
 
-    // Only one wavelength is lit at a time, and they share one PWM output.
-    turnOffAll();
-    int pin = pinNumber - 1;  // convert to 0-indexed MCP pin
-    SoftPWMSetPercent(3, (int)intensity);
-    mcp1.digitalWrite(pin, HIGH);
-    mcp2.digitalWrite(pin, HIGH);
+    if(intensity == 0)
+    {
+      // Turning off a wavelength that isn't lit leaves the lit one alone.
+      if(wavelength == litWavelength)
+      {
+        turnOffAll();
+      }
+    }
+    else if(wavelength == litWavelength)
+    {
+      // Already lit: only the brightness changes, with no dark gap.
+      SoftPWMSetPercent(3, (int)intensity);
+      litIntensity = (int)intensity;
+    }
+    else
+    {
+      turnOffAll();
+      int pin = pinNumber - 1;  // convert to 0-indexed MCP pin
+      SoftPWMSetPercent(3, (int)intensity);
+      mcp1.digitalWrite(pin, HIGH);
+      mcp2.digitalWrite(pin, HIGH);
+      litWavelength = (int)wavelength;
+      litIntensity = (int)intensity;
+    }
     Serial.println("OK");
   }
 }
@@ -167,6 +207,8 @@ bool parseNumber(String text, long &value)
 void turnOffAll()
 {
   // Turns off all LEDs
+  litWavelength = 0;
+  litIntensity = 0;
   SoftPWMSetPercent(3, 0);
   for(int idx = 0; idx < 16; idx++)
   {

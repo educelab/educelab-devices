@@ -1,6 +1,7 @@
 import pytest
 
-from educelab.devices._serial import SerialTransport
+from educelab.devices._serial import PortInfo, SerialTransport
+from educelab.devices.device import DeviceInfo
 from educelab.devices.errors import (
     CommandRejected,
     DeviceError,
@@ -196,3 +197,59 @@ def test_close_after_unplugging_still_closes(caplog):
     light.close()
     assert not light.is_open
     assert "could not turn off" in caplog.text
+
+
+def fake_ports(monkeypatch, boards):
+    """Attach ``boards``, a mapping of PortInfo to the ScriptedSerial behind it."""
+    by_device = {port.device: fake for port, fake in boards.items()}
+    monkeypatch.setattr(misha, "list_ports", lambda: list(boards))
+    monkeypatch.setattr(
+        misha,
+        "_default_transport",
+        lambda port: SerialTransport(
+            port, baudrate=9600, timeout=0.05, opener=by_device[port].open
+        ),
+    )
+
+
+def test_discover_reports_boards_that_identify(monkeypatch):
+    board = PortInfo("COM3", vid=0x1A86, pid=0x7523, serial_number="A1")
+    old = PortInfo("COM4", vid=0x2341, pid=0x0043)
+    fake_ports(
+        monkeypatch,
+        {
+            board: ScriptedSerial([("ID", [IDENTITY])]),
+            old: ScriptedSerial([("ID", ["MISHA LED Panels,1.1,1.0.0"])]),
+        },
+    )
+    assert MishaLight.discover() == [
+        DeviceInfo("misha", "MISHA", "COM3", "A1", "2.0.0"),
+        DeviceInfo("misha", "MISHA", "COM4", None, "1.0.0"),
+    ]
+
+
+def test_discover_skips_strangers_and_busy_ports(monkeypatch):
+    silent = ScriptedSerial([("ID", [])])
+    fake_ports(
+        monkeypatch,
+        {
+            PortInfo("COM5", vid=0x0403): silent,
+            PortInfo("COM6", vid=0x10C4): ScriptedSerial([("ID", ["XLC2,1,1"])]),
+            PortInfo("COM7", vid=0x1A86): ScriptedSerial(present=False),
+        },
+    )
+    assert MishaLight.discover() == []
+    assert not silent.is_open
+
+
+def test_discover_never_writes_to_unknown_usb_devices(monkeypatch):
+    webcam = ScriptedSerial()
+    fake_ports(
+        monkeypatch,
+        {
+            PortInfo("/dev/cu.usbmodem1", vid=0x291A): webcam,
+            PortInfo("/dev/ttyS0"): ScriptedSerial(),
+        },
+    )
+    assert MishaLight.discover() == []
+    assert webcam.opened_with is None

@@ -5,7 +5,7 @@ Protocol, timing, and firmware history: docs/hardware/misha.md.
 
 import logging
 
-from educelab.devices._serial import SerialTransport, handshake
+from educelab.devices._serial import PortMatch, SerialTransport, handshake, list_ports
 from educelab.devices.device import DeviceInfo
 from educelab.devices.errors import CommandRejected, DeviceError, DeviceNotFound
 from educelab.devices.lights.base import RGB, Channel, Light
@@ -20,6 +20,11 @@ BAUD_RATE = 9600
 RESET_SETTLE_S = 2.0
 HANDSHAKE_TIMEOUT_S = 2.0
 REPLY_TIMEOUT_S = 1.0
+
+# USB-serial bridges a board may sit behind (CH340, CP210x, FTDI, Prolific,
+# Arduino, SparkFun), from pgs-scan's spectral prototype. Discovery writes to
+# these ports only; other devices' ports aren't ours to send commands to.
+CANDIDATE_PORTS = PortMatch(vid={0x1A86, 0x10C4, 0x0403, 0x067B, 0x2341, 0x1B4F})
 
 # First field of the ID reply, compared ignoring case.
 ACCEPTED_NAMES = frozenset({"misha led panels"})
@@ -53,12 +58,7 @@ class MishaLight(Light):
     def __init__(self, port: str, *, transport: SerialTransport | None = None) -> None:
         super().__init__()
         self._port = port
-        self._transport = transport or SerialTransport(
-            port,
-            baudrate=BAUD_RATE,
-            timeout=REPLY_TIMEOUT_S,
-            reset_settle=RESET_SETTLE_S,
-        )
+        self._transport = transport or _default_transport(port)
         self._firmware_version: str | None = None
         self._hardware_version: str | None = None
         # The lit channel and its level; None when everything is off.
@@ -72,6 +72,43 @@ class MishaLight(Light):
             address=self._port,
             firmware_version=self._firmware_version,
         )
+
+    @classmethod
+    def discover(cls) -> list[DeviceInfo]:
+        """Find MISHA panels by asking each USB-serial port to identify itself.
+
+        Slow: opening a port resets the board behind it, so each candidate
+        port takes a few seconds. Boards with firmware too old to open are
+        still listed.
+
+        Raises:
+            ImportError: pyserial isn't installed.
+        """
+        found = []
+        for port in CANDIDATE_PORTS.matching(list_ports()):
+            transport = _default_transport(port.device)
+            try:
+                transport.open()
+                identity = handshake(
+                    transport, "ID", _parse_identity, HANDSHAKE_TIMEOUT_S
+                )
+            except DeviceError as exc:
+                # Usually a port held by another program; it can't be ours to open.
+                logger.debug("skipping %s: %s", port.device, exc)
+                continue
+            finally:
+                transport.close()
+            if identity is not None:
+                found.append(
+                    DeviceInfo(
+                        backend="misha",
+                        model="MISHA",
+                        address=port.device,
+                        serial_number=port.serial_number,
+                        firmware_version=identity[2],
+                    )
+                )
+        return found
 
     @property
     def hardware_version(self) -> str | None:
@@ -150,6 +187,12 @@ class MishaLight(Light):
             reason = reply[3:].strip() or "no reason given"
             raise CommandRejected(f"{self!r} rejected {command!r}: {reason}")
         raise DeviceError(f"{self!r} answered {command!r} with {reply!r}")
+
+
+def _default_transport(port: str) -> SerialTransport:
+    return SerialTransport(
+        port, baudrate=BAUD_RATE, timeout=REPLY_TIMEOUT_S, reset_settle=RESET_SETTLE_S
+    )
 
 
 def _parse_identity(line: str) -> tuple[str, str, str] | None:

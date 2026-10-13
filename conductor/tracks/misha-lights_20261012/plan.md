@@ -42,7 +42,7 @@ Build the shared serial transport and its fake first, then the MISHA driver agai
 
 - [x] Task 3.1: Write handshake tests (accepted name, wrong name, no reply, firmware too old); implement `open()`.
 - [x] Task 3.2: Write tests for `set_level`, exclusive-channel state, `all_off`, waiting for `OK`, `ERR` → `CommandRejected`, and wavelength validation; implement.
-- [ ] Task 3.3: Implement `discover()`.
+- [x] Task 3.3: Implement `discover()`.
 - [ ] Task 3.4: Run the `Light` contract suite against `MishaLight` on the fake transport.
 
 ### Verification

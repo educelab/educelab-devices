@@ -60,7 +60,7 @@ class MishaLight(Light):
     Args:
         port: Serial port, e.g. ``"COM3"`` or ``"/dev/ttyUSB0"``.
         serial_number: USB serial number of the panel's port, matched exactly
-            but ignoring case, e.g. ``"MISHA-1"``. Found again on each
+            but ignoring case, e.g. ``"MISHA-3f9a2c7e"``. Found again on each
             `open()`, so it survives the port being renamed after a replug.
         transport: Connection to use instead of opening ``port`` with
             pyserial. For tests.

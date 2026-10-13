@@ -250,11 +250,11 @@ NAMED = PortInfo(
     "/dev/cu.usbserial-110",
     vid=0x10C4,
     pid=0xEA60,
-    serial_number="MISHA-1",
+    serial_number="MISHA-3f9a2c7e",
     description="MISHA LED Panels",
 )
 OTHER_NAMED = PortInfo(
-    "/dev/cu.usbserial-120", vid=0x10C4, pid=0xEA60, serial_number="MISHA-2"
+    "/dev/cu.usbserial-120", vid=0x10C4, pid=0xEA60, serial_number="MISHA-b81d04aa"
 )
 UNNAMED = PortInfo(
     "/dev/cu.usbserial-130",
@@ -293,8 +293,8 @@ def test_discover_lists_named_panels_without_opening_anything(monkeypatch):
         },
     )
     assert MishaLight.discover() == [
-        DeviceInfo("misha", "MISHA", NAMED.device, "MISHA-1"),
-        DeviceInfo("misha", "MISHA", OTHER_NAMED.device, "MISHA-2"),
+        DeviceInfo("misha", "MISHA", NAMED.device, "MISHA-3f9a2c7e"),
+        DeviceInfo("misha", "MISHA", OTHER_NAMED.device, "MISHA-b81d04aa"),
     ]
     assert all(fake.opened_with is None for fake in boards.values())
 
@@ -308,7 +308,7 @@ def test_open_without_a_port_uses_the_only_named_panel(monkeypatch):
     assert light.info.address is None
     light.open()
     assert light.info.address == NAMED.device
-    assert light.info.serial_number == "MISHA-1"
+    assert light.info.serial_number == "MISHA-3f9a2c7e"
     assert NAMED.device in repr(light)
     assert panel.written == ["ID", "STATE"]
     assert [fake.opened_with is None for fake in boards.values()] == [True, True, False]
@@ -316,7 +316,9 @@ def test_open_without_a_port_uses_the_only_named_panel(monkeypatch):
 
 def test_open_without_a_port_names_the_choices_when_several_match(monkeypatch):
     boards = attach(monkeypatch, {NAMED: untouched(), OTHER_NAMED: untouched()})
-    with pytest.raises(DeviceError, match="MISHA-1.*MISHA-2.*serial_number="):
+    with pytest.raises(
+        DeviceError, match="MISHA-3f9a2c7e.*MISHA-b81d04aa.*serial_number="
+    ):
         MishaLight().open()
     assert all(fake.opened_with is None for fake in boards.values())
 
@@ -332,7 +334,7 @@ def test_serial_number_picks_a_panel_named_or_not(monkeypatch):
         monkeypatch,
         {NAMED: untouched(), OTHER_NAMED: untouched(), UNNAMED: untouched()},
     )
-    with MishaLight(serial_number="misha-2") as light:
+    with MishaLight(serial_number="misha-b81d04aa") as light:
         assert light.info.address == OTHER_NAMED.device
     with MishaLight(serial_number=UNNAMED.serial_number) as light:
         assert light.info.address == UNNAMED.device
@@ -340,13 +342,13 @@ def test_serial_number_picks_a_panel_named_or_not(monkeypatch):
 
 def test_serial_number_must_match_exactly(monkeypatch):
     attach(monkeypatch, {NAMED: untouched()})
-    with pytest.raises(DeviceNotFound, match="MISHA-10"):
-        MishaLight(serial_number="MISHA-10").open()
+    with pytest.raises(DeviceNotFound, match="MISHA-3f9a2c7"):
+        MishaLight(serial_number="MISHA-3f9a2c7").open()
 
 
 def test_port_and_serial_number_are_exclusive():
     with pytest.raises(ValueError):
-        MishaLight("COM3", serial_number="MISHA-1")
+        MishaLight("COM3", serial_number="MISHA-3f9a2c7e")
 
 
 def test_reopening_without_a_port_finds_a_replugged_panel(monkeypatch):
@@ -355,7 +357,7 @@ def test_reopening_without_a_port_finds_a_replugged_panel(monkeypatch):
     light.open()
     light.close()
     replugged = PortInfo(
-        "/dev/cu.usbserial-140", vid=0x10C4, pid=0xEA60, serial_number="MISHA-1"
+        "/dev/cu.usbserial-140", vid=0x10C4, pid=0xEA60, serial_number="MISHA-3f9a2c7e"
     )
     attach(monkeypatch, {replugged: untouched()})
     light.open()
@@ -374,5 +376,5 @@ def test_reopening_without_a_port_sticks_to_the_panel_it_found(monkeypatch):
     light.open()
     light.close()
     attach(monkeypatch, {OTHER_NAMED: untouched()})
-    with pytest.raises(DeviceNotFound, match="MISHA-1"):
+    with pytest.raises(DeviceNotFound, match="MISHA-3f9a2c7e"):
         light.open()

@@ -187,16 +187,25 @@ plus the time the reply takes to arrive, so allow at least that before exposing.
   (the datasheet gives about 4 µs with none, at the cost of more EMI), which is a
   hardware change to an external design. If our boards turn out not to have C5
   fitted, despite the BOM, this hazard doesn't apply and the PWM can go much faster.
-- **Power and heat.** A lit band draws about 1 A (0.5 A on each board) from a 9 V,
-  4 A supply. The firmware lights one band at a time, about 9 W; four bands would
-  reach the supply's limit. The drivers are linear, so the difference between 9 V and
-  the LEDs' forward voltage is burned in the drivers, most for the low-voltage IR
-  bands. The design sheet estimates 5.8–7.6 W of driver dissipation per band, highest
-  for 850 nm. The boards have heat-sink mounting and a fan. From the schematic and the
-  BOM; temperatures not measured.
-- **UV bands.** 365, 385, and 395 nm are ultraviolet. `close()` turns everything off,
-  but a crashed program can leave a band lit; the board keeps its state until it's
-  told otherwise or reset.
+- **Power.** A lit band draws about 1 A (0.5 A on each board) from a 9 V, 4 A
+  supply. The firmware lights one band at a time, about 9 W; four bands would reach the
+  supply's limit. From the schematic and the BOM.
+- **Heat, and silent dropouts.** The drivers are linear, so each lit one burns
+  (9 V − its LEDs' forward voltage − 0.1 V) × 0.5 A: about 2.5–3.1 W, most at 850 nm
+  (estimated from the design sheet's measured forward voltages). The STCS2A's
+  junction-to-ambient resistance is 50 °C/W on the recommended pad alone, 35 °C/W with
+  a 6 cm² copper spreader, and 12 °C/W with vias and an external heat sink (datasheet
+  Table 4). At 3 W that's roughly 175 °C, 130 °C, or 60 °C at 25 °C ambient. The driver
+  shuts down at 155 °C and recovers 25 °C lower, so without a working heat sink a band
+  held on can switch itself off and back on mid-capture. Nothing reports it: the
+  drivers' fault outputs (DISC) aren't connected, and `STATE` reports what was
+  commanded. The boards have heat-sink mounting holes and the schematic has a 9 V fan
+  (`FAN1` on `J3`); the maintainer reports that the boards show where a fan used to be
+  mounted, 2026-10-13. Whether ours are adequately cooled is **unknown**: measure
+  before relying on long exposures.
+- **The slope capacitors don't limit brightness or heat.** Brightness is set by the
+  0.2 Ω sense resistors (500 mA; the LEDs are rated 700–1200 mA). The datasheet gives
+  the capacitors' purpose as "reducing EMI noise and avoid current spike at turn on".
 - **Locking the bridge's configuration** in Xpress Configurator is permanent.
 
 ## Unknowns
@@ -206,7 +215,9 @@ plus the time the reply takes to arrive, so allow at least that before exposing.
 - The actual current ramp time, and that C5 is fitted as the BOM says.
 - The actual PWM frequency and how steady 100% is.
 - Brightness against PWM percentage, especially below 10%.
-- Driver temperatures with a band lit for a long time.
+- Driver temperatures with a band lit for a long time, and whether the drivers reach
+  thermal shutdown (watch 850 nm at 100% for about 10 minutes).
+- Whether our boards have heat sinks fitted, and whether a fan is needed.
 
 ## Manual check
 

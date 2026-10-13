@@ -1,5 +1,6 @@
 import pytest
 
+from contracts import LightContract
 from educelab.devices._serial import PortInfo, SerialTransport
 from educelab.devices.device import DeviceInfo
 from educelab.devices.errors import (
@@ -18,6 +19,36 @@ IDENTITY = "MISHA LED Panels,1.1,2.0.0"
 @pytest.fixture(autouse=True)
 def quick_handshake(monkeypatch):
     monkeypatch.setattr(misha, "HANDSHAKE_TIMEOUT_S", 0.05)
+
+
+def firmware(line):
+    """Answers commands the way MISHA firmware 2.0.0 does."""
+    if line in ("ID", "?"):
+        return [IDENTITY]
+    wavelength, _, intensity = line.partition(",")
+    if not (wavelength.isdigit() and intensity.isdigit()):
+        return ["ERR invalid command"]
+    if int(intensity) > 100:
+        return ["ERR intensity out of range"]
+    if int(wavelength) not in (0, *misha.WAVELENGTHS_NM):
+        return ["ERR unknown wavelength"]
+    return ["OK"]
+
+
+class TestMishaContract(LightContract):
+    @pytest.fixture(autouse=True)
+    def no_ports(self, monkeypatch):
+        monkeypatch.setattr(misha, "list_ports", list)
+
+    @pytest.fixture
+    def make_device(self):
+        return lambda: make_light(ScriptedSerial(respond=firmware))
+
+
+def test_firmware_emulation_matches_the_documented_errors():
+    assert firmware("600,50") == ["ERR unknown wavelength"]
+    assert firmware("590,101") == ["ERR intensity out of range"]
+    assert firmware("590,") == ["ERR invalid command"]
 
 
 def make_light(fake, port="/dev/ttyMISHA"):

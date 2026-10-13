@@ -16,7 +16,7 @@ Build the shared serial transport and its fake first, then the MISHA driver agai
 - [x] Task 1.1: Declare the `[serial]` extra; lazy `pyserial` import with a missing-extra error.
 - [x] Task 1.2: Write tests for port matching (all criteria must match; no criteria matches nothing); implement.
 - [x] Task 1.3: Implement open (with DTR-reset settle), line read/write with timeouts, and close.
-- [ ] Task 1.4: Implement the scripted fake serial transport (expected writes → canned replies) for driver tests.
+- [x] Task 1.4: Implement the scripted fake serial transport (expected writes → canned replies) for driver tests.
 
 ### Verification
 

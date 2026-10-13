@@ -23,9 +23,9 @@ Driver: `educelab.devices.lights.misha.MishaLight`. Manual check: `el-devices mi
   switching one band on both, plus one PWM output (Arduino pin 3) that sets the
   brightness for all bands. **Assumed** from the firmware source.
 - **USB-serial bridge**: Silicon Labs CP2102N, VID:PID `10C4:EA60`, with a factory
-  unique 128-bit serial number. **Verified** on one unit, 2026-10-13: factory serial
-  `c6f2674f…`, since named `MISHA-2108d7a8` (same USB location before and after, so
-  most likely the same unit). **Unknown** whether other units use the same bridge.
+  unique 128-bit serial number. **Verified** on two units, 2026-10-13:
+  `MISHA-e6a00ad8` and `MISHA-2108d7a8` (one of them had factory serial
+  `c6f2674f…`). Units come from an external design, so check each new one.
 
 ### How a panel shows up on the host
 
@@ -52,7 +52,7 @@ Names are `MISHA-` and 8 random hex digits, so nobody has to keep a sequence:
 python3 -c "import secrets; print('MISHA-' + secrets.token_hex(4))"
 ```
 
-To write the name (**verified** on `MISHA-2108d7a8`, 2026-10-13, including writing a second name over the first):
+To write the name (**verified** on `MISHA-e6a00ad8` and `MISHA-2108d7a8`, 2026-10-13; rewriting an already-programmed configuration is verified on `MISHA-2108d7a8`):
 
 1. Install **Simplicity Studio 5**. Studio 6 doesn't support CP210x devices or Xpress
    Configurator (Silicon Labs community answer, 2026-10-13).
@@ -149,7 +149,7 @@ Opening a panel therefore takes about 2 seconds.
 
 ## Unknowns
 
-- Whether other units use the CP2102N, and what else they might use.
+- Whether units beyond the two checked use the CP2102N, and what else they might use.
 - How long the board actually takes to boot after a reset.
 - Brightness against PWM percentage: whether it's linear.
 - The actual PWM frequency and whether 100% is steady.

@@ -7,6 +7,7 @@ from collections.abc import Mapping
 
 from educelab.devices.device import DeviceInfo
 from educelab.devices.errors import DeviceBusy, DeviceTimeout, PositionError
+from educelab.devices.settings import Setting
 from educelab.devices.stages.base import Axis, AxisKind, Stage
 
 __all__ = ["SimulatedStage"]
@@ -18,6 +19,9 @@ DEFAULT_AXES = (
     Axis("y", AxisKind.LINEAR, 0.0, 300.0),
     Axis("theta", AxisKind.ROTARY, wraps=True),
 )
+
+# Generous enough for fast tests; no real stage needs more.
+_MAX_SPEED = 1e6
 
 # How often a simulated motion updates its position and checks for stop().
 _TICK_S = 0.005
@@ -32,7 +36,8 @@ class SimulatedStage(Stage):
     Args:
         axes: The axes to offer. Defaults to linear ``x`` and ``y``
             (0–300 mm) and a wrapping rotary ``theta``.
-        speed: Speed of every axis, in mm/s or deg/s.
+        speed: Starting speed of every axis, in mm/s or deg/s. Any speed up to
+            1,000,000 is accepted.
         can_home: Whether the stage can home.
         requires_homing: Whether the stage must be homed before moving.
     """
@@ -45,13 +50,13 @@ class SimulatedStage(Stage):
         requires_homing: bool = False,
     ) -> None:
         super().__init__()
-        if speed <= 0:
-            raise ValueError(f"speed must be positive, not {speed}")
+        if not 0 < speed <= _MAX_SPEED:
+            raise ValueError(f"speed must be in (0, {_MAX_SPEED:g}], not {speed}")
         if requires_homing and not can_home:
             raise ValueError("requires_homing needs can_home")
         self.can_home = can_home
         self._axes = tuple(axes)
-        self._speed = speed
+        self._speed_value = float(speed)
         self.requires_homing = requires_homing
         self._positions = {axis.name: _reference(axis) for axis in self._axes}
         self._state_lock = threading.Lock()
@@ -65,6 +70,19 @@ class SimulatedStage(Stage):
     @property
     def axes(self) -> tuple[Axis, ...]:
         return self._axes
+
+    def _speed(self) -> Setting:
+        linear = any(axis.kind is AxisKind.LINEAR for axis in self._axes)
+        return Setting(
+            "speed",
+            self._speed_value,
+            minimum=0.001,
+            maximum=_MAX_SPEED,
+            unit="mm/s" if linear else "deg/s",
+        )
+
+    def _set_speed(self, speed: float) -> None:
+        self._speed_value = float(speed)
 
     def _open(self) -> None:
         pass
@@ -117,7 +135,7 @@ class SimulatedStage(Stage):
         self._check_not_jogging()
         self._stop_event.clear()
         start = self._position()
-        duration = max(abs(offset) for offset in offsets.values()) / self._speed
+        duration = max(abs(offset) for offset in offsets.values()) / self._speed_value
         began = time.monotonic()
         while True:
             elapsed = time.monotonic() - began
@@ -138,7 +156,7 @@ class SimulatedStage(Stage):
                 raise PositionError(f"{self!r} move was interrupted by stop()")
 
     def _run_jog(self, axis: Axis, direction: int) -> None:
-        step = direction * self._speed * _TICK_S
+        step = direction * self._speed_value * _TICK_S
         while not self._stop_event.wait(_TICK_S):
             position = self._position()[axis.name] + step
             at_limit = False

@@ -4,7 +4,7 @@ import pytest
 
 from contracts.device import DeviceContract
 from educelab.devices.errors import NotConnected, PositionError
-from educelab.devices.stages import Axis, Stage
+from educelab.devices.stages import Axis, AxisKind, Stage
 
 
 def ready(stage: Stage) -> Stage:
@@ -132,6 +132,31 @@ class StageContract(DeviceContract):
         device.jog(device.axes[0].name, 1)
         device.stop()
         assert set(device.position()) == {axis.name for axis in device.axes}
+
+    def test_speed_is_a_setting_named_speed(self, device):
+        speed = device.speed()
+        expected = (
+            "mm/s"
+            if any(axis.kind is AxisKind.LINEAR for axis in device.axes)
+            else "deg/s"
+        )
+        assert speed.name == "speed"
+        assert speed.unit == expected
+
+    def test_set_speed_accepts_allowed_speeds(self, device):
+        speed = device.speed()
+        for direction in ("nearest", "down", "up"):
+            device.set_speed(speed.nearest(speed.value, direction))
+        device.set_speed(speed.value)
+        assert device.speed().value == pytest.approx(speed.value)
+
+    def test_speed_above_maximum_raises(self, device):
+        speed = device.speed()
+        top = max(speed.choices) if speed.choices else speed.maximum
+        if top is None:
+            pytest.skip("speed has no maximum")
+        with pytest.raises(ValueError):
+            device.set_speed(float(top) * 2 + 1)
 
     def test_stop_when_idle_is_harmless(self, device):
         device.stop()

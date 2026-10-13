@@ -5,6 +5,7 @@ import pytest
 
 from educelab.devices import DeviceInfo
 from educelab.devices.errors import NotConnected, PositionError
+from educelab.devices.settings import Setting
 from educelab.devices.stages import Axis, AxisKind, Stage
 
 
@@ -14,6 +15,7 @@ class StubStage(Stage):
         self.can_home = can_home
         self.requires_homing = requires_homing
         self.pos = {"x": 0.0, "theta": 0.0}
+        self.speed_value = 50.0
         self.calls: list[tuple] = []
 
     @property
@@ -48,6 +50,13 @@ class StubStage(Stage):
 
     def _home(self, timeout: float) -> None:
         self.calls.append(("home", timeout))
+
+    def _speed(self) -> Setting:
+        return Setting("speed", self.speed_value, 1.0, 100.0, unit="mm/s")
+
+    def _set_speed(self, speed: float) -> None:
+        self.calls.append(("speed", speed))
+        self.speed_value = speed
 
 
 @pytest.fixture
@@ -221,3 +230,16 @@ def test_stage_methods_need_open_device():
             call()
     with pytest.raises(NotConnected):
         stage.move_to({"x": 1.0})
+
+
+def test_set_speed_checks_range(stage):
+    stage.set_speed(80.0)
+    assert stage.speed().value == 80.0
+    with pytest.raises(ValueError):
+        stage.set_speed(200.0)
+    assert stage.calls == [("speed", 80.0)]
+
+
+def test_speed_needs_open_device():
+    with pytest.raises(NotConnected):
+        StubStage().speed()

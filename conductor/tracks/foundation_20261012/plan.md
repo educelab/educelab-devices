@@ -34,7 +34,7 @@ Tooling first, then the `Device` base and value types, then the role ABCs (with 
 
 ### Verification
 
-- [~] Base tests pass; maintainer reviews the `Device` base API. (Tests pass; review pending, see approvals.md.)
+- [x] Base tests pass; maintainer reviews the `Device` base API. (Approved 2026-10-13.)
 
 ## Phase 3: Role ABCs
 
@@ -49,7 +49,7 @@ Tooling first, then the `Device` base and value types, then the role ABCs (with 
 
 ### Verification
 
-- [~] **Approval gate:** maintainer approves all role ABC signatures before Phase 4. (Pending, see approvals.md; Phase 4 proceeded at the maintainer's request.)
+- [x] **Approval gate:** maintainer approves all role ABC signatures before Phase 4. (Approved 2026-10-13 with changes: `Setting.step` and `nearest()`, `Light.level()` and `color()`, `Stage.can_home`, `Stage.speed()` and `set_speed()`. See approvals.md.)
 
 ## Phase 4: Contract suite and simulated devices
 

@@ -35,8 +35,19 @@ Resolved and implemented:
   `move_by`; turn-counting positions use a rotary axis that doesn't wrap. The guide and
   the `Stage` docstring explain this, and a contract test pins it.
 
-Still open: stage speed in the ABC (item 3), declaring extras up front (item 5), sign-off
-on the phase checkpoints, and CI.
+Second round:
+
+- **Stage speed is generic.** `Stage.speed() -> Setting` (named `"speed"`, in mm/s if the
+  stage has any linear axis, deg/s if rotary only) and `Stage.set_speed(value)`, with
+  abstract hooks `_speed()` and `_set_speed()`. Fixed-speed stages list `choices`, and
+  others give a range. To support this, `Setting` moved to `educelab.devices.settings`;
+  `educelab.devices.cameras` still re-exports it.
+  - **Needs approval:** `CONTEXT.md` now defines *Setting* as a device parameter, not
+    only a camera parameter.
+- **Extras:** each driver track declares its own.
+- **Phase checkpoints:** approved.
+
+Still open: CI (PR opened 2026-10-13).
 
 ## Phase checkpoints
 

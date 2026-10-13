@@ -8,6 +8,7 @@ from enum import StrEnum
 
 from educelab.devices.device import Device, synchronized
 from educelab.devices.errors import PositionError
+from educelab.devices.settings import Setting
 
 __all__ = ["Axis", "AxisKind", "Stage"]
 
@@ -90,8 +91,11 @@ class Stage(Device):
     On a wrapping axis, `move_to()` is absolute: 720 is the same position as
     0, and moving there again does nothing. Use `move_by()` for whole turns.
 
+    Moves and jogs run at the stage's speed, set with `set_speed()`.
+
     Drivers declare `axes` and implement `_move_to()`, `_jog()`, `_stop()`,
-    and `_position()`, plus `_home()` if they can home.
+    `_position()`, `_speed()`, and `_set_speed()`, plus `_home()` if they can
+    home.
     """
 
     move_timeout: float = 60.0
@@ -199,6 +203,26 @@ class Stage(Device):
         self._check_homed()
         self._jog(axis, direction)
 
+    @synchronized
+    def speed(self) -> Setting:
+        """The speed used by moves and jogs, and the speeds the stage accepts.
+
+        The setting is named ``"speed"``, in mm/s if the stage has any linear
+        axis and deg/s if it is rotary only. Stages with fixed speeds list them as ``choices``;
+        `Setting.nearest()` picks one.
+        """
+        return self._speed()
+
+    @synchronized
+    def set_speed(self, speed: float) -> None:
+        """Set the speed for later moves and jogs.
+
+        Raises:
+            ValueError: The stage doesn't accept ``speed``.
+        """
+        self._speed().validate(speed)
+        self._set_speed(speed)
+
     def stop(self) -> None:
         """Stop all motion as soon as possible. Safe when nothing is moving.
 
@@ -275,6 +299,14 @@ class Stage(Device):
     @abstractmethod
     def _position(self) -> Mapping[str, float]:
         """Positions of every axis. Called without the device lock."""
+
+    @abstractmethod
+    def _speed(self) -> Setting:
+        """The current speed and what the stage accepts, named ``"speed"``."""
+
+    @abstractmethod
+    def _set_speed(self, speed: float) -> None:
+        """Set the speed for later moves and jogs."""
 
     def _home(self, timeout: float) -> None:
         """Home the stage, blocking until done."""

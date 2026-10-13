@@ -76,6 +76,14 @@ def test_stop_interrupts_move_from_another_thread():
         assert 0.0 < stage.position()["x"] < 100.0
 
 
+def test_set_speed_changes_move_duration():
+    with SimulatedStage(speed=10.0) as stage:
+        stage.set_speed(1000.0)
+        start = time.monotonic()
+        stage.move_to({"x": 100.0})
+        assert time.monotonic() - start < 0.5
+
+
 def test_slow_move_times_out():
     with SimulatedStage(speed=10.0) as stage, pytest.raises(DeviceTimeout):
         stage.move_to({"x": 100.0}, timeout=0.1)

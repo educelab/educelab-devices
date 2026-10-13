@@ -4,6 +4,7 @@ from collections.abc import Mapping
 
 from educelab.devices import DeviceInfo
 from educelab.devices.lights import RGB, Channel, Light
+from educelab.devices.settings import Setting
 from educelab.devices.stages import Axis, AxisKind, Stage
 
 
@@ -48,6 +49,12 @@ class Turntable(Stage, Light):
 
     def _home(self, timeout: float) -> None:
         self.angle = 0.0
+
+    def _speed(self) -> Setting:
+        return Setting("speed", 10.0, choices=(10.0, 20.0), unit="deg/s")
+
+    def _set_speed(self, speed: float) -> None:
+        pass
 
     def _set_level(self, channel: Channel, level: float) -> None:
         self.halo_level = level

@@ -200,7 +200,7 @@ code.
 | `FileCamera` | adds `capture_files() -> list[CameraFile]`; save with `CameraFile.save(dir, stem)`, which refuses to overwrite unless asked |
 | `FocusDrive` | `step(n)` (positive = toward far), `drive_to_limit("near" \| "far")`, `focus_steps`, `last_limit` |
 | `Light` | `channels`, `set_level(id, 0.0–1.0)`, `set_color(id, (r, g, b))`, `level(id)`, `color(id)`, `all_off()` |
-| `Stage` | `axes`, `move_to({axis: pos})`, `move_by({axis: offset})`, `jog(axis, ±1)`, `stop()`, `position()`, `home()`, `is_homed`, `can_home`, `requires_homing` |
+| `Stage` | `axes`, `move_to({axis: pos})`, `move_by({axis: offset})`, `jog(axis, ±1)`, `stop()`, `position()`, `speed()`, `set_speed(value)`, `home()`, `is_homed`, `can_home`, `requires_homing` |
 | `Hub` | `ports`, `power_on(port)`, `power_off(port)`, `is_powered(port)`, `power_cycle(port)` |
 
 Units: seconds for time, millimetres for linear axes, degrees for rotary axes, and
@@ -211,9 +211,9 @@ canonical but are not interchangeable: converting between them needs a camera's 
 so each camera exposes whichever it has natively. Features only one camera has so far,
 such as binning or a DSLR's image size, also use native names.
 
-### Camera settings
+### Settings
 
-A `Setting` says what it accepts:
+Camera settings and a stage's `speed()` are `Setting`s. A `Setting` says what it accepts:
 
 - `choices`: only these values (e.g. a DSLR's shutter speeds, as seconds).
 - `minimum` and `maximum`: any value in range, when there are no choices.
@@ -235,7 +235,12 @@ anything else.
 Otherwise they report the last value set since `open()`, or `None` if nothing has been set.
 `open()` doesn't change the lights, so reconnecting mid-session leaves them as they were.
 
-### Homing and rotary axes
+### Stage speed, homing, and rotary axes
+
+`speed()` is a `Setting` named `"speed"`, in mm/s if the stage has any linear axis and deg/s
+if it is rotary only. Stages with fixed speeds (the Foldio360) list them as `choices`;
+others (GRBL feed rates) give a range. `set_speed()` applies to later moves and jogs.
+
 
 `can_home` says the stage has a hardware reference, such as limit switches, that `home()`
 can find. `home()` raises `NotImplementedError` on stages without one. `requires_homing`

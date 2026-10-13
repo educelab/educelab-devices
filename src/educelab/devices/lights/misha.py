@@ -29,7 +29,7 @@ REPLY_TIMEOUT_S = 1.0
 
 # Panels are found from their USB descriptors alone, since opening a port to
 # ask resets whatever board is behind it. A named panel is a CP2102N bridge
-# whose serial number contains "MISHA" (docs/hardware/misha.md#naming).
+# whose serial number contains "MISHA" (docs/hardware/misha.md#naming-a-panel).
 NAMED_PANELS = PortMatch(vid=0x10C4, pid=0xEA60, serial_number="MISHA")
 
 # First field of the ID reply, compared ignoring case.
@@ -109,7 +109,7 @@ class MishaLight(Light):
         """List the named panels attached, without opening their ports.
 
         Panels whose USB serial number hasn't been set to a MISHA name aren't
-        listed (docs/hardware/misha.md#naming). The firmware version is only
+        listed (docs/hardware/misha.md#naming-a-panel). The firmware version is only
         known once a panel is opened.
 
         Raises:
@@ -182,7 +182,7 @@ class MishaLight(Light):
         if not panels:
             raise DeviceNotFound(
                 "no named MISHA panel is attached. Pass port= or serial_number= "
-                "for a panel that isn't named (docs/hardware/misha.md#naming)."
+                "for a panel that isn't named (docs/hardware/misha.md#naming-a-panel)."
             )
         if len(panels) > 1:
             choices = ", ".join(f"{p.serial_number} at {p.device}" for p in panels)

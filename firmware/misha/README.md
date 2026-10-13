@@ -37,7 +37,7 @@ Sending `ID` (or `?`) asks the board to identify itself. It replies with a singl
 comma-separated line, `name,hardware revision,software version`:
 
 ```python
-conn.write(b'ID\n')
+conn.write(b"ID\n")
 conn.readline()  # b'MISHA LED Panels,1.1,2.0.0\r\n'
 ```
 
@@ -54,12 +54,12 @@ Every command is answered with exactly one line: `OK` if it was carried out, or
 `ERR <reason>` if it wasn't. A rejected command changes nothing.
 
 ```python
-conn.write(b'420,100\n')  # b'OK': 420 nm at 100%
-conn.write(b'590,50\n')   # b'OK': 590 nm at 50%, 420 nm off
-conn.write(b'0,0\n')      # b'OK': everything off
-conn.write(b'600,50\n')   # b'ERR unknown wavelength'
-conn.write(b'590,101\n')  # b'ERR intensity out of range'
-conn.write(b'590,\n')     # b'ERR invalid command'
+conn.write(b"420,100\n")  # b'OK': 420 nm at 100%
+conn.write(b"590,50\n")  # b'OK': 590 nm at 50%, 420 nm off
+conn.write(b"0,0\n")  # b'OK': everything off
+conn.write(b"600,50\n")  # b'ERR unknown wavelength'
+conn.write(b"590,101\n")  # b'ERR intensity out of range'
+conn.write(b"590,\n")  # b'ERR invalid command'
 ```
 
 Wavelengths: 365, 385, 395, 420, 450, 470, 500, 530, 560, 590, 615, 630, 660, 730, 850,

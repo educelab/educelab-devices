@@ -1,10 +1,16 @@
 # MISHA LED panels
 
 Sixteen-band LED panels used for spectral imaging, controlled over USB serial. The
-board design and the original firmware come from outside the lab (firmware by Reed
-Terdal, 2021); the lab owns its units and maintains the firmware in
-[`firmware/misha/`](../../firmware/misha/README.md). Because the design is external,
-units may differ in parts such as the USB-serial bridge. Record what each unit has.
+board design and the original firmware come from outside the lab: the boards are by
+Carlos Barrios at RIT's Chester F. Carlson Center for Imaging Science (schematic
+rev 1.1, 2021-08-28) and the firmware by Reed Terdal (2021). The lab owns its units and
+maintains the firmware in [`firmware/misha/`](../../firmware/misha/README.md). Because
+the design is external, units may differ in parts such as the USB-serial bridge.
+Record what each unit has.
+
+The schematic is `2021_08_28_V1_1_MISHA_PCBWay_PCBWay Community.pdf` in the lab's
+OneDrive (EduceLab - General › FLEX › Photo Lab Outfitting › MISHA Spectral System).
+Facts below marked "from the schematic" come from it, not from inspecting a board.
 
 Driver: `educelab.devices.lights.misha.MishaLight`. Manual check: `el-devices misha`.
 
@@ -17,11 +23,23 @@ Driver: `educelab.devices.lights.misha.MishaLight`. Manual check: `el-devices mi
 - **Firmware versions**: `1.0.0` (from `usb-dslr-capture-demo`) and `2.0.0` (this
   repository). The driver needs 2.0.0 or newer. See the
   [version history](../../firmware/misha/README.md#version-history).
-- **Microcontroller**: an ATmega328P at 16 MHz, flashed as an Arduino Nano.
-  **Assumed** from the flashing steps; not checked against a board.
-- **LED drivers**: two MCP23017 I/O expanders on I²C at `0x21` and `0x20`, each pin
-  switching one band on both, plus one PWM output (Arduino pin 3) that sets the
-  brightness for all bands. **Assumed** from the firmware source.
+- **Two boards per panel**, joined by a cable (RJ45 or M12) that carries 9 V, 5 V,
+  I²C, and the PWM line. The main board has the Arduino, the power input (9 V, 4 A,
+  36 W supply), and a fan. From the schematic.
+- **Microcontroller**: a plug-in Arduino Nano module (part 102010268, an ATmega328P
+  at 16 MHz) on the main board. From the schematic. Its USB bridge is the CP2102N
+  below.
+- **Band switching**: one MCP23017 I/O expander per board, at I²C `0x21` on the main
+  board (its `A0` is driven high by Arduino pin 4) and `0x20` on the other. Each output
+  pin is one band's enable, pulled down by 10 kΩ, so bands are off while the expanders
+  are in reset. From the schematic and the firmware.
+- **LED drivers**: one ST STCS2A linear constant-current driver per band per board.
+  Each sets its current with a 0.2 Ω sense resistor against a 100 mV reference,
+  **0.5 A per driver**, and has a 22 nF slope capacitor (see [Timing](#timing)). From
+  the schematic and the STCS2A datasheet (Rev 3, July 2008).
+- **Brightness**: Arduino pin D3 drives every driver's PWM input on both boards. It's
+  pulled up by 10 kΩ, but the enables are pulled down, so a resetting Arduino doesn't
+  light anything. From the schematic.
 - **USB-serial bridge**: Silicon Labs CP2102N, VID:PID `10C4:EA60`, with a factory
   unique 128-bit serial number. **Verified** on two units, 2026-10-13:
   `MISHA-e6a00ad8` and `MISHA-2108d7a8` (one of them had factory serial
@@ -112,6 +130,13 @@ an unknown wavelength silently turned everything off. The driver refuses it.
 
 Opening a panel therefore takes about 2 seconds.
 
+**LED current ramps over about 1.8 ms.** Each STCS2A ramps its current on and off at a
+rate set by its slope capacitor: 800 µs at 10 nF, and linear in the capacitance
+(datasheet, "Rise/Fall time of the current on PWM transition"). With the boards' 22 nF
+that's about 1.8 ms each way. A band reaches full brightness about 2 ms after `OK`,
+plus the time the reply takes to arrive, so allow at least that before exposing.
+**Assumed** from the datasheet; to be measured.
+
 ## State and recovery
 
 - **Power-up and reset**: every band off (the firmware's `setup()`). Any reconnect
@@ -133,27 +158,41 @@ Opening a panel therefore takes about 2 seconds.
   *other* boards, e.g. an X-Carve's GRBL controller, which then loses its homing. So
   the driver never opens a port it hasn't matched from USB descriptors or been given
   explicitly.
-- **Brightness flickers at about 60 Hz.** The firmware drives brightness with the
-  SoftPWM library, a software PWM on Timer 2 with a period of about 16.7 ms on a
-  16 MHz part (`SoftPWM.cpp`, "a PWM period of approximately 60Hz (~16ms)"). Below
-  100%, the LEDs blink at that rate. Exposures shorter than a period, or not a whole
-  number of periods, will vary in brightness from frame to frame. **Assumed** from
-  the library source; not measured on a panel. Whether 100% is steady is **unknown**.
+- **Brightness flickers at about 60 Hz below 100%.** The firmware drives D3 with the
+  SoftPWM library: a software PWM on Timer 2 with a period of about 16.7 ms on a
+  16 MHz part (`SoftPWM.cpp`, "a PWM period of approximately 60Hz (~16ms)"). Because
+  the drivers ramp over about 1.8 ms, each pulse of light is a trapezoid. Exposures
+  shorter than a period, or not a whole number of periods, vary in brightness from
+  frame to frame. Below roughly 10% the pulses are shorter than a ramp, so brightness
+  falls off faster than the percentage. At 100% SoftPWM switches off for 1/256 of
+  each period (about 65 µs), which the 1.8 ms ramp smooths to a dip of a few percent;
+  light is close to steady. **Assumed** from the library source and the datasheet;
+  to be measured. For imaging, light the band at 100% and set exposure with the
+  camera.
+- **Don't raise the PWM frequency without changing the slope capacitors.** With
+  1.8 ms ramps, a period near or below 4 ms (above about 250 Hz) never lets the
+  current settle: it climbs to full above 50% duty and falls to zero below it, so
+  dimming stops working. Faster PWM needs smaller slope capacitors on all 32 drivers
+  (the datasheet gives about 3 µs with none, at the cost of more EMI), which is a
+  hardware change to an external design.
+- **Power and heat.** A lit band draws about 1 A (0.5 A on each board) from a 9 V,
+  4 A supply. The firmware lights one band at a time, about 9 W; four bands would
+  reach the supply's limit. The drivers are linear, so the difference between 9 V and
+  the LEDs' forward voltage is burned in the drivers, most for the low-voltage IR
+  bands. The boards have heat-sink mounting and a fan. From the schematic;
+  temperatures not measured.
 - **UV bands.** 365, 385, and 395 nm are ultraviolet. `close()` turns everything off,
   but a crashed program can leave a band lit; the board keeps its state until it's
   told otherwise or reset.
-- **Several bands at once.** The firmware lights one band at a time. Whether the
-  supply can power several at once is **unknown**, so don't change that without
-  measuring.
 - **Locking the bridge's configuration** in Xpress Configurator is permanent.
 
 ## Unknowns
 
 - Whether units beyond the two checked use the CP2102N, and what else they might use.
 - How long the board actually takes to boot after a reset.
-- Brightness against PWM percentage: whether it's linear.
-- The actual PWM frequency and whether 100% is steady.
-- Whether the supply can power more than one band at once.
+- The actual PWM frequency, current ramp time, and how steady 100% is.
+- Brightness against PWM percentage, especially below 10%.
+- Driver temperatures with a band lit for a long time.
 
 ## Manual check
 

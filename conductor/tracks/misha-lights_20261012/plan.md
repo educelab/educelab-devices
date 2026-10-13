@@ -30,6 +30,7 @@ Build the shared serial transport and its fake first, then the MISHA driver agai
   - Deviation: the sketch is in `firmware/misha/MISHA/`, since Arduino tools only build a sketch whose folder matches its `.ino` name. The README stays in `firmware/misha/`, as in the source repo.
 - [x] Task 2.2: Add `OK`/`ERR <reason>` replies to every command, `ERR` for unknown wavelengths, and bump the SW version.
 - [x] Task 2.3: Document the protocol change in the firmware README.
+- [~] Task 2.4: Rework switching (maintainer review, 2026-10-13): add `STATE` (`OK <nm>,<pct>`, amending ADR 0004) and `OFF`; changing the lit band's level only changes brightness; `<nm>,0` turns off only that band. Still 2.0.0, since no board has it yet.
 
 ### Verification
 
@@ -44,6 +45,8 @@ Build the shared serial transport and its fake first, then the MISHA driver agai
 - [x] Task 3.2: Write tests for `set_level`, exclusive-channel state, `all_off`, waiting for `OK`, `ERR` → `CommandRejected`, and wavelength validation; implement.
 - [x] Task 3.3: Implement `discover()`.
 - [x] Task 3.4: Run the `Light` contract suite against `MishaLight` on the fake transport.
+- [ ] Task 3.5: Read the panel's state with `STATE` on open instead of turning it off; use `OFF` for `all_off()` and `close()`.
+- [ ] Task 3.6: Make `port` optional: with none, `open()` finds the panel itself, resetting each board it probes only once.
 
 ### Verification
 

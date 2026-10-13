@@ -299,3 +299,57 @@ def test_discover_never_writes_to_unknown_usb_devices(monkeypatch):
     )
     assert MishaLight.discover() == []
     assert webcam.opened_with is None
+
+
+# Finding the panel without a port
+
+
+def test_open_without_a_port_uses_the_first_misha_found(monkeypatch):
+    stranger = ScriptedSerial([("ID", ["XLC2,1,1"])])
+    webcam = ScriptedSerial()
+    panel = ScriptedSerial(respond=MishaFirmware())
+    fake_ports(
+        monkeypatch,
+        {
+            PortInfo("COM2", vid=0x291A): webcam,
+            PortInfo("COM3", vid=0x0403): stranger,
+            PortInfo("COM4", vid=0x1A86): panel,
+        },
+    )
+    light = MishaLight()
+    assert light.info.address is None
+    light.open()
+    assert light.info.address == "COM4"
+    assert light.info.firmware_version == "2.0.0"
+    assert "COM4" in repr(light)
+    assert panel.written == ["ID", "STATE"]
+    assert not stranger.is_open
+    assert webcam.opened_with is None
+
+
+def test_open_without_a_port_fails_when_no_misha_answers(monkeypatch):
+    fake_ports(
+        monkeypatch, {PortInfo("COM3", vid=0x0403): ScriptedSerial(present=False)}
+    )
+    with pytest.raises(DeviceNotFound, match="port="):
+        MishaLight().open()
+
+
+def test_open_without_a_port_refuses_old_firmware(monkeypatch):
+    old = ScriptedSerial([("ID", ["MISHA LED Panels,1.1,1.0.0"])])
+    fake_ports(monkeypatch, {PortInfo("COM3", vid=0x1A86): old})
+    with pytest.raises(DeviceError, match="firmware/misha"):
+        MishaLight().open()
+    assert not old.is_open
+
+
+def test_reopening_without_a_port_searches_again(monkeypatch):
+    first = ScriptedSerial(respond=MishaFirmware())
+    fake_ports(monkeypatch, {PortInfo("COM3", vid=0x1A86): first})
+    light = MishaLight()
+    light.open()
+    light.close()
+    replugged = ScriptedSerial(respond=MishaFirmware())
+    fake_ports(monkeypatch, {PortInfo("COM7", vid=0x1A86): replugged})
+    light.open()
+    assert light.info.address == "COM7"

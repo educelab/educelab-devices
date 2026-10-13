@@ -46,12 +46,12 @@ Build the shared serial transport and its fake first, then the MISHA driver agai
 - [x] Task 3.3: Implement `discover()`.
 - [x] Task 3.4: Run the `Light` contract suite against `MishaLight` on the fake transport.
 - [x] Task 3.5: Read the panel's state with `STATE` on open instead of turning it off; use `OFF` for `all_off()` and `close()`.
-- [ ] Task 3.6: Make `port` optional: with none, `open()` finds the panel itself, resetting each board it probes only once.
+- [x] Task 3.6: Make `port` optional: with none, `open()` finds the panel itself, resetting each board it probes only once.
 
 ### Verification
 
 - [x] All MISHA tests and contracts pass.
-  - 420 tests pass with and without pyserial installed. Coverage: `misha.py` 99%, `_serial.py` 93%.
+  - 428 tests pass with and without pyserial installed (after Tasks 3.5 and 3.6).
 
 ## Phase 4: Docs and CLI
 

@@ -52,15 +52,24 @@ class MishaLight(Light):
     Closing turns everything off. Needs firmware 2.0.0 or newer.
 
     Args:
-        port: Serial port, e.g. ``"COM3"`` or ``"/dev/ttyUSB0"``.
+        port: Serial port, e.g. ``"COM3"`` or ``"/dev/ttyUSB0"``. If omitted,
+            each `open()` uses the first panel it finds, probing the same
+            ports as `discover()`. Pass a port when more than one panel is
+            attached, or when other Arduino-based boards are: probing resets
+            them (docs/hardware/misha.md#hazards).
         transport: Connection to use instead of opening ``port`` with
             pyserial. For tests.
     """
 
-    def __init__(self, port: str, *, transport: SerialTransport | None = None) -> None:
+    def __init__(
+        self, port: str | None = None, *, transport: SerialTransport | None = None
+    ) -> None:
         super().__init__()
-        self._port = port
-        self._transport = transport or _default_transport(port)
+        self._search = port is None and transport is None
+        if transport is None and port is not None:
+            transport = _default_transport(port)
+        self._transport = transport
+        self._port = port if transport is None else transport.port
         self._firmware_version: str | None = None
         self._hardware_version: str | None = None
 
@@ -87,17 +96,8 @@ class MishaLight(Light):
         found = []
         for port in CANDIDATE_PORTS.matching(list_ports()):
             transport = _default_transport(port.device)
-            try:
-                transport.open()
-                identity = handshake(
-                    transport, "ID", _parse_identity, HANDSHAKE_TIMEOUT_S
-                )
-            except DeviceError as exc:
-                # Usually a port held by another program; it can't be ours to open.
-                logger.debug("skipping %s: %s", port.device, exc)
-                continue
-            finally:
-                transport.close()
+            identity = _probe(transport)
+            transport.close()
             if identity is not None:
                 found.append(
                     DeviceInfo(
@@ -120,19 +120,30 @@ class MishaLight(Light):
         return CHANNELS
 
     def __repr__(self) -> str:
-        return f"<MishaLight {self._port}>"
+        return f"<MishaLight {self._port or '(port not found yet)'}>"
 
     def _open(self) -> None:
-        self._transport.open()
-        try:
-            identity = handshake(
-                self._transport, "ID", _parse_identity, HANDSHAKE_TIMEOUT_S
-            )
-            if identity is None:
+        if self._search:
+            transport, identity = _find()
+            self._transport, self._port = transport, transport.port
+        else:
+            transport = self._require_transport()
+            transport.open()
+            try:
+                answer = handshake(
+                    transport, "ID", _parse_identity, HANDSHAKE_TIMEOUT_S
+                )
+            except BaseException:
+                transport.close()
+                raise
+            if answer is None:
+                transport.close()
                 raise DeviceNotFound(
                     f"no MISHA answered on {self._port!r}; check the port, "
                     "or that the board isn't held by another program"
                 )
+            identity = answer
+        try:
             _, hardware, firmware = identity
             if _version(firmware) < MIN_FIRMWARE:
                 minimum = ".".join(map(str, MIN_FIRMWARE))
@@ -145,7 +156,7 @@ class MishaLight(Light):
             # Fails early on a board that can't report its state.
             self._read_state()
         except BaseException:
-            self._transport.close()
+            transport.close()
             raise
 
     def _close(self) -> None:
@@ -154,7 +165,7 @@ class MishaLight(Light):
         except DeviceError as exc:
             logger.warning("%r could not turn off before closing: %s", self, exc)
         finally:
-            self._transport.close()
+            self._require_transport().close()
 
     def _set_level(self, channel: Channel, level: float) -> None:
         # At 0 the firmware turns this band off only if it's the lit one.
@@ -183,15 +194,46 @@ class MishaLight(Light):
 
     def _command(self, command: str) -> str:
         """Send a command, wait for its OK, and return any answer after it."""
-        self._transport.reset_input()
-        self._transport.write_line(command)
-        reply = self._transport.read_line()
+        transport = self._require_transport()
+        transport.reset_input()
+        transport.write_line(command)
+        reply = transport.read_line()
         if reply == "OK" or reply.startswith("OK "):
             return reply[3:].strip()
         if reply.startswith("ERR"):
             reason = reply[3:].strip() or "no reason given"
             raise CommandRejected(f"{self!r} rejected {command!r}: {reason}")
         raise DeviceError(f"{self!r} answered {command!r} with {reply!r}")
+
+    def _require_transport(self) -> SerialTransport:
+        # Only None before a port-less light first finds its panel.
+        assert self._transport is not None, "no transport before open()"
+        return self._transport
+
+
+def _find() -> tuple[SerialTransport, tuple[str, str, str]]:
+    """Open the first candidate port with a MISHA behind it."""
+    for port in CANDIDATE_PORTS.matching(list_ports()):
+        transport = _default_transport(port.device)
+        identity = _probe(transport)
+        if identity is not None:
+            return transport, identity
+        transport.close()
+    raise DeviceNotFound(
+        "no MISHA answered on any USB-serial port; check that it's plugged in "
+        "and not held by another program, or pass port="
+    )
+
+
+def _probe(transport: SerialTransport) -> tuple[str, str, str] | None:
+    """Open ``transport`` and ask what's there; None if it isn't a MISHA."""
+    try:
+        transport.open()
+        return handshake(transport, "ID", _parse_identity, HANDSHAKE_TIMEOUT_S)
+    except DeviceError as exc:
+        # Usually a port held by another program, so not one we could use.
+        logger.debug("skipping %s: %s", transport.port, exc)
+        return None
 
 
 def _default_transport(port: str) -> SerialTransport:

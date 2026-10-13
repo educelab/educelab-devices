@@ -74,8 +74,7 @@ Build the shared serial transport and its fake first, then the MISHA driver agai
 - [ ] Task 5.1: Flash the updated firmware onto the MISHA panels.
 - [ ] Task 5.2: Write `@pytest.mark.hardware` tests (handshake, each channel on/off, all off, `ERR` on an unknown wavelength).
 - [ ] Task 5.3: Run `el-devices misha` and the hardware tests on the panels.
-- [ ] Task 5.4: Thermal check: light 850 nm at 100% for about 10 minutes; watch for brightness dropouts and measure the driver tab temperature.
-- [ ] Task 5.5: Record results (firmware/hardware versions, timing) in `docs/hardware/misha.md`.
+- [ ] Task 5.4: Record results (firmware/hardware versions, timing) in `docs/hardware/misha.md`.
 
 ### Verification
 

@@ -76,6 +76,7 @@ Build the shared serial transport and its fake first, then the MISHA driver agai
 - [ ] Task 5.3: Run `el-devices misha` and the hardware tests on the panels.
 - [ ] Task 5.4: Record results (firmware/hardware versions, timing) in `docs/hardware/misha.md`.
   - Done (2026-10-14): flicker and brightness against level, measured with a camera on firmware 1.0.0; the doc's exposure limits replace the assumed PWM behavior.
+  - Done (2026-10-14): boot and reply timing measured on `MISHA-e6a00ad8`, firmware 2.0.0.
 
 ### Verification
 

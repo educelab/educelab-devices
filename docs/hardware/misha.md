@@ -123,11 +123,19 @@ an unknown wavelength silently turned everything off. The driver refuses it.
 
 | Constant | Value | Why |
 |---|---|---|
-| `RESET_SETTLE_S` | 2.0 s | Opening the port resets the board (DTR), and it ignores commands until its bootloader hands over. **Assumed**, from the spectral prototype's constant; to be measured. |
-| `HANDSHAKE_TIMEOUT_S` | 2.0 s | Wait for the `ID` reply after the settle. Also from the prototype. |
-| `REPLY_TIMEOUT_S` | 1.0 s | Wait for `OK`/`ERR`. A reply line takes about 10 ms to send at 9600 baud; the board's own processing time is **unknown** but should be far shorter. |
+| `RESET_SETTLE_S` | 2.0 s | Opening the port resets the board (DTR), and it ignores commands until its bootloader hands over. **Verified**: ready about 1.67 s after the port opens. |
+| `HANDSHAKE_TIMEOUT_S` | 2.0 s | Wait for the `ID` reply after the settle. `ID` takes about 36 ms. |
+| `REPLY_TIMEOUT_S` | 1.0 s | Wait for `OK`/`ERR`. `STATE` takes about 19 ms, nearly all of it the reply crossing at 9600 baud (about 1 ms per character). |
 
 Opening a panel therefore takes about 2 seconds.
+
+**Measured** 2026-10-14 on `MISHA-e6a00ad8`, firmware 2.0.0, from macOS. A probe
+opened the port, waited a set delay, and sent `ID` once, three times for each delay in
+50 ms steps. Nothing answered at 1.55 s or less; everything answered from 1.60 s, and
+the slower replies at 1.60 s and 1.65 s put the board ready at about 1.665 s. Most of
+that is the bootloader: `setup()` itself has only about 20 ms of delays. Opening the
+port took 5–115 ms more. Round trips over 20 tries: `ID` 36 ms median (max 37 ms),
+`STATE` 19 ms (max 21 ms). Other units may boot at a different speed.
 
 ## State and recovery
 
@@ -206,7 +214,7 @@ level and shutter speed, comparing the frame-to-frame spread of the mean against
 ## Unknowns
 
 - Whether units beyond the two checked use the CP2102N, and what else they might use.
-- How long the board actually takes to boot after a reset.
+- Boot time on units other than `MISHA-e6a00ad8`.
 - The exact PWM frequency and current ramp time, measured directly.
 - Whether other bands, panels, and cameras flicker the same way; only 530 nm on one
   panel with one camera was measured.

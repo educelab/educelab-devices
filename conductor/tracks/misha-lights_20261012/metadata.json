@@ -4,17 +4,17 @@
   "type": "feature",
   "status": "in_progress",
   "created": "2026-10-12T00:00:00Z",
-  "updated": "2026-10-13T00:00:00Z",
+  "updated": "2026-10-14T00:00:00Z",
   "phases": {
     "total": 5,
-    "completed": 3
+    "completed": 4
   },
   "tasks": {
     "total": 21,
     "completed": 17
   },
-  "current_phase": 4,
-  "current_task": "4.2",
+  "current_phase": 5,
+  "current_task": "5.1",
   "commits": [
     "babf191: Declare the serial extra and load pyserial lazily",
     "74ba596: Match serial ports only when every criterion matches",
@@ -39,6 +39,20 @@
     "c994963: Use random MISHA names in examples and tests",
     "53e9953: Note how MISHA panels get named for the hardware doc",
     "42971ef: Write the MISHA hardware doc",
-    "b57e98d: Add el-devices misha"
+    "b57e98d: Add el-devices misha",
+    "4aed654: Record Phase 4 progress for the MISHA track",
+    "950128c: Record the renamed MISHA panel in the hardware doc",
+    "af82c76: Record both named MISHA panels in the hardware doc",
+    "6d31a11: Record what the MISHA schematic says about the LED drivers",
+    "27cbd7c: Separate schematic facts from assumptions in the MISHA doc",
+    "efc89ec: Record what the MISHA BOM says in the hardware doc",
+    "47496fa: Note the open MISHA PWM question in the plan",
+    "aef0281: Record the MISHA drivers' heat and thermal-shutdown hazard",
+    "9595e06: Order the MISHA Phase 5 tasks",
+    "714e1d4: Remove heat and thermal material from the MISHA docs",
+    "e85e66c: Focus the MISHA hardware doc on what the firmware drives",
+    "a93dde5: Record measured MISHA flicker and exposure limits",
+    "c917103: Record measured MISHA boot and reply timing",
+    "2167492: Light bands at 25% by default in el-devices misha"
   ]
 }

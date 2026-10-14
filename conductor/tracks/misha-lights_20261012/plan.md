@@ -64,7 +64,8 @@ Build the shared serial transport and its fake first, then the MISHA driver agai
 
 ### Verification
 
-- [ ] Docs reviewed by maintainer.
+- [x] Docs reviewed by maintainer.
+  - Approved 2026-10-14, after the doc gained the measured exposure limits and timing, and `el-devices misha` moved to a 25% default.
   - Decided (2026-10-13): keep the ~60 Hz SoftPWM. Dimming flickers and the drivers ramp over ~1.8 ms, so the doc recommends running bands at 100% and setting exposure with the camera; Phase 5 measurements confirm or revise it. Driver cooling is out of scope.
 
 ## Phase 5: Hardware verification

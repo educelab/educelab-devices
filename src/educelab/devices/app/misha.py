@@ -23,8 +23,9 @@ def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") 
     parser.add_argument(
         "--level",
         type=_level,
-        default=0.5,
-        help="brightness for each band, above 0 and up to 1 (default: 0.5)",
+        default=0.25,
+        help="brightness for each band, above 0 and up to 1 (default: 0.25, "
+        "easy on the eyes; use 1 to see the panel at full power)",
     )
     parser.add_argument(
         "--dwell",

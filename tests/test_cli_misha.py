@@ -32,7 +32,7 @@ def panel(monkeypatch):
 
 def test_steps_through_every_band_and_turns_off(panel, capsys):
     fake, firmware = panel
-    assert main(["misha", "--dwell", "0", "--level", "0.25"]) == 0
+    assert main(["misha", "--dwell", "0"]) == 0
     out = capsys.readouterr().out
     assert "MISHA-2108d7a8" in out
     assert "firmware 2.0.0" in out

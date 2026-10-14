@@ -28,7 +28,7 @@ Adafruit_MCP23X17 mcp2;
 
 // The lit wavelength and its intensity in percent; both 0 when all are off.
 // Only one wavelength is lit at a time: they share one PWM output, and each
-// draws about 1 A from a 4 A supply (docs/hardware/misha.md#hazards).
+// draws about 1 A from a 4 A supply (docs/hardware/misha.md#what-the-firmware-drives).
 int litWavelength = 0;
 int litIntensity = 0;
 

@@ -145,23 +145,46 @@ Opening a panel therefore takes about 2 seconds.
 ## Brightness and exposure
 
 **Run bands at 100% and set exposure with the camera.** Below 100% the light flickers,
-so dimming a band to reach a target exposure (e.g. against a Spectralon reference)
-isn't reliable. This rests on the assumed behavior below; the hardware check should
-confirm it.
+so dimming a band changes brightness from frame to frame unless the exposure is long
+enough. To trim exposure against a reference such as Spectralon, keep to these limits:
 
-- **The firmware dims with a ~60 Hz software PWM.** It drives D3 with the SoftPWM
-  library: Timer 2, a period of about 16.7 ms on a 16 MHz part (`SoftPWM.cpp`, "a PWM
-  period of approximately 60Hz (~16ms)"). Below 100% the light blinks at that rate, so
-  exposures shorter than a period, or not a whole number of periods, vary in
-  brightness from frame to frame. **Assumed** from the library source; to be measured.
-- **The LED drivers ramp over about 1.8 ms.** Each driver's 22 nF slope capacitor sets
-  its rise and fall time: 800 µs at 10 nF, linear in the capacitance (STCS2A datasheet,
-  Rev 3). So each pulse of light is a trapezoid, and below roughly 10% the pulses are
-  shorter than a ramp and brightness falls off faster than the percentage. A newly lit
-  band reaches full brightness about 2 ms after `OK`. **Assumed** from the datasheet
-  and the BOM; to be measured.
-- **100% is close to steady.** SoftPWM switches off for 1/256 of each period (about
-  65 µs), which the ramp smooths to a dip of a few percent. **Assumed**; to be measured.
+| Level | Exposure that stays within ~1% frame to frame |
+|---|---|
+| 95–100% | any tested (1/60 s to 1 s) |
+| 90% | 1/15 s or longer |
+| 25–80% | 1/4 s or longer |
+| 10% | 1 s or longer |
+| 5% | avoid: about half as bright as set |
+
+At a looser 3%: 90% and up at any tested speed except 1/40 s, 80% at 1/15 s or longer,
+and 50–70% at 1/8 s or longer. Exposures shorter than 1/60 s weren't tested; flicker
+grows as exposure shortens, so expect even 95% to vary by a few percent at 1/125 s.
+
+**Measured** 2026-10-14 at 530 nm on one panel running firmware 1.0.0 (the PWM code is
+unchanged in 2.0.0), with a Nikon Z 7II photographing Spectralon: 10 RAW frames per
+level and shutter speed, comparing the frame-to-frame spread of the mean against the
+~1% spread at 100%. With 10 frames, differences under about 1% are within noise.
+
+- **100% is steady.** Its spread was 0.7–1.4% at every shutter speed, with no rise at
+  1/40 s, where flicker shows most. Any flicker at 100% is below that.
+- **Dimming uses a ~60 Hz software PWM.** The firmware drives D3 with the SoftPWM
+  library: Timer 2, a period of about 16.7 ms on a 16 MHz part (`SoftPWM.cpp`). Below
+  100% the light blinks at that rate, so exposures that aren't a whole number of
+  periods vary in brightness. Flicker was worst at 1/40 s (about 1.5 periods): 18% at
+  50%, 2.5% at 90%. The results fit ~60 Hz; the frequency wasn't measured directly.
+- **No shutter speed reliably avoids it.** 1/60, 1/30, and 1/15 s are close to whole
+  periods at their nominal lengths, yet flickered by up to 7% between 50% and 80%. The
+  camera's actual exposure times differ from the labels (cameras commonly time 1/60 s
+  as 1/64 s), so don't rely on matching the period.
+- **Brightness tracks the level from 25% to 100%**, within about 3% (at 1 s: 50% gave
+  51.4%, 90% gave 92.1%, 95% gave 97.8%). Below that it falls off: 10% gave 8.4% and 5%
+  gave 2.1%.
+- **The LED drivers ramp over about 1.8 ms**, which explains the fall-off. Each
+  driver's 22 nF slope capacitor sets its rise and fall time: 800 µs at 10 nF, linear in
+  the capacitance (STCS2A datasheet, Rev 3). So each pulse of light is a trapezoid, and
+  at low levels the pulses are shorter than a ramp. A model of a 60 Hz PWM with 1.8 ms
+  ramps predicted 0.47× at 5% (measured 0.42×) and roughly bounds the flicker above.
+  A newly lit band reaches full brightness about 2 ms after `OK` (**assumed**).
 - **Faster PWM won't fix dimming on these boards.** With 1.8 ms ramps, a period below
   about 4 ms (above about 250 Hz) never lets the current settle: it climbs to full
   above 50% duty and falls to zero below it. Faster dimming would need smaller slope
@@ -184,8 +207,10 @@ confirm it.
 
 - Whether units beyond the two checked use the CP2102N, and what else they might use.
 - How long the board actually takes to boot after a reset.
-- The actual PWM frequency, current ramp time, and how steady 100% is.
-- Brightness against PWM percentage, especially below 10%.
+- The exact PWM frequency and current ramp time, measured directly.
+- Whether other bands, panels, and cameras flicker the same way; only 530 nm on one
+  panel with one camera was measured.
+- Where the ~1% frame-to-frame spread at 100% comes from (camera shutter or light).
 
 ## Manual check
 

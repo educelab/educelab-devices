@@ -5,6 +5,7 @@ documented in docs/hardware/foldio360.md.
 """
 
 import ast
+import asyncio
 import subprocess
 import sys
 import threading
@@ -598,3 +599,168 @@ def test_commands_on_a_closed_device_raise_not_connected():
         dev.set_brightness(10)
     with pytest.raises(NotConnected):
         dev.move_to({"theta": 10.0})
+
+
+# -- run, IR shutter, set_signal (ported from the original client's tests) --------
+
+
+def run_frames(dev: Foldio360, frames: int, stop_at: int | None = None) -> list[int]:
+    seen: list[int] = []
+
+    def on_frame(index: int) -> bool:
+        seen.append(index)
+        return index != stop_at
+
+    dev.run(frames, on_frame)
+    return seen
+
+
+@pytest.mark.parametrize("frames", [0, -3, 1.5, True])
+def test_run_validates_frames(frames):
+    dev, t = table()
+    with pytest.raises(ValueError):
+        dev.run(frames, lambda index: None)
+    assert t.sent == []
+
+
+def test_set_signal_takes_bytes():
+    dev, t = table()
+    with pytest.raises(TypeError):
+        dev.set_signal("not bytes")
+    assert t.sent == []
+
+
+def test_run_sequence():
+    frames = iter(["1", "2", "3", "0"])
+    dev, t = table({"run(3,3)": lambda: next(frames), "continue": lambda: next(frames)})
+    dev.set_speed(max(dev.speed().choices))
+    assert run_frames(dev, 3) == [1, 2, 3]
+    # continue is sent after the last frame too, to collect the 0 terminator
+    assert t.sent[:4] == ["run(3,3)", "continue", "continue", "continue"]
+
+
+def test_run_through_the_emulated_firmware():
+    dev, t = table()
+    assert run_frames(dev, 24) == list(range(1, 25))
+    assert t.sent.count("continue") == 24
+    # Frame 1 is the starting position, so 24 frames are 23 steps of 15 degrees
+    # in the emulation; whether the real turntable steps on to 360 is unknown.
+    assert dev.position() == {"theta": 345.0}
+
+
+def test_run_abort_cancels():
+    frames = iter(["1", "2", "3", "0"])
+    dev, t = table({"run(3,1)": lambda: next(frames), "continue": lambda: next(frames)})
+    assert run_frames(dev, 3, stop_at=2) == [1, 2]
+    assert "cancel(1)" in t.sent
+    assert t.sent.count("continue") == 1
+
+
+def test_run_cancels_when_on_frame_raises():
+    dev, t = table()
+
+    def on_frame(index: int) -> None:
+        raise RuntimeError("camera failed")
+
+    with pytest.raises(RuntimeError, match="camera failed"):
+        dev.run(24, on_frame)
+    assert "cancel(1)" in t.sent
+    assert "continue" not in t.sent
+
+
+def test_ir_shutter_echo():
+    frames = iter(["1", "2", "0"])
+    dev, t = table(
+        {
+            "run(2,3)": lambda: next(frames),
+            "continue": lambda: next(frames),
+            "ir_shutter(0)": "1",
+        }
+    )
+    dev.set_speed(max(dev.speed().choices))
+    shots: list[int] = []
+    dev.run(2, lambda index: shots.append(dev.ir_shutter()))
+    assert shots[0] == 1
+    assert "ir_shutter(0)" in t.sent
+
+
+def test_ir_shutter_needs_a_signal():
+    dev, _ = table()
+    with pytest.raises(CommandRejected):
+        dev.ir_shutter()
+
+
+def test_ir_shutter_argument_two_is_rejected():
+    dev, _ = table()
+    dev.set_signal(b"\x01")
+    with pytest.raises(CommandRejected):
+        dev.ir_shutter(2)
+
+
+def test_set_signal_is_bytes():
+    dev, t = table()
+    blob = bytes([0x31, 0x32, 0x21, 0x03, 0x10, 0x27])
+    dev.set_signal(blob)
+    assert t.sent[0] == b"set_signal(" + blob + b")"
+    assert t.signal == blob
+    assert dev.ir_shutter() == 1
+
+
+def test_long_commands_are_written_in_twenty_byte_chunks():
+    writes = []
+
+    class Client:
+        async def write_gatt_char(self, char, data, response):
+            writes.append((char, bytes(data), response))
+
+    t = f.NusTransport()
+    t._client = Client()
+    blob = b"set_signal(" + bytes(range(1, 16)) + b")"
+    asyncio.run(t._write(blob))
+    assert [len(data) for _, data, _ in writes] == [20, 7]
+    assert b"".join(data for _, data, _ in writes) == blob
+    assert all(char == f.NUS_RX_CHAR and not response for char, _, response in writes)
+
+
+def test_run_timeout_cancels_once(monkeypatch):
+    """A second cancel inside ~100 ms can cost an acknowledgement."""
+    monkeypatch.setattr(f, "watchdog_seconds", lambda degrees, speed: 0.05)
+    dev, t = table()
+    with pytest.raises(DeviceTimeout, match="24, 36, 48"):
+        run_frames(dev, 12)  # wedges after frame 1
+    assert t.sent.count("cancel(1)") == 1
+
+
+def test_stop_from_another_thread_interrupts_a_run():
+    dev, t = table()
+    started, release = threading.Event(), threading.Event()
+
+    def on_frame(index: int) -> None:
+        started.set()
+        release.wait(timeout=2)
+
+    thread, outcome = in_thread(dev.run, 24, on_frame)
+    assert started.wait(timeout=2)
+    dev.stop()
+    release.set()
+    thread.join(timeout=2)
+    assert isinstance(outcome[0], PositionError)
+    assert t.sent.count("cancel(1)") == 1
+    assert t.sent.count("continue") == 0
+    dev.move_to({"theta": 30.0})
+    assert dev.position() == {"theta": 30.0}
+
+
+def test_moves_during_a_run_are_refused():
+    dev, _ = table()
+    errors = []
+
+    def on_frame(index: int) -> bool:
+        try:
+            dev.move_by({"theta": 10.0})
+        except DeviceBusy as exc:
+            errors.append(exc)
+        return False
+
+    dev.run(24, on_frame)
+    assert len(errors) == 1

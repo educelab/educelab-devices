@@ -56,12 +56,16 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
   - The lock is the `Device` base's: every `Stage` method is `@synchronized` except `stop()`/`position()`, and the halo methods are `@synchronized` too. Tests show a second thread's command waiting for a move.
 - [x] Task 2.5: Run the `Stage` contract suite.
   - `TestFoldio360Contract` runs `StageContract` on the firmware-emulating fake with `position_tolerance` set to the 1° arrival tolerance. All pass; `test_move_outside_limits_raises` skips (a wrapping axis has no limits).
-- [ ] Task 2.6: Port `run(frames)` (with `KNOWN_GOOD_FRAMES`), `ir_shutter`, and `set_signal` back as Foldio360-only methods under the device lock, with `stop()` able to cancel a `run`; restore their original tests; mark them unverified in our use in the hardware doc.
+- [x] Task 2.6: Port `run(frames)` (with `KNOWN_GOOD_FRAMES`), `ir_shutter`, and `set_signal` back as Foldio360-only methods under the device lock, with `stop()` able to cancel a `run`; restore their original tests; mark them unverified in our use in the hardware doc.
+  - Deviation: `run(frames, on_frame)` takes a per-frame callback instead of returning a generator. A generator would have to hold the device lock across `yield`s, which leaks the lock if the generator is abandoned and breaks if it's resumed on another thread. Returning `False` from `on_frame` replaces `break`, and an exception from it cancels the sequence. The steps run at the stage's speed (`set_speed`) rather than taking a `speed` argument.
+  - `stop()` cancels a `run` like a move: `_motion` is the fixed mode for the whole sequence, including while `on_frame` runs. Moves and jogs from inside `on_frame` raise `DeviceBusy`.
+  - `KNOWN_GOOD_FRAMES` is back, used only in the timeout message; frame counts are still passed through. `NusTransport.send()` and the driver's `_command()` take bytes again for `set_signal`.
+  - Ported tests: frame validation, `set_signal` type check, the sequence and its `continue` after the last frame, abort cancels, `ir_shutter` echo inside a run, FAIL for `ir_shutter(2)`, `set_signal` sent as raw bytes, and a run timeout cancelling once. Added: a 24-frame run against the emulating fake, `on_frame` raising, `ir_shutter` without a signal, 20-byte chunking of a long write, `stop()` from another thread during a run, and moves refused inside a run.
   - Decided (2026-10-15, maintainer): port these commands after all, as Foldio360-only methods outside `Stage`. They won't be used yet, but they keep the reverse-engineered behavior available. Supersedes the Task 1.1 deviation that left them out; spec updated to match.
 
 ### Verification
 
-- [ ] All Stage tests and contracts pass.
+- [x] All Stage tests and contracts pass.
 
 ## Phase 3: Halo light
 

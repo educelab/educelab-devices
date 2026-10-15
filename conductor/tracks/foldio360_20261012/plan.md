@@ -95,7 +95,8 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
 
 ### Tasks
 
-- [ ] Task 4.1: Fold the relevant `CLIENT_GUIDE.md` content into `docs/hardware/foldio360.md` and `docs/guide.md`.
+- [~] Task 4.1: Fold the relevant `CLIENT_GUIDE.md` content into `docs/hardware/foldio360.md` and `docs/guide.md`.
+  - Deviation: `CLIENT_GUIDE.md` §2 notes that bleak's own exceptions escaped `connect()` unwrapped. The guide promises a `DeviceError` for hardware and connection problems, so the transport now wraps them: a connection timeout becomes `DeviceTimeout`, any other connection failure `DeviceNotFound`, and a failed write `NotConnected`. Writing the tests exposed a real bug: on Python 3.11+, `concurrent.futures.TimeoutError` is the builtin `TimeoutError`, so `_LoopThread.call()` mistook a coroutine's own timeout (e.g. bleak's connect timeout) for its wait expiring and crashed formatting `None`. Fixed.
 - [ ] Task 4.2: Add the `el-devices foldio` subcommand.
 
 ### Verification

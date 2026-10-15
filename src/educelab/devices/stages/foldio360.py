@@ -192,6 +192,10 @@ class _LoopThread:
         try:
             return future.result(timeout)
         except concurrent.futures.TimeoutError:
+            # Since 3.11 this is also the builtin TimeoutError, which the
+            # coroutine itself may raise; only a pending future timed out here.
+            if future.done():
+                raise
             future.cancel()
             raise DeviceTimeout(f"no reply within {timeout:.1f}s") from None
 
@@ -280,10 +284,22 @@ class NusTransport:
         self._loop = _LoopThread()
         try:
             self._loop.call(self._connect())
-        except Exception:
+        except Exception as exc:
             self._loop.stop()
             self._loop = None
-            raise
+            if isinstance(exc, DeviceError | ImportError):
+                raise
+            # bleak raises its own errors (no adapter, link held, timeout).
+            target = self.address or self.name
+            if isinstance(exc, TimeoutError):
+                raise DeviceTimeout(
+                    f"connecting to Foldio360 {target} timed out"
+                ) from exc
+            raise DeviceNotFound(
+                f"could not connect to Foldio360 {target}: {exc or type(exc).__name__}"
+                ". Check that it is powered on and that the official app isn't "
+                "holding the link."
+            ) from exc
 
     async def _connect(self) -> None:
         bleak = _bleak()
@@ -360,7 +376,12 @@ class NusTransport:
             raise NotConnected("Foldio360 is not connected; call connect() first")
         logger.debug("-> %r", command)
         payload = command.encode("ascii") if isinstance(command, str) else command
-        self._loop.call(self._write(payload), timeout=10.0)
+        try:
+            self._loop.call(self._write(payload), timeout=10.0)
+        except DeviceError:
+            raise
+        except Exception as exc:
+            raise NotConnected(f"writing to Foldio360 failed: {exc}") from exc
 
     async def _write(self, payload: bytes) -> None:
         for start in range(0, len(payload), MAX_PAYLOAD):

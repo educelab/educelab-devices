@@ -58,7 +58,9 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
 
 ### Verification
 
-- [ ] Capture tests and contracts pass.
+- [x] Capture tests and contracts pass.
+  - Approved 2026-10-15, after CI on PR #4 passed all 14 jobs.
+  - Decided (2026-10-15): the `-53` `DeviceBusy` hint is platform-specific: `ptpcamerad` and the `killall` workaround on macOS, `gvfs-gphoto2-volume-monitor` on Linux, and a generic message elsewhere. It never names a daemon the host doesn't run.
 
 ## Phase 3: Settings, live view, keep-alive
 

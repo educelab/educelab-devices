@@ -524,8 +524,10 @@ How `Foldio360` maps the protocol onto the `Stage` role:
   The next command first waits for the link to go quiet and discards them, and a query
   that gets an unexpected `OK` while one is outstanding skips it.
 - **Halo.** `Foldio360.halo` is a `Light` with one mono channel, `"halo"`, on the
-  turntable's connection and lock: opening or closing either opens or closes both, and a
-  halo command waits for a move. Levels 0.0–1.0 are sent as whole percent (rounded), and
+  turntable's connection and lock, so a halo command waits for a move. The halo is opened
+  and closed on its own. Opening it opens the turntable if that is closed and remembers
+  doing so; closing it then closes the turntable too, but otherwise closes only the halo.
+  Closing the turntable always closes the halo (decided 2026-10-15). Levels 0.0–1.0 are sent as whole percent (rounded), and
   `level()` reads `get_bright`. Writes are paced at least 50 ms apart, so ramps get their
   acks. If an ack still doesn't arrive within 0.5 s, the driver reads the level back:
   if it landed, the write counts as done (the ack is counted as a stray and drained),

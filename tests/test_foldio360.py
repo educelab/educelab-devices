@@ -297,9 +297,25 @@ def test_rotate_sends_no_trailing_cancel():
 
 
 class TestFoldio360HaloContract(LightContract):
+    """The halo on a closed turntable, which opening the halo opens."""
+
     @pytest.fixture
     def make_device(self):
         return lambda: Foldio360(transport=FakeNusTransport()).halo
+
+
+class TestFoldio360HaloOnAnOpenTurntableContract(LightContract):
+    """The halo on a turntable that something else opened and keeps open."""
+
+    @pytest.fixture
+    def make_device(self, request):
+        def make():
+            turntable = Foldio360(transport=FakeNusTransport())
+            turntable.open()
+            request.addfinalizer(turntable.close)
+            return turntable.halo
+
+        return make
 
 
 def test_halo_is_a_light_with_one_mono_channel():
@@ -320,29 +336,71 @@ def test_halo_is_a_light_with_one_mono_channel():
 )
 def test_halo_level_maps_to_percent(level, command):
     dev, t = table()
+    dev.halo.open()
     dev.halo.set_level("halo", level)
     assert t.sent == [command]
 
 
 def test_halo_level_is_read_from_the_device():
     dev, t = table()
+    dev.halo.open()
     t.brightness = 37
     assert dev.halo.level("halo") == pytest.approx(0.37)
     assert t.sent == ["get_bright"]
 
 
-def test_halo_shares_the_turntables_connection():
+def test_halo_open_opens_a_closed_turntable_and_close_closes_it():
     dev = Foldio360(transport=FakeNusTransport())
     assert not dev.halo.is_open
     with dev.halo:
         assert dev.is_open
         dev.halo.set_level("halo", 0.2)
     assert not dev.is_open
-    dev.open()
-    assert dev.halo.is_open
-    dev.close()
+
+
+def test_halo_close_leaves_a_turntable_it_did_not_open():
+    dev, t = table()
+    dev.halo.open()
+    dev.halo.set_level("halo", 0.2)
+    dev.halo.close()
+    assert dev.is_open
+    assert not dev.halo.is_open
     with pytest.raises(NotConnected):
         dev.halo.set_level("halo", 0.2)
+    dev.halo.open()
+    dev.halo.set_level("halo", 0.3)
+    assert t.brightness == 30
+
+
+def test_halo_is_closed_until_opened():
+    dev, t = table()
+    assert not dev.halo.is_open
+    with pytest.raises(NotConnected):
+        dev.halo.set_level("halo", 0.2)
+    assert t.sent == []
+
+
+def test_closing_the_turntable_closes_the_halo():
+    dev, _ = table()
+    dev.halo.open()
+    dev.close()
+    assert not dev.halo.is_open
+    with pytest.raises(NotConnected):
+        dev.halo.set_level("halo", 0.2)
+    dev.halo.open()  # reopens the turntable, and now owns it
+    assert dev.is_open
+    dev.halo.close()
+    assert not dev.is_open
+
+
+def test_turntable_opened_by_the_halo_stays_owned_after_a_reopen():
+    dev = Foldio360(transport=FakeNusTransport())
+    dev.halo.open()
+    dev.halo.close()
+    dev.open()
+    dev.halo.open()
+    dev.halo.close()
+    assert dev.is_open, "the second open found the turntable already open"
 
 
 def test_halo_info_is_the_turntables():
@@ -352,6 +410,7 @@ def test_halo_info_is_the_turntables():
 
 def test_halo_writes_are_paced():
     dev, t = table()
+    dev.halo.open()
     start = time.monotonic()
     for level in (0.1, 0.2, 0.3):
         dev.halo.set_level("halo", level)
@@ -362,6 +421,7 @@ def test_halo_writes_are_paced():
 def test_halo_tolerates_a_lost_ack_when_the_level_landed(monkeypatch):
     monkeypatch.setattr(f, "_BRIGHT_ACK_S", 0.05)
     dev, t = table(lost_acks={"set_bright(50)"})
+    dev.halo.open()
     dev.halo.set_level("halo", 0.5)
     assert t.sent == ["set_bright(50)", "get_bright"]
     assert dev.halo.level("halo") == 0.5
@@ -370,6 +430,7 @@ def test_halo_tolerates_a_lost_ack_when_the_level_landed(monkeypatch):
 def test_halo_raises_when_the_ack_is_lost_and_the_level_did_not_land(monkeypatch):
     monkeypatch.setattr(f, "_BRIGHT_ACK_S", 0.05)
     dev, _ = table({"set_bright(50)": TIMEOUT})
+    dev.halo.open()
     with pytest.raises(DeviceTimeout):
         dev.halo.set_level("halo", 0.5)
 
@@ -378,6 +439,7 @@ def test_a_late_halo_ack_is_drained(monkeypatch):
     monkeypatch.setattr(f, "_BRIGHT_ACK_S", 0.05)
     monkeypatch.setattr(f, "_SETTLE_QUIET_S", 0.2)
     dev, t = table(ack_delays={"set_bright(50)": 0.1})
+    dev.halo.open()
     dev.halo.set_level("halo", 0.5)
     t.angle = 42
     assert dev.position() == {"theta": 42.0}, "the late OK isn't read as a position"
@@ -385,6 +447,7 @@ def test_a_late_halo_ack_is_drained(monkeypatch):
 
 def test_halo_works_inside_a_run():
     dev, t = table()
+    dev.halo.open()
     dev.run(24, lambda index: dev.halo.set_level("halo", index / 100) or False)
     assert "set_bright(1)" in t.sent
 
@@ -637,6 +700,7 @@ def test_position_follows_a_jog():
 def test_commands_wait_for_a_move_to_finish():
     """One command at a time: a second thread's command waits for the move."""
     dev, t = table(hold_moves=True)
+    dev.halo.open()
     mover, _ = in_thread(dev.move_to, {"theta": 90.0})
     assert t.move_started.wait(timeout=2)
     lighter, outcome = in_thread(dev.halo.set_level, "halo", 0.4)

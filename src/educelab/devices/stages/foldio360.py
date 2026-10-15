@@ -520,6 +520,7 @@ class Foldio360(Stage):
 
     def _reset_state(self) -> None:
         super()._reset_state()
+        self._halo._turntable_closed()
         self._firmware = None
         with self._state_lock:
             self._motion = None
@@ -958,8 +959,10 @@ class Foldio360Halo(Light):
     """The Foldio360's LED ring, as a light with one mono channel, ``"halo"``.
 
     Get it from `Foldio360.halo`. It is a second role of the same device, so it
-    shares the turntable's connection and lock: opening or closing either one
-    opens or closes both, and halo commands wait for a move to finish.
+    shares the turntable's connection and lock, and halo commands wait for a
+    move to finish. The halo is opened and closed on its own: opening it opens
+    the turntable if that is closed, and closing it then closes the turntable
+    too, but only in that case. Closing the turntable closes the halo.
 
     Levels are sent as whole percent (0-100, rounded), and `level()` reads the
     halo back from the turntable. Writes are paced 50 ms apart, and a lost
@@ -971,6 +974,7 @@ class Foldio360Halo(Light):
         super().__init__()
         self._turntable = turntable
         self._lock = turntable._lock
+        self._opened_turntable = False
 
     @property
     def info(self) -> DeviceInfo:
@@ -980,29 +984,26 @@ class Foldio360Halo(Light):
     def channels(self) -> tuple[Channel, ...]:
         return _HALO_CHANNELS
 
-    @property
-    def is_open(self) -> bool:
-        return self._turntable.is_open
-
-    def open(self) -> None:
-        """Open the turntable's connection, which the halo shares."""
-        self._turntable.open()
-
-    def close(self) -> None:
-        """Close the turntable's connection, which the halo shares."""
-        self._turntable.close()
-
     def __repr__(self) -> str:
         return f"<{self._turntable!r} halo>"
 
     def _open(self) -> None:
-        self._turntable.open()
+        if not self._turntable.is_open:
+            self._turntable.open()
+            self._opened_turntable = True
 
     def _close(self) -> None:
-        self._turntable.close()
+        if self._opened_turntable:
+            self._turntable.close()
 
-    def _require_open(self) -> None:
-        self._turntable._require_open()
+    def _reset_state(self) -> None:
+        super()._reset_state()
+        self._opened_turntable = False
+
+    def _turntable_closed(self) -> None:
+        """Called by the turntable when its connection closes."""
+        self._is_open = False
+        self._reset_state()
 
     def _set_level(self, channel: Channel, level: float) -> None:
         self._turntable._write_brightness(round(level * 100))

@@ -8,6 +8,7 @@ import ast
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -526,3 +527,35 @@ def test_unclaimed_ok_is_skipped_by_a_query():
     dev.set_brightness(20, wait=False)
     t.angle = 5
     assert dev.position() == {"theta": 5.0}
+
+
+# -- position ---------------------------------------------------------------------
+
+
+def test_position_during_a_move_is_the_last_known_and_does_not_block():
+    dev, t = table(angle=20, hold_moves=True)
+    thread, _ = in_thread(dev.move_to, {"theta": 90.0})
+    assert t.move_started.wait(timeout=2)
+    sent = len(t.sent)
+    start = time.monotonic()
+    assert dev.position() == {"theta": 20.0}
+    assert time.monotonic() - start < 0.1
+    assert len(t.sent) == sent, "nothing is sent while the move waits"
+    t.finish_move()
+    thread.join(timeout=2)
+    assert dev.position() == {"theta": 90.0}
+
+
+def test_position_when_idle_reads_the_counter():
+    dev, t = table()
+    t.angle = 77  # e.g. moved by another client
+    assert dev.position() == {"theta": 77.0}
+    assert t.sent == ["get_position"]
+
+
+def test_position_follows_a_jog():
+    dev, t = table()
+    dev.jog("theta", 1)
+    t.angle = 15
+    assert dev.position() == {"theta": 15.0}
+    dev.stop()

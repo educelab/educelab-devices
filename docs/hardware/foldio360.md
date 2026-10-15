@@ -495,6 +495,10 @@ How `Foldio360` maps the protocol onto the `Stage` role:
 - **Timeouts.** With `timeout=None`, each rotation's limit is the watchdog from
   [Timing](#timing), not `Stage.move_timeout`. A rotation that outlives its limit is
   cancelled, the counter is re-read, and `DeviceTimeout` is raised.
+- **Position.** `position()` reads the counter when no other thread is talking to the
+  turntable, so it follows a jog. During a move it returns the last value read, without
+  waiting or estimating; the protocol allows one outstanding command, and a move's
+  `rotate` is outstanding until it finishes.
 - **Jog.** `jog()` sends a mode-0 `rotate` and returns on its spin-up ack. Moving or
   jogging again while a jog runs raises `DeviceBusy`, since what the firmware does with a
   `rotate` during a jog is untested. Closing the device cancels a jog it started.

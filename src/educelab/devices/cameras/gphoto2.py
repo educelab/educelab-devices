@@ -37,7 +37,7 @@ from educelab.devices.cameras.base import (
     CameraFile,
     FileCamera,
 )
-from educelab.devices.device import DeviceInfo
+from educelab.devices.device import DeviceInfo, Disconnected
 from educelab.devices.errors import (
     DeviceBusy,
     DeviceError,
@@ -73,6 +73,9 @@ DOWNLOAD_RETRY_DELAY_S = 1.0
 # (docs/hardware/gphoto2-cameras.md#keep-alive).
 KEEP_ALIVE_INTERVAL_S = 2.0
 KEEP_ALIVE_WAIT_S = 0.01
+# Pings that must fail in a row before listeners hear `Disconnected`, so one
+# hiccup doesn't count as a lost camera.
+KEEP_ALIVE_FAILURES = 3
 
 # Widgets that turn live view on, by camera family, and spellings of "off" for
 # continuous AF. From pgs-scan's spectral prototype
@@ -190,24 +193,38 @@ class GPhoto2Camera(FileCamera):
         self._keep_alive_thread.start()
 
     def _keep_alive(self, stop: threading.Event) -> None:
-        """Ping the camera whenever it has been idle for an interval."""
+        """Ping the camera whenever it has been idle for an interval.
+
+        After `KEEP_ALIVE_FAILURES` failed pings in a row, listeners get one
+        `Disconnected` event; a good ping starts the count again.
+        """
+        failures = 0
         while not stop.wait(KEEP_ALIVE_INTERVAL_S):
             if self._capture_in_flight.is_set():
                 continue
             # A call holding the lock is already talking to the camera.
             if not self._lock.acquire(blocking=False):
                 continue
+            # Emitted after releasing the lock, so listeners may call close().
+            lost: Disconnected | None = None
             try:
                 if stop.is_set() or self._session is None:
                     return
                 event = self._session.wait_for_event(KEEP_ALIVE_WAIT_S)
             except GPhoto2Error as exc:
+                failures += 1
                 logger.warning("%r keep-alive ping failed: %s", self, exc)
-                continue
+                if failures == KEEP_ALIVE_FAILURES:
+                    reason = f"{failures} keep-alive pings failed in a row; last: {exc}"
+                    lost = Disconnected(self, reason)
+            else:
+                failures = 0
+                if event.kind == "file_added" and event.path is not None:
+                    self._discarded(event.path)
             finally:
                 self._lock.release()
-            if event.kind == "file_added" and event.path is not None:
-                self._discarded(event.path)
+            if lost is not None:
+                self._emit(lost)
 
     def _try_open(self, library: Library) -> Session:
         """Open a session, raising `_NotVisibleYet` for failures worth a retry."""
@@ -232,9 +249,10 @@ class GPhoto2Camera(FileCamera):
 
     def _close(self) -> None:
         self._keep_alive_stop.set()
-        if self._keep_alive_thread is not None:
-            self._keep_alive_thread.join()
-            self._keep_alive_thread = None
+        thread, self._keep_alive_thread = self._keep_alive_thread, None
+        # A listener may close the camera from the keep-alive thread itself.
+        if thread is not None and thread is not threading.current_thread():
+            thread.join()
         session, self._session = self._session, None
         live_view, self._live_view = self._live_view, None
         self._live_view_tried = False

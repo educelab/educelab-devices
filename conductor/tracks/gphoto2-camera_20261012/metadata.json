@@ -23,6 +23,13 @@
     "7681674: Record approval of gphoto2 Phase 1",
     "bc8ca06: Run the gphoto2 tests on Windows and add Pillow to the dev group",
     "67a34bc: Capture every file a gphoto2 release produces into memory",
-    "1ee1442: Run the FileCamera contract suite against the gphoto2 driver"
+    "1ee1442: Run the FileCamera contract suite against the gphoto2 driver",
+    "cc69867: Record gphoto2 Phase 2 commits in the track metadata",
+    "fd690da: Record approval of gphoto2 Phase 2",
+    "caabdc9: Name only the host platform's daemon in the claimed-USB hint",
+    "58164df: Read gphoto2 camera settings from the config tree",
+    "399dacb: Turn on live view and decode gphoto2 previews with Pillow",
+    "77a8fd8: Keep idle gphoto2 cameras alive from an internal thread",
+    "cef12aa: Run the Camera contract suite with keep-alive active"
   ]
 }

@@ -220,12 +220,25 @@ def test_without_a_port_open_refuses_to_choose_between_cameras():
     assert not camera.is_open
 
 
-def test_claimed_usb_interface_raises_device_busy_naming_ptpcamerad():
+@pytest.mark.parametrize(
+    ("platform", "named", "not_named"),
+    [
+        ("darwin", ["ptpcamerad", "killall -9 ptpcamerad"], ["gvfs"]),
+        ("linux", ["gvfs-gphoto2-volume-monitor"], ["ptpcamerad", "killall"]),
+        ("freebsd14", ["Another process holds"], ["ptpcamerad", "gvfs", "killall"]),
+    ],
+)
+def test_claimed_usb_interface_raises_device_busy_with_the_platform_remedy(
+    monkeypatch, platform, named, not_named
+):
+    monkeypatch.setattr(sys, "platform", platform)
     library = FakeLibrary(FakeCamera(), open_errors=[GP_ERROR_IO_USB_CLAIM])
     camera = GPhoto2Camera("usb:020,007", library=library)
-    with pytest.raises(DeviceBusy, match="ptpcamerad") as raised:
+    with pytest.raises(DeviceBusy) as raised:
         camera.open()
-    assert "killall" in str(raised.value)
+    message = str(raised.value)
+    assert all(text in message for text in named), message
+    assert not any(text in message for text in not_named), message
     assert library.open_attempts == 1
     assert not camera.is_open
 

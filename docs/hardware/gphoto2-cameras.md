@@ -33,7 +33,7 @@ when several are. Errors while opening:
 
 | Code | libgphoto2 name | What it means | Driver |
 |---|---|---|---|
-| `-53` | `GP_ERROR_IO_USB_CLAIM` | Another process holds the USB interface (see [ptpcamerad](#ptpcamerad)) | `DeviceBusy` at once, naming the remedy |
+| `-53` | `GP_ERROR_IO_USB_CLAIM` | Another process holds the USB interface (see [Another process holds the camera](#another-process-holds-the-camera)) | `DeviceBusy` at once, naming the remedy |
 | `-105` | `GP_ERROR_MODEL_NOT_FOUND` | "Unknown model": nothing on the bus, or a camera still re-enumerating after a reset or replug | retried, then `DeviceNotFound` |
 | `-52` | `GP_ERROR_IO_USB_FIND` | The port given has no device behind it | retried, then `DeviceNotFound` |
 | other | | | `DeviceError` with the code, not retried |
@@ -47,24 +47,36 @@ when several are. Errors while opening:
   are the prototype's values for the same case. **assumed** to be enough; a camera
   waking from sleep may need longer.
 
-## ptpcamerad
+## Another process holds the camera
 
-On macOS, the system daemon `ptpcamerad` claims the USB interface of every still camera
-that's plugged in, whether or not any app is using it, and libgphoto2 then fails with
-`-53`. The daemon runs as the user and ignores `SIGTERM`; `launchd` restarts it on demand.
+libgphoto2 fails with `-53` (`GP_ERROR_IO_USB_CLAIM`) when another process has claimed
+the camera's USB interface. The driver raises `DeviceBusy` straight away, with a remedy
+for the host platform only: `ptpcamerad` on macOS, `gvfs-gphoto2-volume-monitor` on
+Linux, and a generic "another process holds the camera's USB interface" elsewhere. It
+never kills processes itself.
+
+### macOS: ptpcamerad
+
+The system daemon `ptpcamerad` claims the USB interface of every still camera that's
+plugged in, whether or not any app is using it. The daemon runs as the user and ignores
+`SIGTERM`; `launchd` restarts it on demand.
 
 Workaround: quit apps that use the camera (Image Capture, Photos), run
 `killall -9 ptpcamerad`, then open the camera straight away. Once libgphoto2 holds the
 interface, the daemon can't take it back until the session closes. **assumed**: the
 prototype did this automatically, once per connect.
 
-The driver never kills processes itself; the `DeviceBusy` message says what to run. The
-prototype found that killing the daemon repeatedly while it held a session wedged the
-port, after which every claim blocked for about 25 s with `-10` (`GP_ERROR_TIMEOUT`), so
-kill it once and then wait rather than looping. **assumed**, from the prototype's notes.
+Kill it once, then wait rather than looping. The prototype found that killing the
+daemon repeatedly while it held a session wedged the port, after which every claim
+blocked for about 25 s with `-10` (`GP_ERROR_TIMEOUT`). **assumed**, from the
+prototype's notes.
 
-On Linux the equivalent is usually a desktop's `gvfs-gphoto2-volume-monitor`, which
-mounts cameras as they appear. **assumed**, from the gphoto2 FAQ.
+### Linux: gvfs-gphoto2-volume-monitor
+
+Desktops running GVFS (GNOME and others) mount cameras as they appear, through
+`gvfs-gphoto2-volume-monitor`, which holds the interface. Unmount the camera in the file
+manager, or stop the monitor for the session. **assumed**, from the gphoto2 FAQ; not yet
+seen on a lab machine.
 
 ## Capturing
 

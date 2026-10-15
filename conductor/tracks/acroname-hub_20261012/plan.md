@@ -48,7 +48,8 @@ A small driver: fake brainstem seam, driver, then docs, CLI, and hardware check.
 
 - [x] Task 2.1: Write `docs/hardware/acroname-usbhub3p.md`.
 - [x] Task 2.2: Add the `el-devices hub` subcommand.
-- [ ] Task 2.3: Write and run `@pytest.mark.hardware` tests on a hub; record findings.
+- [~] Task 2.3: Write and run `@pytest.mark.hardware` tests on a hub; record findings.
+  - Tests written in `tests/test_acroname_hardware.py`; the maintainer runs them on a hub.
 
 ### Verification
 

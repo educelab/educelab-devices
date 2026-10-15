@@ -11,13 +11,16 @@
   },
   "tasks": {
     "total": 6,
-    "completed": 3
+    "completed": 5
   },
   "current_phase": 2,
-  "current_task": "2.1",
+  "current_task": "2.3",
   "commits": [
     "91afc5d: Add acroname extra, lazy brainstem loader, and fake BrainStem SDK",
     "d0eeff0: Add AcronameHub driver for the USBHub3p",
-    "3657573: Run the Hub contract suite against AcronameHub"
+    "3657573: Run the Hub contract suite against AcronameHub",
+    "6c48a48: Record approval of Acroname Phase 1",
+    "4482139: Write the Acroname USBHub3p hardware doc",
+    "b13a3c9: Add el-devices hub and register the acroname discovery backend"
   ]
 }

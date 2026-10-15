@@ -14,6 +14,7 @@ NO_ERROR = 0
 PARAMETER_ERROR = 2
 NOT_FOUND = 3
 BUSY = 5
+IO_ERROR = 6
 PERMISSION_ERROR = 12
 RANGE_ERROR = 13
 TIMEOUT = 18
@@ -87,15 +88,16 @@ class _Hub:
             setEnumerationDelay=self._set_enumeration_delay,
         )
 
-    def connect(self, transport: int, serial_number: int) -> int:
+    def discoverAndConnect(self, transport: int, serial_number: int) -> int:
         if transport != USB:
             return PARAMETER_ERROR
-        unit = self._bus.unit(serial_number)
+        # Like the SDK, serial number 0 means the first hub found.
+        unit = self._bus.unit(serial_number) if serial_number else self._bus.first()
         if unit is None or not unit.present:
             return NOT_FOUND
         if unit.busy:
             return BUSY
-        if code := unit.failures.get("connect"):
+        if code := unit.failures.get("discoverAndConnect"):
             return code
         unit.connections += 1
         self._unit = unit
@@ -104,7 +106,7 @@ class _Hub:
     def disconnect(self) -> int:
         unit, self._unit = self._unit, None
         if unit is None:
-            return CONNECTION_ERROR
+            return NO_ERROR  # as the SDK does
         unit.connections -= 1
         return unit.failures.get("disconnect", NO_ERROR)
 
@@ -179,6 +181,9 @@ class FakeBrainstem:
 
     def unit(self, serial_number: int) -> FakeUnit | None:
         return next((u for u in self.units if u.serial_number == serial_number), None)
+
+    def first(self) -> FakeUnit | None:
+        return next((u for u in self.units if u.present), None)
 
     def _find_all_modules(self, transports: int) -> list[FakeSpec]:
         if transports != USB:

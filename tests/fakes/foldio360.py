@@ -17,6 +17,11 @@ Reply = str | Callable[[], str] | object
 _ROTATE = re.compile(r"rotate\((CW|CCW),(\d+),(\d+),(\d+)\)")
 _CANCEL = re.compile(r"cancel\((\d+)\)")
 _SET_BRIGHT = re.compile(r"set_bright\((-?\d+)\)")
+_RUN = re.compile(r"run\((\d+),(\d+)\)")
+_IR_SHUTTER = re.compile(r"ir_shutter\((\d+)\)")
+
+# Frame counts the firmware completes; others wedge after frame 1.
+_GOOD_FRAMES = (24, 36, 48)
 
 
 class FakeNusTransport:
@@ -48,7 +53,7 @@ class FakeNusTransport:
         cancel_acks_move: bool = True,
         cancelled_fraction: float = 0.5,
     ) -> None:
-        self.sent: list[str] = []
+        self.sent: list[str | bytes] = []
         self.connected = False
         self.address = "FA:KE"
         self.drained = 0
@@ -61,6 +66,10 @@ class FakeNusTransport:
         self.moving: int | None = None
         """Signed degrees of a held rotation, while one is running."""
         self.move_started = threading.Event()
+        self.signal: bytes | None = None
+        self.frames: int | None = None
+        """Frame count of the run sequence in progress."""
+        self.frame = 0
         self._replies = dict(replies or {})
         self._queue: queue.Queue[str] = queue.Queue()
         self._lock = threading.Lock()
@@ -74,7 +83,7 @@ class FakeNusTransport:
     def send(self, command: str | bytes) -> None:
         text = command if isinstance(command, str) else command.decode("latin-1")
         with self._lock:
-            self.sent.append(text)
+            self.sent.append(command)
             if text in self._replies:
                 reply = self._replies[text]
                 if reply is TIMEOUT:
@@ -121,6 +130,20 @@ class FakeNusTransport:
             return self._rotate(*match.groups())
         if _CANCEL.fullmatch(text):
             return self._cancel()
+        if match := _RUN.fullmatch(text):
+            if match.group(2) not in ("1", "2", "3"):
+                return ["FAIL"]
+            self.frames, self.frame = int(match.group(1)), 1
+            return ["1"]
+        if text == "continue":
+            return self._continue()
+        if match := _IR_SHUTTER.fullmatch(text):
+            if self.signal is None or match.group(1) != "0":
+                return ["FAIL"]
+            return [str(self.frame or 1)]
+        if text.startswith("set_signal(") and text.endswith(")"):
+            self.signal = text[len("set_signal(") : -1].encode("latin-1")
+            return ["OK"]
         if match := _SET_BRIGHT.fullmatch(text):
             level = int(match.group(1))
             if not 0 <= level <= 100:
@@ -143,8 +166,21 @@ class FakeNusTransport:
         self.angle = (self.angle + signed) % 360
         return ["OK"]
 
+    def _continue(self) -> list[str]:
+        if self.frames is None:
+            return ["FAIL"]
+        if self.frames not in _GOOD_FRAMES:
+            return []  # wedged
+        if self.frame == self.frames:
+            self.frames, self.frame = None, 0
+            return ["0"]
+        self.frame += 1
+        self.angle = (self.angle + 360 // self.frames) % 360
+        return [str(self.frame)]
+
     def _cancel(self) -> list[str]:
         self.jogging = False
+        self.frames, self.frame = None, 0
         replies = []
         if self.moving is not None:
             done = round(self.moving * self.cancelled_fraction)

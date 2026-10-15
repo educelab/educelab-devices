@@ -36,6 +36,7 @@ from educelab.devices.stages.base import Axis, AxisKind, Stage
 __all__ = [
     "CCW",
     "CW",
+    "KNOWN_GOOD_FRAMES",
     "Foldio360",
     "NusTransport",
     "UnexpectedResponse",
@@ -114,6 +115,10 @@ _POLL_S = 0.05
 # After a cancel or a fire-and-forget write, how long the link must be silent
 # before stray replies count as drained. Replies come within ~200 ms.
 _SETTLE_QUIET_S = 0.3
+
+# Frame counts run() is known to complete; others wedge after frame 1 (hardware
+# doc, run / continue / ir_shutter). Passed through, not enforced.
+KNOWN_GOOD_FRAMES = (24, 36, 48)
 
 # Two cancels stop motion of an unknown mode; they must be spaced past the
 # ~100 ms window in which back-to-back commands cost an ack (hardware doc, rotate).
@@ -452,6 +457,7 @@ class Foldio360(Stage):
         self._state_lock = threading.Lock()
         self._last_position = 0
         self._motion: int | None = None  # mode of the rotate awaiting its reply
+        self._running = False  # inside run()
         self._jogging = False
         self._stop_requested = threading.Event()
         # Replies that no command will claim: acks from fire-and-forget writes
@@ -499,6 +505,7 @@ class Foldio360(Stage):
         with self._state_lock:
             self._motion = None
             self._jogging = False
+            self._running = False
             self._strays = 0
         self._stop_requested.clear()
 
@@ -509,7 +516,7 @@ class Foldio360(Stage):
         return math.inf if timeout is None else super()._timeout(timeout)
 
     def _move_to(self, targets: Mapping[str, float], timeout: float) -> None:
-        self._check_not_jogging()
+        self._check_idle()
         target = round(targets[_THETA]) % 360
         current = self._read_position()
         # Shortest signed path in [-180, 180); an exact half-turn goes CCW.
@@ -519,11 +526,11 @@ class Foldio360(Stage):
     def _move_by(
         self, offsets: Mapping[str, float], start: Mapping[str, float], timeout: float
     ) -> None:
-        self._check_not_jogging()
+        self._check_idle()
         self._turn(round(offsets[_THETA]), round(start[_THETA]) % 360, timeout)
 
     def _jog(self, axis: str, direction: int) -> None:
-        self._check_not_jogging()
+        self._check_idle()
         wire = CW if direction > 0 else CCW
         with self._state_lock:
             self._motion = MODE_JOG
@@ -617,12 +624,112 @@ class Foldio360(Stage):
         with self._state_lock:
             self._strays += 1
 
+    # -- capture sequence and IR shutter --------------------------------------------
+
+    @synchronized
+    def run(self, frames: int, on_frame: Callable[[int], object]) -> None:
+        """Step through a full revolution, calling ``on_frame`` at each frame.
+
+        The turntable steps 360/``frames`` degrees at the stage's speed, then
+        waits: ``on_frame(index)`` is called with each 1-based frame index,
+        and the next step starts when it returns. Frame 1 is the current
+        position. Return ``False`` from ``on_frame`` to end the sequence early;
+        if it raises, the sequence is cancelled and the error propagates.
+
+        Only 24, 36, and 48 frames are known to complete (`KNOWN_GOOD_FRAMES`).
+        Other counts are passed through, but the firmware wedges after frame
+        1, which surfaces as `DeviceTimeout` once the sequence is cancelled.
+        Unverified with this driver; see the hardware doc,
+        run / continue / ir_shutter.
+
+        Raises:
+            ValueError: ``frames`` is not a positive int.
+            PositionError: `stop()` interrupted the sequence.
+            DeviceTimeout: A step didn't answer in time.
+        """
+        if isinstance(frames, bool) or not isinstance(frames, int) or frames < 1:
+            raise ValueError(f"frames must be an int >= 1, got {frames!r}")
+        self._motion_starting()
+        self._check_idle()
+        level = self._speed_level
+        per_frame = max(watchdog_seconds(360.0 / frames, level), ACK_TIMEOUT_S)
+        hint = (
+            f". run({frames}) wedges unless frames is one of "
+            f"{', '.join(map(str, KNOWN_GOOD_FRAMES))}"
+        )
+        with self._state_lock:
+            self._motion = MODE_FIXED
+            self._running = True
+            stopped = self._stop_requested.is_set()
+        try:
+            if stopped:
+                self._interrupted()
+            command = f"run({frames},{level})"
+            index = self._step(command, ACK_TIMEOUT_S, hint)
+            while index:
+                try:
+                    keep_going = on_frame(index)
+                except BaseException:
+                    self._safe_cancel(MODE_FIXED)
+                    raise
+                if self._stop_requested.is_set():
+                    self._interrupted()
+                if keep_going is False:
+                    self._safe_cancel(MODE_FIXED)
+                    return
+                index = self._step("continue", per_frame, hint)
+        finally:
+            with self._state_lock:
+                self._motion = None
+                self._running = False
+            self._refresh_position()
+
+    @synchronized
+    def ir_shutter(self, argument: int = 0) -> int:
+        """Fire the IR shutter and return the frame index the device echoes.
+
+        Needs a waveform chosen with `set_signal()` first, or the device
+        answers FAIL. Inside `run()`, the echo is the current frame index.
+        Unverified with this driver; see the hardware doc,
+        run / continue / ir_shutter.
+
+        Raises:
+            CommandRejected: No waveform is set, or ``argument`` isn't valid
+                (only 0 is known to work).
+        """
+        return self._expect_int(f"ir_shutter({argument})")
+
+    @synchronized
+    def set_signal(self, blob: bytes) -> None:
+        """Choose the IR shutter's waveform, as a raw timing blob.
+
+        The blob is only partly decoded; capture one for a camera by stepping
+        the official app's camera picker. Unverified with this driver; see the
+        hardware doc, set_signal.
+
+        Raises:
+            TypeError: ``blob`` is not bytes.
+        """
+        if not isinstance(blob, bytes | bytearray):
+            raise TypeError(f"set_signal takes bytes, not {type(blob).__name__}")
+        command = b"set_signal(" + bytes(blob) + b")"
+        _check_ok(self._command(command, expect_ok=True), _render(command))
+
+    def _step(self, command: str, limit: float, hint: str) -> int:
+        """Send one run-sequence command and return the frame index it reports."""
+        self._settle()
+        self._transport.send(command)
+        return self._parse_int(self._await_reply(command, limit, hint), command)
+
     # -- motion -------------------------------------------------------------------
 
-    def _check_not_jogging(self) -> None:
-        # What the firmware does with a rotate during a jog is untested.
+    def _check_idle(self) -> None:
+        # What the firmware does with a rotate during a jog or a run sequence
+        # is untested.
         if self._jogging:
             raise DeviceBusy(f"{self!r} is jogging; call stop() first")
+        if self._running:
+            raise DeviceBusy(f"{self!r} is running a capture sequence")
 
     def _turn(self, degrees: int, start: int, timeout: float) -> None:
         """Turn by a signed whole-degree offset, in legs of at most 360°."""
@@ -657,7 +764,7 @@ class Foldio360(Stage):
                 self._interrupted()
             self._settle()
             self._transport.send(command)
-            self._await_move(command, limit)
+            _check_ok(self._await_reply(command, limit), command)
         finally:
             with self._state_lock:
                 self._motion = None
@@ -671,15 +778,18 @@ class Foldio360(Stage):
             )
         return actual
 
-    def _await_move(self, command: str, limit: float) -> None:
-        """Wait for a rotation's OK, watching for stop() and the time limit."""
+    def _await_reply(self, command: str, limit: float, hint: str = "") -> str:
+        """Wait for a motion command's reply, watching for stop() and the limit.
+
+        ``hint`` is added to the timeout message.
+        """
         deadline = time.monotonic() + limit
         while True:
             if self._stop_requested.is_set():
                 self._interrupted()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                self._abandon(command, limit)
+                self._abandon(command, limit, hint)
             try:
                 reply = self._transport.read(min(remaining, _POLL_S))
             except DeviceTimeout:
@@ -689,8 +799,7 @@ class Foldio360(Stage):
                 self._interrupted()
             if reply == "FAIL":
                 raise CommandRejected(f"{self!r} rejected {command}")
-            _check_ok(reply, command)
-            return
+            return reply
 
     def _interrupted(self) -> NoReturn:
         """End a move that stop() cancelled."""
@@ -698,13 +807,13 @@ class Foldio360(Stage):
         self._refresh_position()
         raise PositionError(f"{self!r} move was interrupted by stop()")
 
-    def _abandon(self, command: str, limit: float) -> NoReturn:
+    def _abandon(self, command: str, limit: float, hint: str = "") -> NoReturn:
         """Stop a move that outlived its limit, then report the timeout."""
         self._safe_cancel(MODE_FIXED)
         self._refresh_position()
         raise DeviceTimeout(
             f"{self!r} {command} did not finish within {limit:g} s and was "
-            "cancelled; read position() before relying on where it stopped"
+            f"cancelled; read position() before relying on where it stopped{hint}"
         )
 
     def _stop_idle(self) -> None:
@@ -753,11 +862,14 @@ class Foldio360(Stage):
         except DeviceError:
             logger.debug("%r could not re-read its position", self, exc_info=True)
 
-    def _expect_int(self, command: str, maximum: int) -> int:
-        reply = self._command(command)
-        if not reply.isdigit() or int(reply) > maximum:
+    def _expect_int(self, command: str, maximum: int | None = None) -> int:
+        return self._parse_int(self._command(command), command, maximum)
+
+    def _parse_int(self, reply: str, command: str, maximum: int | None = None) -> int:
+        if not reply.isdigit() or (maximum is not None and int(reply) > maximum):
+            limits = "an integer" if maximum is None else f"0-{maximum}"
             raise UnexpectedResponse(
-                f"{self!r} expected 0-{maximum} for {command}, got {reply!r}"
+                f"{self!r} expected {limits} for {command}, got {reply!r}"
             )
         return int(reply)
 

@@ -107,8 +107,10 @@ The full vocabulary is exactly ten commands: the eight the app uses plus these t
 forty other plausible names (`home`, `get_state`, `get_speed`, `info`, `version`, `reset`,
 …) all answer `FAIL`.
 
-The driver does not expose `run`/`continue`, `ir_shutter`, or `set_signal`; they are
-documented here for completeness.
+The driver offers `run`, `ir_shutter`, and `set_signal` as Foldio360-only methods, outside
+the `Stage` role (see [Driver behavior](#driver-behavior)). Nothing uses them yet, and they
+are **unverified in our use**: the facts in their sections below were verified with the
+official app and the original standalone client, not through `educelab-devices`.
 
 ### rotate
 
@@ -166,6 +168,10 @@ Rapid writes overrun the device: a slider drag emitting a write every ~15 ms pro
 are lost. **Pace to ~50 ms** if you need per-value confirmation.
 
 ### run / continue / ir_shutter
+
+**Unverified in our use:** `Foldio360.run()` and `Foldio360.ir_shutter()` have not been run
+against hardware. The markers below describe the protocol, as observed with the app and
+the original client.
 
 `run(frames, speed)`, `continue`, and `ir_shutter(0)` make up the 360° capture sequence,
 and the only stateful part of the protocol. `run` does **not** free-run: the turntable
@@ -229,6 +235,8 @@ the handshake depends on the camera, so a client can drive `run`/`continue` and 
 images by any means it likes.
 
 ### set_signal (partially decoded)
+
+**Unverified in our use:** `Foldio360.set_signal()` has not been run against hardware.
 
 Sent when a camera model is chosen in the app. The only non-ASCII command, and the only
 one that exceeds the MTU.
@@ -514,6 +522,15 @@ How `Foldio360` maps the protocol onto the `Stage` role:
   brightness write with `wait=False`, a reply that arrived after its timeout) are counted.
   The next command first waits for the link to go quiet and discards them, and a query
   that gets an unexpected `OK` while one is outstanding skips it.
+- **Capture sequence.** `run(frames, on_frame)` holds the device lock for the whole
+  sequence and calls `on_frame(index)` at each frame; `on_frame` returning `False` ends it
+  early, and an exception from it cancels the sequence and propagates. The steps run at
+  the stage's speed, and each `continue` gets the watchdog for one step (at least 5 s).
+  Like a move, `stop()` from another thread sends `cancel(1)` and the sequence raises
+  `PositionError`. A frame count outside 24/36/48 is passed through; its wedge surfaces as
+  `DeviceTimeout` after a single `cancel(1)`. Moving or jogging from inside `on_frame`
+  raises `DeviceBusy`. **Unverified in our use**, as are `ir_shutter()` and
+  `set_signal()`.
 - **Speed.** `speed()` lists the firmware's three speeds as deg/s, the reciprocal of each
   speed's timing slope: about 7.30, 9.71, and 14.68 deg/s. Speeds 2 and 3 are
   **assumed**, like their timing fits.
@@ -521,8 +538,8 @@ How `Foldio360` maps the protocol onto the `Stage` role:
 ## Notes for a client
 
 Design consequences of the above, in the order they'll bite. These were written for the
-original standalone client; the driver follows them except where noted (its public API is
-blocking, per ADR 0001, and it doesn't expose `run`).
+original standalone client; the driver follows them except that its public API is blocking
+(ADR 0001), so `run` takes a per-frame callback instead of being an async iterator.
 
 - **Stack:** `bleak` + `asyncio`. Scan by name `Foldio360` or by service UUID
   `6e400001-b5a3-f393-e0a9-e50e24dcca9e`. Address characteristics by UUID, not by the

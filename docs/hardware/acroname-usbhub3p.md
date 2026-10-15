@@ -155,6 +155,8 @@ value takes effect without a save and reset, and what the maximum is.
 `el-devices hub list` lists attached hubs. `el-devices hub status` prints a hub's
 identity, enumeration delay, and the power state of every port.
 `el-devices hub cycle PORT` power-cycles one port. The `hardware`-marked tests are in
-`tests/test_acroname_hardware.py`.
+`tests/test_acroname_hardware.py`: set `ACRONAME_TEST_PORT` to a port that's safe to
+switch (tests that switch power skip without it) and, with several hubs attached,
+`ACRONAME_SERIAL_NUMBER`.
 
 Not yet run on hardware.

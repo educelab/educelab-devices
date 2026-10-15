@@ -15,8 +15,19 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
 
 - [x] Task 1.1: Declare the `[gphoto2]` extra with the Windows marker; lazy import; logging bridge.
 - [x] Task 1.2: Define the thin internal interface over gphoto2 calls the driver uses, and a fake implementing it for tests.
-- [ ] Task 1.3: Write tests for open/close, `-53` → `DeviceBusy`, `-105` retries → `DeviceNotFound`; implement.
+- [x] Task 1.3: Write tests for open/close, `-53` → `DeviceBusy`, `-105` retries → `DeviceNotFound`; implement.
 - [ ] Task 1.4: Implement `discover()`.
+
+### Deviations
+
+- `-52` (`GP_ERROR_IO_USB_FIND`) is retried like `-105`: with an explicit port, a camera
+  that is still re-enumerating is assumed to fail with `-52` rather than `-105`
+  (unknown; see docs/hardware/gphoto2-cameras.md#opening-a-session).
+- Without a port, `open()` autodetects and refuses to choose when several cameras are
+  attached, rather than letting libgphoto2 open whichever it finds first; rigs of
+  several DSLRs would otherwise open the wrong body silently.
+- `docs/hardware/gphoto2-cameras.md` was started here (session errors, `ptpcamerad`)
+  because the `DeviceBusy` message links to it; Task 5.1 completes it.
 
 ### Verification
 

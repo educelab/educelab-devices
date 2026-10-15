@@ -6,7 +6,7 @@ from collections.abc import Iterable, Mapping
 
 from educelab.devices.cameras._gphoto2 import (
     GP_ERROR_BAD_PARAMETERS,
-    GP_ERROR_MODEL_NOT_FOUND,
+    GP_ERROR_IO_USB_FIND,
     Event,
     FilePath,
     GPhoto2Error,
@@ -128,14 +128,14 @@ class FakeLibrary:
     def autodetect(self) -> list[tuple[str, str]]:
         return [(camera.model, camera.port) for camera in self.cameras]
 
-    def open(self, port: str | None) -> FakeCamera:
+    def open(self, port: str) -> FakeCamera:
         self.open_attempts += 1
         if self.open_errors:
             code = self.open_errors.popleft()
             raise GPhoto2Error(code, f"fake open failure {code}")
         for camera in self.cameras:
-            if port is None or camera.port == port:
+            if camera.port == port:
                 camera.is_open = True
                 camera.opens += 1
                 return camera
-        raise GPhoto2Error(GP_ERROR_MODEL_NOT_FOUND, "Unknown model")
+        raise GPhoto2Error(GP_ERROR_IO_USB_FIND, "Could not find the requested device")

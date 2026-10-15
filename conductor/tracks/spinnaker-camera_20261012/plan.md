@@ -14,7 +14,7 @@ Build a fake PySpin first, then the system/enumeration layer, then the per-camer
 ### Tasks
 
 - [x] Task 1.1: Build a fake PySpin module covering the node maps, camera list, image buffers (with release tracking), timestamps, and incomplete images.
-- [ ] Task 1.2: Write tests for lazy import and the install-hint error; implement.
+- [x] Task 1.2: Write tests for lazy import and the install-hint error; implement.
 - [ ] Task 1.3: Write tests for `SpinnakerSystem` lifetime and `discover()` (including removal while iterating, #90); implement.
 
 ### Verification

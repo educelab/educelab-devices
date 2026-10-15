@@ -23,11 +23,14 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
   - The fake lives in `tests/fakes/foldio360.py` as `FakeNusTransport`; tests are pytest functions in `tests/test_foldio360.py`.
   - Not ported: tests for `run`, `ir_shutter`, and `set_signal` (not copied, see 1.1), and the `cli.py` argument tests (`parse_direction`, `bounded_int`, parse-without-connecting), which move with the CLI in Task 4.2. `test_fail_is_an_error_response` used `ir_shutter(2)`; it now scripts FAIL for a `rotate`.
   - Added: `DeviceTimeout` from a real `NusTransport.read()`, a missing `bleak` naming the extra, importing the driver not importing `bleak`, and `stop()` sending both cancels.
-- [ ] Task 1.3: Copy `PROTOCOL.md` to `docs/hardware/foldio360.md` and restructure it to the hardware-doc outline without losing content or markers.
+- [x] Task 1.3: Copy `PROTOCOL.md` to `docs/hardware/foldio360.md` and restructure it to the hardware-doc outline without losing content or markers.
+  - Sections map to the hardware-doc outline: Identity (advertisement), Transport (NUS, framing, connect sequence), Protocol (command reference, one subsection per command, response grammar, pairing, app quirks), Timing, State and recovery (the power-cycle reset and accumulator findings, split out of the old §2.6), Hazards, Notes for a client (old §7), Open questions (old §8), Manual check, Capture provenance. `§N` cross-references became heading links; driver comments cite headings, not numbers.
+  - Added: a Timing table of the other constants the driver uses, the fragment/numeric settle windows under Response grammar, an ADR 0003 pointer under State and recovery, and an **unknown** for `cancel(1)` during a fixed-angle `rotate` (spec: "verify on hardware"; PROTOCOL.md didn't list it in §8, but no capture shows it).
+  - Fixed a contradiction: the old §8 said `speed > 3` was untried, while §4 records `run(24,4)` and `rotate(CW,1,4,1)` answering `FAIL`. The open question now covers only speeds above 4 and `deg > 380`.
 
 ### Verification
 
-- [ ] Ported tests pass on all CI platforms.
+- [~] Ported tests pass on all CI platforms. (Local: macOS, Python 3.13, with and without `bleak` installed. CI runs on push/PR, which this run doesn't do.)
 
 ## Phase 2: Stage adaptation
 

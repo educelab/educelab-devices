@@ -83,6 +83,7 @@ class Widget:
         minimum: Lower bound of a range widget.
         maximum: Upper bound of a range widget.
         step: Increment of a range widget.
+        section: Name of the section the widget is in, e.g. ``"actions"``.
     """
 
     name: str
@@ -94,6 +95,7 @@ class Widget:
     minimum: float | None = None
     maximum: float | None = None
     step: float | None = None
+    section: str = ""
 
 
 @dataclass(frozen=True)
@@ -351,23 +353,25 @@ def flatten_config(gp: Any, root: Any) -> dict[str, Widget]:
         gp.GP_WIDGET_BUTTON: "button",
     }
     widgets: dict[str, Widget] = {}
-    pending = [root]
-    while pending:
-        node = pending.pop(0)
+
+    def visit(node: Any, section: str) -> None:
         kind = kinds.get(node.get_type())
         if kind is None:
-            pending[0:0] = list(node.get_children())
-            continue
+            if node is not root:
+                section = node.get_name()
+            for child in node.get_children():
+                visit(child, section)
+            return
         name = node.get_name()
         if name in widgets:
-            continue
+            return
         choices: tuple[str, ...] = ()
         minimum = maximum = step = None
         if kind in ("radio", "menu"):
             choices = tuple(node.get_choices())
         elif kind == "range":
             minimum, maximum, step = node.get_range()
-        widget = Widget(
+        widgets[name] = Widget(
             name=name,
             label=node.get_label(),
             kind=kind,
@@ -377,6 +381,8 @@ def flatten_config(gp: Any, root: Any) -> dict[str, Widget]:
             minimum=minimum,
             maximum=maximum,
             step=step,
+            section=section,
         )
-        widgets[name] = widget
+
+    visit(root, "")
     return widgets

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from contracts import CameraContract, FileCameraContract
+from contracts import FileCameraContract
 from educelab.devices.app import discover
 from educelab.devices.cameras import _gphoto2, gphoto2
 from educelab.devices.cameras._gphoto2 import (
@@ -19,11 +19,17 @@ from educelab.devices.cameras._gphoto2 import (
     Event,
     FilePath,
 )
-from educelab.devices.cameras.base import CameraFile
+from educelab.devices.cameras.base import (
+    APERTURE,
+    EXPOSURE_TIME,
+    ISO,
+    CameraFile,
+    Setting,
+)
 from educelab.devices.cameras.gphoto2 import GPhoto2Camera
 from educelab.devices.device import DeviceInfo
 from educelab.devices.errors import DeviceBusy, DeviceError, DeviceNotFound
-from fakes.gphoto2 import FOLDER, FakeCamera, FakeLibrary
+from fakes.gphoto2 import FOLDER, NIKON_WIDGETS, FakeCamera, FakeLibrary
 
 
 def fake_sdk():
@@ -158,7 +164,12 @@ def test_config_tree_is_flattened_by_name():
 
     assert list(widgets) == ["shutterspeed", "manualfocusdrive", "serialnumber"]
     assert widgets["shutterspeed"] == _gphoto2.Widget(
-        "shutterspeed", "Shutterspeed", "radio", "1/60", choices=("1/60", "1/30")
+        "shutterspeed",
+        "Shutterspeed",
+        "radio",
+        "1/60",
+        choices=("1/60", "1/30"),
+        section="capturesettings",
     )
     assert widgets["manualfocusdrive"].kind == "range"
     assert (
@@ -169,6 +180,7 @@ def test_config_tree_is_flattened_by_name():
         32767,
     )
     assert widgets["serialnumber"].read_only
+    assert widgets["manualfocusdrive"].section == "actions"
 
 
 def test_fakes_fill_the_seam() -> None:
@@ -458,19 +470,15 @@ def test_capture_in_flight_is_flagged_and_blocks_other_captures(fast_capture):
     camera.close()
 
 
-# Settings and live view arrive in Phase 3; until then the Camera rules that
-# need them must fail, and strict xfail flags the moment they start passing.
-NEEDS_SETTINGS_OR_LIVE_VIEW = {
-    name
-    for name in vars(CameraContract)
-    if name.startswith("test_") and name != "test_closed_camera_raises_not_connected"
-}
+# Live view arrives in Task 3.2; until then the preview rule must fail, and
+# strict xfail flags the moment it starts passing.
+NEEDS_LIVE_VIEW = {"test_preview_frame_is_displayable"}
 
 
 class TestGPhoto2Contract(FileCameraContract):
     @pytest.fixture(autouse=True)
     def attached(self, monkeypatch, fast_capture, request):
-        if request.node.originalname in NEEDS_SETTINGS_OR_LIVE_VIEW:
+        if request.node.originalname in NEEDS_LIVE_VIEW:
             request.applymarker(
                 pytest.mark.xfail(raises=NotImplementedError, strict=True)
             )
@@ -481,3 +489,112 @@ class TestGPhoto2Contract(FileCameraContract):
     @pytest.fixture
     def make_device(self, attached):
         return lambda: GPhoto2Camera("usb:020,007", library=attached)
+
+
+def settings_of(attached):
+    with opened(attached) as camera:
+        return camera.settings()
+
+
+def test_exposure_time_lists_the_shutter_speeds_in_seconds():
+    exposure = settings_of(FakeCamera())[EXPOSURE_TIME]
+    assert exposure.unit == "s"
+    assert exposure.value == pytest.approx(1 / 60)
+    assert exposure.choices == pytest.approx(
+        [1 / 8000, 1 / 1000, 1 / 60, 1 / 3, 10 / 13, 1.0, 2.5, 30.0]
+    )
+
+
+def test_shutter_speeds_that_are_not_durations_are_left_out():
+    exposure = settings_of(FakeCamera())[EXPOSURE_TIME]
+    assert all(isinstance(choice, float) for choice in exposure.choices)
+
+
+@pytest.mark.parametrize(
+    ("text", "seconds"),
+    [
+        ("1/8000", 1 / 8000),
+        ("10/13", 10 / 13),
+        ("30", 30.0),
+        ("2.5", 2.5),
+        ("0.5s", 0.5),
+        ("1/250s", 1 / 250),
+        ("Bulb", None),
+        ("Time", None),
+        ("x 1/200", None),
+    ],
+)
+def test_shutter_speed_text_is_read_as_seconds(text, seconds):
+    assert gphoto2.shutter_seconds(text) == (
+        None if seconds is None else pytest.approx(seconds)
+    )
+
+
+def test_nearest_exposure_time_is_written_as_the_native_shutter_speed():
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        exposure = camera.setting(EXPOSURE_TIME)
+        camera.set_setting(EXPOSURE_TIME, exposure.nearest(0.4))
+        assert attached.widgets["shutterspeed"].value == "1/3"
+        assert camera.setting(EXPOSURE_TIME).value == pytest.approx(1 / 3)
+
+
+def test_exposure_time_off_the_shutter_speed_list_raises():
+    with opened(FakeCamera()) as camera, pytest.raises(ValueError):
+        camera.set_setting(EXPOSURE_TIME, 0.4)
+
+
+def test_iso_and_aperture_are_canonical_numbers():
+    settings = settings_of(FakeCamera())
+    assert settings[ISO].value == 100
+    assert settings[ISO].choices == (64, 100, 200, 400, 25600)
+    assert settings[APERTURE].value == 8.0
+    assert settings[APERTURE].choices == (4.0, 5.6, 8.0, 11.0)
+    assert settings[APERTURE].unit == "f-number"
+
+
+def test_canonical_settings_are_written_natively():
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        camera.set_setting(ISO, 400)
+        camera.set_setting(APERTURE, 5.6)
+    assert attached.widgets["iso"].value == "400"
+    assert attached.widgets["f-number"].value == "f/5.6"
+
+
+def test_other_widgets_are_settings_by_native_name():
+    settings = settings_of(FakeCamera())
+    assert settings["imagequality"] == Setting(
+        "imagequality",
+        "NEF (Raw)",
+        choices=("JPEG Fine", "NEF (Raw)", "NEF+Fine"),
+    )
+    assert settings["colortemperature"] == Setting(
+        "colortemperature", 5000.0, 2500.0, 10000.0, 10.0
+    )
+    assert settings["artist"] == Setting("artist", "")
+    assert settings["serialnumber"].read_only
+    assert "shutterspeed" not in settings
+    assert "f-number" not in settings
+
+
+def test_actions_are_not_settings():
+    settings = settings_of(FakeCamera())
+    assert not {"viewfinder", "autofocusdrive", "manualfocusdrive"} & set(settings)
+
+
+def test_toggles_are_booleans():
+    toggle = _gphoto2.Widget("recordingmedia", "Media", "toggle", 1, section="settings")
+    attached = FakeCamera(widgets=[*NIKON_WIDGETS, toggle])
+    with opened(attached) as camera:
+        assert camera.setting("recordingmedia").value is True
+        camera.set_setting("recordingmedia", False)
+    assert attached.widgets["recordingmedia"].value == 0
+
+
+def test_camera_refusing_a_setting_raises_device_error():
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        attached.fail_next("set_config", GP_ERROR)
+        with pytest.raises(DeviceError, match="imagequality"):
+            camera.set_setting("imagequality", "JPEG Fine")

@@ -4,10 +4,12 @@ Error codes, timing, and per-body quirks: docs/hardware/gphoto2-cameras.md.
 """
 
 import logging
+import re
 import sys
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 
 import numpy as np
 import numpy.typing as npt
@@ -23,8 +25,17 @@ from educelab.devices.cameras._gphoto2 import (
     LibGPhoto2,
     Library,
     Session,
+    Widget,
+    WidgetValue,
 )
-from educelab.devices.cameras.base import CameraFile, FileCamera
+from educelab.devices.cameras.base import (
+    APERTURE,
+    CANONICAL_UNITS,
+    EXPOSURE_TIME,
+    ISO,
+    CameraFile,
+    FileCamera,
+)
 from educelab.devices.device import DeviceInfo
 from educelab.devices.errors import (
     DeviceBusy,
@@ -35,7 +46,7 @@ from educelab.devices.errors import (
 )
 from educelab.devices.settings import Setting, SettingValue
 
-__all__ = ["GPhoto2Camera"]
+__all__ = ["GPhoto2Camera", "shutter_seconds"]
 
 logger = logging.getLogger(__name__)
 
@@ -99,6 +110,10 @@ class GPhoto2Camera(FileCamera):
         self._library = library
         self._session: Session | None = None
         self._model: str | None = None
+        # How to write each setting from the last settings read: the widget and
+        # a converter to its native value. Every write validates (and so reads)
+        # first, so this is never stale.
+        self._writers: dict[str, tuple[str, Callable[[SettingValue], WidgetValue]]] = {}
         # Set while the shutter is released or files are downloading, so the
         # keep-alive thread stays off the bus.
         self._capture_in_flight = threading.Event()
@@ -190,10 +205,39 @@ class GPhoto2Camera(FileCamera):
         return DeviceError(message)
 
     def _settings(self) -> Mapping[str, Setting]:
-        raise NotImplementedError("GPhoto2Camera settings are not implemented yet")
+        session = self._require_session()
+        try:
+            widgets = session.config()
+        except GPhoto2Error as exc:
+            raise self._error(exc, "reading settings") from exc
+        settings: dict[str, Setting] = {}
+        self._writers = {}
+        hidden: set[str] = set()
+        for canonical in _CANONICAL:
+            found = canonical.read(widgets)
+            if found is not None:
+                setting, widget, natives = found
+                settings[setting.name] = setting
+                self._writers[setting.name] = (widget.name, natives.__getitem__)
+                hidden.update(canonical.widgets)
+        for widget in widgets.values():
+            if widget.name in hidden or widget.section in _NOT_SETTINGS:
+                continue
+            native = _native_setting(widget)
+            if native is not None:
+                settings[widget.name] = native
+                to_native = _toggle_value if widget.kind == "toggle" else _same
+                self._writers[widget.name] = (widget.name, to_native)
+        return settings
 
     def _set_setting(self, name: str, value: SettingValue) -> None:
-        raise NotImplementedError("GPhoto2Camera settings are not implemented yet")
+        widget, to_native = self._writers[name]
+        native = to_native(value)
+        logger.debug("%r %s = %r (%s)", self, name, value, native)
+        try:
+            self._require_session().set_config({widget: native})
+        except GPhoto2Error as exc:
+            raise self._error(exc, f"setting {name} to {value!r}") from exc
 
     def _preview_frame(self) -> npt.NDArray[np.uint8]:
         raise NotImplementedError("GPhoto2Camera live view is not implemented yet")
@@ -258,6 +302,105 @@ class GPhoto2Camera(FileCamera):
         if self._session is None:
             raise NotConnected(f"{self!r} is not open; call open() first")
         return self._session
+
+
+def shutter_seconds(text: str) -> float | None:
+    """A shutter speed as libgphoto2 shows it (``"1/250"``, ``"2.5"``,
+    ``"0.5s"``), in seconds. ``None`` for anything that isn't a duration, such
+    as ``"Bulb"`` or ``"Time"``."""
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)(?:/(\d+(?:\.\d+)?))?s?", text.strip())
+    if match is None:
+        return None
+    numerator, denominator = match.groups()
+    seconds = float(numerator) / float(denominator or 1)
+    return seconds if seconds > 0 else None
+
+
+def _f_number(text: str) -> float | None:
+    match = re.fullmatch(r"(?:f/?)?(\d+(?:\.\d+)?)", text.strip(), re.IGNORECASE)
+    return float(match.group(1)) if match else None
+
+
+def _iso(text: str) -> int | None:
+    return int(text) if text.strip().isdigit() else None
+
+
+@dataclass(frozen=True)
+class _Canonical:
+    """A canonical setting read from the first of ``widgets`` the camera has."""
+
+    name: str
+    widgets: tuple[str, ...]
+    parse: Callable[[str], float | int | None]
+
+    def read(
+        self, widgets: Mapping[str, Widget]
+    ) -> tuple[Setting, Widget, dict[SettingValue, str]] | None:
+        """The setting, its widget, and the native text of each choice, or
+        ``None`` if the camera has no such widget or its value isn't a number."""
+        widget = next((widgets[w] for w in self.widgets if w in widgets), None)
+        if widget is None or widget.kind not in ("radio", "menu"):
+            return None
+        value = self.parse(str(widget.value))
+        if value is None:
+            return None
+        natives: dict[SettingValue, str] = {}
+        for text in widget.choices:
+            parsed = self.parse(text)
+            if parsed is not None:
+                natives.setdefault(parsed, text)
+        setting = Setting(
+            self.name,
+            value,
+            choices=tuple(natives),
+            unit=CANONICAL_UNITS[self.name],
+            read_only=widget.read_only,
+        )
+        return setting, widget, natives
+
+
+# Shutter speeds that aren't durations (Bulb, Time) aren't exposure times.
+# When the camera is set to one, exposure_time is absent and the widget is
+# listed under its native name instead (docs/hardware/gphoto2-cameras.md#settings).
+_CANONICAL = (
+    _Canonical(EXPOSURE_TIME, ("shutterspeed", "shutterspeed2"), shutter_seconds),
+    _Canonical(ISO, ("iso",), _iso),
+    _Canonical(APERTURE, ("f-number", "aperture"), _f_number),
+)
+
+# Widgets in these sections are commands (drive focus, toggle live view).
+_NOT_SETTINGS = frozenset({"actions"})
+
+
+def _native_setting(widget: Widget) -> Setting | None:
+    value = widget.value
+    if value is None or widget.kind == "button":
+        return None
+    name, read_only = widget.name, widget.read_only
+    if widget.kind in ("radio", "menu"):
+        return Setting(name, str(value), choices=widget.choices, read_only=read_only)
+    if widget.kind == "range":
+        return Setting(
+            name,
+            float(value),
+            widget.minimum,
+            widget.maximum,
+            widget.step,
+            read_only=read_only,
+        )
+    if widget.kind == "toggle":
+        return Setting(name, bool(value), read_only=read_only)
+    if widget.kind == "date":
+        return Setting(name, int(value), read_only=read_only)
+    return Setting(name, str(value), read_only=read_only)
+
+
+def _toggle_value(value: SettingValue) -> WidgetValue:
+    return int(bool(value))
+
+
+def _same(value: SettingValue) -> WidgetValue:
+    return value
 
 
 def _default_library() -> Library:

@@ -117,6 +117,11 @@ re-measures the offset. It gives up with `DeviceError` after 10 (`MAX_ATTEMPTS`)
 metadata reports `retries`, `stale_frames`, `incomplete_frames`, and
 `timestamp_remeasured`.
 
+`preview_frame()` takes the newest frame the same way (no `not_before`), shifts 16-bit
+pixels right by 8, and subsamples so the longest side is at most 1280 pixels. That
+assumes 16-bit formats use the full range (**unknown**: Blackfly S sensors are 10–12
+bit, and whether `Mono16` data is left-aligned decides how dark previews look).
+
 ## Timing
 
 - **Capture timeout:** by default the exposure time plus 2 s (`CAPTURE_MARGIN_S`),

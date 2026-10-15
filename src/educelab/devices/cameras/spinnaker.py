@@ -42,6 +42,7 @@ from educelab.devices.errors import (
 __all__ = [
     "CAPTURE_MARGIN_S",
     "MAX_ATTEMPTS",
+    "PREVIEW_MAX_SIZE",
     "PYSPIN_INSTALL_HINT",
     "RETRIES_BEFORE_REMEASURE",
     "TIMESTAMP_SAMPLES",
@@ -70,6 +71,9 @@ MAX_ATTEMPTS = 2 * RETRIES_BEFORE_REMEASURE
 # Default capture timeout on top of the exposure time; pgs-scan dev's rig
 # allowed 2 s per capture. Deliberately loose.
 CAPTURE_MARGIN_S = 2.0
+
+# Longest side of a preview, in pixels; larger frames are subsampled.
+PREVIEW_MAX_SIZE = 1280
 
 # Pixel formats whose arrays the driver knows how to shape. Others (e.g.
 # packed 12-bit) would come back as raw bytes.
@@ -602,7 +606,12 @@ class SpinnakerCamera(FrameCamera):
         return self._grab(None, None)
 
     def _preview_frame(self) -> npt.NDArray[np.uint8]:
-        raise NotImplementedError
+        """The newest frame as 8 bits, subsampled to `PREVIEW_MAX_SIZE`."""
+        pixels = self._grab(None, None).pixels
+        if pixels.dtype == np.uint16:
+            pixels = pixels >> 8
+        stride = -(-max(pixels.shape[:2]) // PREVIEW_MAX_SIZE)
+        return np.ascontiguousarray(pixels[::stride, ::stride], dtype=np.uint8)
 
     # --- Capture ----------------------------------------------------------------
 

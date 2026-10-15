@@ -1,12 +1,15 @@
 """`SpinnakerCamera`, tested against the fake PySpin in `fakes.pyspin`."""
 
+import sys
 import time
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
 import pytest
 
+from contracts import FrameCameraContract
 from educelab.devices import DeviceInfo
+from educelab.devices.app.cli import main
 from educelab.devices.cameras import EXPOSURE_TIME, GAIN, PIXEL_FORMAT, spinnaker
 from educelab.devices.cameras.spinnaker import SpinnakerCamera
 from educelab.devices.errors import (
@@ -516,3 +519,82 @@ def test_close_after_captures_releases_the_system(pyspin, fake):
         with pytest.raises(DeviceError):
             camera.capture_frame(not_before=time.time() + 60)
     assert_released(pyspin)
+
+
+# --- Preview ------------------------------------------------------------------
+
+
+def test_preview_is_eight_bit(camera):
+    camera.set_setting(PIXEL_FORMAT, "Mono16")
+    preview = camera.preview_frame()
+    assert preview.dtype == np.uint8
+    assert preview.shape == (6, 8)
+
+
+def test_preview_scales_sixteen_bit_frames_down(camera, fake):
+    camera.set_setting(PIXEL_FORMAT, "Mono16")
+    full = camera.capture_frame().pixels
+    preview = camera.preview_frame()
+    # Consecutive frames differ only by frame number, here at most 1 count.
+    assert abs(int(preview[0, 0]) - int(full[0, 0] >> 8)) <= 1
+
+
+def test_preview_of_a_large_sensor_is_reduced():
+    pyspin = FakePySpin([FakeCamera(MONO, width=4000, height=3000)])
+    with SpinnakerCamera(MONO, pyspin=pyspin) as camera:
+        preview = camera.preview_frame()
+    assert max(preview.shape) <= spinnaker.PREVIEW_MAX_SIZE
+    assert preview.shape == (750, 1000)
+
+
+def test_preview_releases_its_buffer(camera, fake):
+    camera.preview_frame()
+    assert fake.held == []
+
+
+# --- Contracts ----------------------------------------------------------------
+
+
+class TestSpinnakerCameraContract(FrameCameraContract):
+    auto = True
+
+    @pytest.fixture(autouse=True)
+    def pyspin(self, monkeypatch):
+        pyspin = FakePySpin([FakeCamera(MONO, color=True, auto=self.auto)])
+        # discover() is a classmethod, so it reaches the fake through the loader.
+        monkeypatch.setattr(spinnaker, "load_pyspin", lambda: pyspin)
+        return pyspin
+
+    @pytest.fixture
+    def make_device(self, pyspin):
+        return lambda: SpinnakerCamera(MONO, pyspin=pyspin)
+
+    def test_closing_releases_the_sdk(self, make_device, pyspin):
+        with make_device() as camera:
+            camera.capture_frame()
+            camera.preview_frame()
+        assert_released(pyspin)
+
+
+class TestSpinnakerCameraContractManualExposure(TestSpinnakerCameraContract):
+    """The same rules with auto exposure and gain off, so their ranges apply."""
+
+    auto = False
+
+
+# --- el-devices discover ------------------------------------------------------
+
+
+def test_el_devices_discover_lists_spinnaker_cameras(pyspin, monkeypatch, capsys):
+    monkeypatch.setattr(spinnaker, "load_pyspin", lambda: pyspin)
+    assert main(["discover"]) == 0
+    out = capsys.readouterr().out
+    assert (
+        f"spinnaker: Blackfly S BFS-U3-51S5M at unknown address, serial {MONO}" in out
+    )
+
+
+def test_el_devices_discover_without_pyspin_says_how_to_install(monkeypatch, capsys):
+    monkeypatch.setitem(sys.modules, "PySpin", None)
+    main(["discover"])
+    assert "spinnaker: unavailable" in capsys.readouterr().out

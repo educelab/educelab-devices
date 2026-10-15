@@ -40,11 +40,23 @@ Build a fake PySpin first, then the system/enumeration layer, then the per-camer
 - [x] Task 2.2: Write tests for settings descriptors and `exposure_time` unit conversion; implement.
 - [x] Task 2.3: Decide acquisition start/stop semantics with the maintainer; implement.
 - [x] Task 2.4: Write tests for `capture_frame(not_before=…)`: stale rejection, bounded retries, every buffer released (#83), incomplete rejection; implement.
-- [ ] Task 2.5: Implement `preview_frame()`; run the `Camera`/`FrameCamera` contract suites.
+- [x] Task 2.5: Implement `preview_frame()`; run the `Camera`/`FrameCamera` contract suites.
 
 ### Verification
 
 - [ ] Camera tests and contracts pass; #83 and #90 covered by regression tests.
+
+### Notes and deviations
+
+- `capture_frame(not_before=None, timeout=None)` is an override on `SpinnakerCamera` with optional keyword arguments. The `FrameCamera` ABC is unchanged, so code written against the role can't pass `not_before`; promoting it to the role would be an ABC change and needs approval.
+- Capture retries: 5 frames per round (`RETRIES_BEFORE_REMEASURE`, pgs-scan's limit). If a round included stale frames, the offset is re-measured, and the capture gives up with `DeviceError` after 10 frames (`MAX_ATTEMPTS`). The default timeout is the exposure time plus 2 s.
+- Frame metadata: `exposure_time`, `gain`, `device_timestamp_ns`, `frame_id`, `retries`, `stale_frames`, `incomplete_frames`, `missing_trailer`, `timestamp_remeasured`.
+- Settings: canonical `exposure_time` (s), `gain` (dB), `pixel_format`, plus native `ExposureAuto` and `GainAuto` with choices `Off` and `Continuous`. `Once` is left out because it reverts to `Off` on its own and would never read back. `pixel_format` offers only Mono8, Mono16, RGB8 and 8/16-bit Bayer formats, which the driver can shape into arrays, and `open()` switches away from any other format. Changing it pauses acquisition.
+- `open()` also turns `TriggerMode` off, so a camera left triggered by another program still free-runs.
+- SDK errors become `DeviceError`s with no `__cause__` or `__context__`, because a chained `SpinnakerException` keeps its camera alive through the traceback. Error-code mapping (`-1011` timeout to `DeviceTimeout`, `-1005` on `Init()` to `DeviceBusy`) is assumed until Phase 3.
+- `preview_frame()` shifts 16-bit frames right by 8 and subsamples to at most 1280 px on the longest side.
+- Registered `spinnaker` in `BACKENDS` and exported `SpinnakerCamera` from `educelab.devices.cameras`.
+- The acquisition rewrite (2b060c4) accidentally dropped the hardware doc's later sections; c91bea1 restored them.
 
 ## Phase 3: Docs, CLI, hardware verification
 

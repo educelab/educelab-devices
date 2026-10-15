@@ -498,6 +498,7 @@ class FakeCamera:
         firmware: ``DeviceFirmwareVersion``.
         formats: ``PixelFormat`` entries, first one current. Defaults to the
             usual mono or color set.
+        auto: Whether auto exposure and auto gain start on.
     """
 
     def __init__(
@@ -515,6 +516,7 @@ class FakeCamera:
         timestamp_node: str = "Timestamp",
         firmware: str = "1.0.0.0",
         formats: Iterable[str] | None = None,
+        auto: bool = True,
     ) -> None:
         self.serial = serial
         self.model = model
@@ -570,10 +572,11 @@ class FakeCamera:
                 requires_init=False,
             )
         )
+        auto_mode = "Continuous" if auto else "Off"
         self.exposure_auto = EnumNode(
-            self, "ExposureAuto", "Continuous", _ENUMS["ExposureAuto"]
+            self, "ExposureAuto", auto_mode, _ENUMS["ExposureAuto"]
         )
-        self.gain_auto = EnumNode(self, "GainAuto", "Continuous", _ENUMS["GainAuto"])
+        self.gain_auto = EnumNode(self, "GainAuto", auto_mode, _ENUMS["GainAuto"])
         exposure = FloatNode(
             self,
             "ExposureTime",

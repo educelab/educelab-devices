@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from contracts import StageContract
 from educelab.devices.errors import (
     CommandRejected,
     DeviceBusy,
@@ -58,6 +59,16 @@ def connected_transport() -> f.NusTransport:
 
 
 # -- the stage ---------------------------------------------------------------
+
+
+class TestFoldio360Contract(StageContract):
+    @pytest.fixture
+    def make_device(self):
+        return lambda: Foldio360(transport=FakeNusTransport(angle=17))
+
+    @pytest.fixture
+    def position_tolerance(self) -> float:
+        return float(f._ARRIVAL_TOLERANCE_DEG)
 
 
 def test_is_a_stage_with_one_wrapping_rotary_axis():

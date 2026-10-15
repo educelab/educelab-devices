@@ -7,12 +7,18 @@
   "updated": "2026-10-15T00:00:00Z",
   "phases": {
     "total": 5,
-    "completed": 0
+    "completed": 1
   },
   "tasks": {
-    "total": 18,
+    "total": 19,
     "completed": 4
   },
-  "current_phase": 1,
-  "current_task": "Phase 1 verification"
+  "current_phase": 2,
+  "current_task": "2.1",
+  "commits": [
+    "cad7bb5: Add the gphoto2 extra, lazy SDK import, and libgphoto2 logging bridge",
+    "05b875b: Define the gphoto2 session seam and a fake camera library",
+    "baa13be: Open and close gphoto2 cameras, retrying cameras still enumerating",
+    "8834a2f: Discover gphoto2 cameras and list them in el-devices discover"
+  ]
 }

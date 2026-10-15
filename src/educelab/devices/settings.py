@@ -21,13 +21,17 @@ class Setting:
     doesn't enforce it, and the hardware rounds off-grid values itself. Use
     `nearest()` to get a value the hardware will keep exactly.
 
+    ``value`` is ``None`` while the device is in a state the setting can't
+    express, such as a DSLR's shutter at Bulb. The setting still says what can
+    be written, and writing a value leaves that state.
+
     A setting is a snapshot. What a setting accepts can depend on other
     settings (e.g. maximum exposure on frame rate), so read it again after
     changing anything else.
     """
 
     name: str
-    value: SettingValue
+    value: SettingValue | None
     minimum: float | None = None
     maximum: float | None = None
     step: float | None = None
@@ -133,8 +137,13 @@ def _pick(allowed: list[float], value: float, direction: Rounding) -> float:
     return min(tied)
 
 
-def _as_kind(value: SettingValue, current: SettingValue) -> SettingValue | None:
-    """``value`` converted to the type of ``current``, or None if it can't be."""
+def _as_kind(value: SettingValue, current: SettingValue | None) -> SettingValue | None:
+    """``value`` converted to the type of ``current``, or None if it can't be.
+
+    With no current value to go by, only numbers are accepted, as floats.
+    """
+    if current is None:
+        current = 0.0
     if isinstance(current, bool) or isinstance(value, bool):
         return value if isinstance(current, bool) and isinstance(value, bool) else None
     if isinstance(current, str):

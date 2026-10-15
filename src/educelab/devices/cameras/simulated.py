@@ -88,7 +88,7 @@ class SimulatedCamera(FrameCamera):
         return _quantize(image, np.uint8)
 
     def _capture_frame(self) -> Frame:
-        exposure = float(self._store[EXPOSURE_TIME].value)
+        exposure = _number(self._store[EXPOSURE_TIME])
         time.sleep(exposure)
         pixel_format = str(self._store[PIXEL_FORMAT].value)
         dtype = np.uint16 if pixel_format == "Mono16" else np.uint8
@@ -109,8 +109,8 @@ class SimulatedCamera(FrameCamera):
         return _render(
             self._width,
             self._height,
-            float(self._store[EXPOSURE_TIME].value),
-            float(self._store[GAIN].value),
+            _number(self._store[EXPOSURE_TIME]),
+            _number(self._store[GAIN]),
             self._rng,
         )
 
@@ -164,7 +164,7 @@ class SimulatedFileCamera(FileCamera):
         return _quantize(image, np.uint8)
 
     def _capture_files(self) -> list[CameraFile]:
-        time.sleep(float(self._store[EXPOSURE_TIME].value))
+        time.sleep(_number(self._store[EXPOSURE_TIME]))
         pixels = _quantize(self._render(), np.uint8)
         self._file_count += 1
         header = f"P5\n{self._width} {self._height}\n255\n".encode("ascii")
@@ -174,14 +174,20 @@ class SimulatedFileCamera(FileCamera):
 
     def _render(self) -> npt.NDArray[np.float64]:
         # ISO 100 is the 0 dB reference, like gain on a frame camera.
-        gain_db = 20 * np.log10(int(self._store[ISO].value) / 100)
+        gain_db = 20 * np.log10(_number(self._store[ISO]) / 100)
         return _render(
             self._width,
             self._height,
-            float(self._store[EXPOSURE_TIME].value),
+            _number(self._store[EXPOSURE_TIME]),
             float(gain_db),
             self._rng,
         )
+
+
+def _number(setting: Setting) -> float:
+    # Simulated settings always hold a number; None only comes from hardware.
+    assert isinstance(setting.value, int | float), setting
+    return float(setting.value)
 
 
 def _render(

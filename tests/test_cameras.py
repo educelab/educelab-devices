@@ -230,3 +230,17 @@ def test_nearest_clamps_to_the_last_step_below_an_off_grid_maximum():
     setting = Setting("s", 0.0, minimum=0, maximum=10, step=3)
     assert setting.nearest(11) == 9
     assert setting.nearest(9.5, "up") == 9
+
+
+def test_setting_without_a_value_still_offers_its_choices():
+    bulb = Setting(EXPOSURE_TIME, None, choices=(1 / 250, 1 / 60, 1.0), unit="s")
+    assert bulb.nearest(0.02) == 1 / 60
+    assert bulb.validate(1 / 60) == 1 / 60
+
+
+def test_setting_without_a_value_or_choices_takes_numbers_as_floats():
+    unknown = Setting(EXPOSURE_TIME, None, 0.0, 10.0, unit="s")
+    assert unknown.validate(2) == 2.0
+    assert isinstance(unknown.validate(2), float)
+    with pytest.raises(TypeError):
+        unknown.validate("Bulb")

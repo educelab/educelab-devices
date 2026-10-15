@@ -301,10 +301,9 @@ class SpinnakerCamera(FrameCamera):
     """One FLIR/Teledyne camera, addressed by serial number.
 
     ``open()`` initializes the camera, measures the offset between its
-    timestamp counter and the host clock, and starts acquiring in
-    software-trigger mode: the camera stays ready, but sends a frame over USB
-    only when one is requested. ``close()`` stops acquiring and de-initializes
-    it. Changing ``pixel_format`` pauses acquisition briefly, since cameras
+    timestamp counter and the host clock, and starts free-running acquisition
+    that keeps only the newest frame, which is the fastest way to capture.
+    ``close()`` stops acquiring and de-initializes it. Changing ``pixel_format`` pauses acquisition briefly, since cameras
     only accept it while stopped.
 
     Every PySpin error becomes a `DeviceError`. Those errors are deliberately
@@ -383,7 +382,6 @@ class SpinnakerCamera(FrameCamera):
             self._model = self._read_string("DeviceModelName") or self._model
             self._firmware = self._read_string("DeviceFirmwareVersion")
             self._configure()
-            self._configure_acquisition()
             self._call("begin acquisition", lambda: self._cam.BeginAcquisition())
             self._measure_timestamp_offset()
         except BaseException:
@@ -434,9 +432,14 @@ class SpinnakerCamera(FrameCamera):
         )
 
     def _configure(self) -> None:
-        # Never hand back a frame older than the newest one (pgs-scan dev).
+        # Free-running, keeping only the newest frame: the fastest way to
+        # capture (pgs-scan dev; docs/hardware/spinnaker.md, Acquisition).
         self._set_enum("StreamBufferHandlingMode", "NewestOnly", stream=True)
         self._set_enum("AcquisitionMode", "Continuous")
+        if self._pyspin.IsReadable(self._node("TriggerMode", "CEnumerationPtr")):
+            # A camera left in trigger mode (e.g. by SpinView) would never send
+            # a frame.
+            self._set_enum("TriggerMode", "Off")
         formats = self._enum_choices("PixelFormat", _PIXEL_FORMATS)
         if formats and self._enum_symbol("PixelFormat") not in formats:
             preferred = "RGB8" if "RGB8" in formats else formats[0]
@@ -445,23 +448,6 @@ class SpinnakerCamera(FrameCamera):
         self._timestamp_node = next(
             (n for n in _TIMESTAMP_NODES if self._raw_node(n) is not None), None
         )
-
-    # The acquisition seam: a continuous (free-running) mode would replace these
-    # two methods. See docs/hardware/spinnaker.md, Acquisition.
-
-    def _configure_acquisition(self) -> None:
-        """Make each frame wait for a software trigger."""
-        # TriggerSource is writable only while TriggerMode is off (FLIR's
-        # Trigger example; assumed).
-        self._set_enum("TriggerMode", "Off")
-        self._set_enum("TriggerSelector", "FrameStart")
-        self._set_enum("TriggerSource", "Software")
-        self._set_enum("TriggerMode", "On")
-
-    def _request_frame(self) -> None:
-        """Ask the camera for one frame."""
-        trigger = self._node("TriggerSoftware", "CCommandPtr")
-        self._call("trigger a frame", trigger.Execute)
 
     @contextmanager
     def _acquisition_paused(self) -> Iterator[None]:

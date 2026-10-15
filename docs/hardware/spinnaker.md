@@ -63,56 +63,22 @@ needs the SDK raises an `ImportError` that links here.
 
 ### Acquisition
 
-**Decided 2026-10-15; to be verified on a rig in Phase 3.** A camera acquires from
-`open()` to `close()` in software-trigger mode, so it stays ready but sends a frame over
-USB only when one is requested:
+**Decided 2026-10-15, because it is the fastest way to capture; to be verified on a rig
+in Phase 3.** A camera acquires continuously from `open()` to `close()`, as in `pgs-scan`
+`dev`:
 
-1. `open()`: `Init()`, then `TriggerMode=Off`, `TriggerSelector=FrameStart`,
-   `TriggerSource=Software`, `TriggerMode=On`, then `BeginAcquisition()`.
-   `TriggerSource` is writable only while `TriggerMode` is off (assumed, from FLIR's
-   `Trigger.py` example), so the driver turns triggering off first even when the camera
-   was left triggered.
-2. Each capture: execute `TriggerSoftware`, then `GetNextImage()`.
+1. `open()`: `Init()`, then `StreamBufferHandlingMode=NewestOnly` (on the stream node
+   map), `AcquisitionMode=Continuous`, `TriggerMode=Off` (a camera left in trigger mode,
+   e.g. by SpinView, would never send a frame), then `BeginAcquisition()`.
+2. Each capture: `GetNextImage()`, rejecting frames older than the request (see
+   Timestamps) and incomplete frames, and releasing every buffer.
 3. `close()`: `EndAcquisition()`, then `DeInit()`.
 
-`pgs-scan` `dev` instead streamed continuously with `NewestOnly` buffering and threw
-away frames older than the request. Triggering should send less over USB with several
-cameras on one host and make stale frames rare, at the cost of waiting a full exposure
-and readout per capture. Phase 3 measures both: per-capture latency, and USB bandwidth
-with several cameras.
-
-The driver still keeps `StreamBufferHandlingMode=NewestOnly`, rejects frames older than
-`not_before`, rejects incomplete frames, and releases every buffer, as safeguards. The
-trigger setup is two methods (`_configure_acquisition()` and `_request_frame()`), so a
-continuous mode could be added without a rewrite.
+With `NewestOnly`, the first frame a capture gets is often one exposed before the
+request, so rejecting stale frames is the main mechanism, not a safeguard. A software
+trigger per capture was considered and rejected: it pays for exposure, readout, and
+transfer on every capture. The cost of free-running is USB bandwidth while several
+cameras stream at once; Phase 3 measures that and the per-capture latency.
 
 `PixelFormat` is read-only while acquiring (assumed, standard GenICam behavior), so
 setting `pixel_format` ends acquisition, changes the format, and begins again.
-
-## Timing
-
-*To come (Phase 3).*
-
-## State and recovery
-
-- If `ReleaseInstance()` fails, the driver still forgets the instance and raises
-  `DeviceError`, so the next open starts clean. The SDK may still hold the system until
-  the process exits (unknown).
-
-## Hazards
-
-- **Clearing a camera list while iterating it** (`pgs-scan` #90): `_remove_cameras` called
-  `Clear()` inside the loop over the list, so only the first camera was de-initialized and
-  the rest were left initialized, which makes `ReleaseInstance()` fail and is a likely
-  cause of "camera busy" on the next launch. The driver clears lists only after the loop.
-- **Hidden camera references.** Anything that keeps a camera pointer alive blocks
-  `ReleaseInstance()`: a leftover loop variable, but also an exception whose traceback
-  passes through a frame holding one, kept alive by a log record or a chained `raise
-  ... from`. The driver indexes camera lists instead of iterating them, and logs SDK
-  errors as text. This follows from the assumed rule above; it showed up with the fake
-  PySpin in tests (2026-10) and hasn't been seen on a rig.
-- **Unreleased image buffers** (`pgs-scan` #83): see Phase 2.
-
-## Manual check
-
-*To come (Phase 3):* `el-devices spinnaker`.

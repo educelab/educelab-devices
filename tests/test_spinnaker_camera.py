@@ -58,12 +58,6 @@ def test_open_initializes_the_camera(camera, fake):
     assert fake.init_calls == 1
 
 
-def test_open_keeps_only_the_newest_buffer(camera, fake):
-    mode = fake.tl_stream_nodes["StreamBufferHandlingMode"]
-    assert mode.symbolic == "NewestOnly"
-    assert fake.nodes["AcquisitionMode"].symbolic == "Continuous"
-
-
 def test_close_releases_the_camera_and_the_system(pyspin, fake):
     camera = SpinnakerCamera(MONO, pyspin=pyspin)
     camera.open()
@@ -291,26 +285,19 @@ def test_a_write_the_camera_refuses_raises_command_rejected(camera, fake, monkey
 # --- Acquisition --------------------------------------------------------------
 
 
-def test_open_starts_acquiring_in_software_trigger_mode(camera, fake):
+def test_open_starts_free_running_acquisition(camera, fake):
     assert fake.streaming
-    assert fake.trigger_selector.symbolic == "FrameStart"
-    assert fake.trigger_source.symbolic == "Software"
-    assert fake.trigger_mode.symbolic == "On"
+    assert fake.nodes["AcquisitionMode"].symbolic == "Continuous"
+    assert fake.tl_stream_nodes["StreamBufferHandlingMode"].symbolic == "NewestOnly"
+    assert fake.trigger_mode.symbolic == "Off"
 
 
-def test_open_sends_no_frames_until_one_is_requested(camera, fake):
-    assert fake.trigger_calls == 0
-    assert fake.frames_grabbed == 0
-
-
-def test_open_switches_a_camera_left_in_hardware_trigger_mode(pyspin, fake):
-    # TriggerSource is only writable while TriggerMode is off.
+def test_open_turns_off_a_trigger_mode_left_on(pyspin, fake):
     fake.initialized = True
     fake.trigger_mode.SetValue(pyspin.TriggerMode_On)
     fake.initialized = False
     with SpinnakerCamera(MONO, pyspin=pyspin):
-        assert fake.trigger_source.symbolic == "Software"
-        assert fake.trigger_mode.symbolic == "On"
+        assert fake.trigger_mode.symbolic == "Off"
 
 
 def test_close_ends_acquisition_before_deinit(pyspin, fake):

@@ -4,6 +4,7 @@ Error codes, timing, and per-body quirks: docs/hardware/gphoto2-cameras.md.
 """
 
 import logging
+import sys
 import threading
 import time
 from collections.abc import Mapping
@@ -54,13 +55,27 @@ DRAIN_LIMIT_S = 2.0
 DOWNLOAD_ATTEMPTS = 3
 DOWNLOAD_RETRY_DELAY_S = 1.0
 
-USB_CLAIMED_HINT = (
-    "Another process holds the camera's USB interface. On macOS this is "
-    "usually ptpcamerad, which claims every camera it sees: quit apps that use "
-    "the camera (Image Capture, Photos), run `killall -9 ptpcamerad`, and open "
-    "again straight away. On Linux, look for gvfs-gphoto2-volume-monitor. See "
-    "docs/hardware/gphoto2-cameras.md#ptpcamerad."
-)
+_DOC = "docs/hardware/gphoto2-cameras.md"
+
+
+def usb_claimed_hint() -> str:
+    """What to do about a claimed USB interface (``-53``) on this host."""
+    claimed = "Another process holds the camera's USB interface."
+    if sys.platform == "darwin":
+        return (
+            f"{claimed} On macOS this is usually ptpcamerad, which claims every "
+            "camera it sees: quit apps that use the camera (Image Capture, "
+            "Photos), run `killall -9 ptpcamerad`, and open again straight away. "
+            f"See {_DOC}#macos-ptpcamerad."
+        )
+    if sys.platform.startswith("linux"):
+        return (
+            f"{claimed} On Linux this is usually gvfs-gphoto2-volume-monitor, "
+            "which mounts cameras as they appear: unmount the camera in the file "
+            "manager, or stop the monitor. "
+            f"See {_DOC}#linux-gvfs-gphoto2-volume-monitor."
+        )
+    return f"{claimed} Close it and open again."
 
 
 class GPhoto2Camera(FileCamera):
@@ -165,7 +180,7 @@ class GPhoto2Camera(FileCamera):
         """The `DeviceError` for a libgphoto2 failure while ``doing`` something."""
         message = f"{self!r}: {doing} failed: {exc}"
         if exc.code == GP_ERROR_IO_USB_CLAIM:
-            return DeviceBusy(f"{message}. {USB_CLAIMED_HINT}")
+            return DeviceBusy(f"{message}. {usb_claimed_hint()}")
         if exc.code == GP_ERROR_CAMERA_BUSY:
             return DeviceBusy(message)
         if exc.code in _STILL_ENUMERATING:

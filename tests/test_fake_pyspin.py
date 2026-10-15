@@ -180,3 +180,27 @@ def test_get_by_serial_for_a_missing_camera_is_invalid(pyspin):
     cameras = pyspin.System.GetInstance().GetCameras()
     assert cameras.GetBySerial("2").IsValid()
     assert not cameras.GetBySerial("nope").IsValid()
+
+
+def test_trigger_mode_needs_a_trigger_per_fresh_frame(pyspin):
+    camera = pyspin.system.cameras[0]
+    camera.queue_frames(FrameSpec(timestamp_ns=5))
+    cam = pyspin.System.GetInstance().GetCameras().GetByIndex(0)
+    cam.Init()
+    cam.TriggerMode.SetValue(pyspin.TriggerMode_Off)
+    cam.TriggerSource.SetValue(pyspin.TriggerSource_Software)
+    cam.TriggerMode.SetValue(pyspin.TriggerMode_On)
+    assert not pyspin.IsWritable(cam.TriggerSource)
+    cam.BeginAcquisition()
+    cam.GetNextImage().Release()  # already waiting, no trigger needed
+    with pytest.raises(pyspin.SpinnakerException, match="no frame was triggered"):
+        cam.GetNextImage()
+    before = camera.device_time_ns()
+    cam.TriggerSoftware.Execute()
+    image = cam.GetNextImage()
+    assert image.GetTimeStamp() >= before
+    image.Release()
+    camera.respond_to_triggers = False
+    cam.TriggerSoftware.Execute()
+    with pytest.raises(pyspin.SpinnakerException):
+        cam.GetNextImage()

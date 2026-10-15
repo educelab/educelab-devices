@@ -10,6 +10,9 @@ rather than on a rig:
 - ``System.ReleaseInstance()`` fails while a camera list is uncleared, a camera
   pointer is still referenced, or a camera is still initialized.
 - Iterating a ``CameraList`` stops early if the list is cleared mid-loop (#90).
+- In trigger mode, a fresh frame needs a ``TriggerSoftware``; without one,
+  ``GetNextImage()`` times out. ``TriggerSource`` is writable only while
+  ``TriggerMode`` is off.
 - Every ``GetNextImage()`` buffer must be released. Once a camera's buffers are
   all held, ``GetNextImage()`` times out (#83). A released buffer's pixels are
   overwritten, so arrays used without a copy show garbage.
@@ -60,6 +63,9 @@ _ENUMS = {
     "GainAuto": ("Off", "Once", "Continuous"),
     "ExposureMode": ("Timed", "TriggerWidth"),
     "AcquisitionMode": ("Continuous", "SingleFrame", "MultiFrame"),
+    "TriggerMode": ("Off", "On"),
+    "TriggerSelector": ("FrameStart", "AcquisitionStart", "FrameBurstStart"),
+    "TriggerSource": ("Software", "Line0", "Line1", "Line2", "Line3"),
     "StreamBufferHandlingMode": (
         "OldestFirst",
         "OldestFirstOverwrite",
@@ -257,6 +263,9 @@ class EnumEntry:
     def GetName(self) -> str:
         return f"EnumEntry_{self.family}_{self.symbolic}"
 
+    def GetAccessMode(self) -> int:
+        return RO
+
 
 class EnumNode(ValueNode):
     """An enumeration, valued by the ``PySpin.<Family>_<Entry>`` constants."""
@@ -378,7 +387,9 @@ class FrameSpec:
     """A frame to hand out from ``GetNextImage()``.
 
     Attributes:
-        timestamp_ns: Device timestamp. ``None`` stamps it when retrieved.
+        timestamp_ns: Device timestamp. A frame with one is already waiting in a
+            buffer and needs no trigger. ``None`` makes a fresh frame, stamped
+            when it is triggered (or retrieved, outside trigger mode).
         status: Image status; anything but ``IMAGE_NO_ERROR`` is incomplete.
     """
 
@@ -476,6 +487,7 @@ class FakeCamera:
         clock: Host clock, in seconds since the epoch.
         uptime: Seconds the camera's timestamp counter has been running.
         timestamp_node: ``"Timestamp"`` or the older ``"TimestampLatchValue"``.
+        firmware: ``DeviceFirmwareVersion``.
     """
 
     def __init__(
@@ -491,6 +503,7 @@ class FakeCamera:
         clock: Callable[[], float] = time.time,
         uptime: float = 1000.0,
         timestamp_node: str = "Timestamp",
+        firmware: str = "1.0.0.0",
     ) -> None:
         self.serial = serial
         self.model = model
@@ -510,7 +523,9 @@ class FakeCamera:
         self.init_calls = 0
         self.deinit_calls = 0
         self.latch_calls = 0
-        self._latched = 0
+        self.trigger_calls = 0
+        self.pending_triggers: deque[int] = deque()
+        self.respond_to_triggers = True
 
         formats = ["Mono8", "Mono16"]
         if color:
@@ -564,11 +579,23 @@ class FakeCamera:
             unit="dB",
             access=lambda: RW if self.gain_auto.symbolic == "Off" else RO,
         )
+        self.trigger_mode = EnumNode(self, "TriggerMode", "Off", _ENUMS["TriggerMode"])
+        self.trigger_source = EnumNode(
+            self,
+            "TriggerSource",
+            "Line0",
+            _ENUMS["TriggerSource"],
+            access=lambda: RW if self.trigger_mode.symbolic == "Off" else RO,
+        )
+        self.trigger_selector = EnumNode(
+            self, "TriggerSelector", "FrameStart", _ENUMS["TriggerSelector"]
+        )
         self.pixel_format = EnumNode(
             self, "PixelFormat", formats[0], formats, access=unless_streaming
         )
         self.nodes = node_map(
             *identity,
+            StringNode(self, "DeviceFirmwareVersion", firmware, access=RO),
             IntegerNode(self, "Width", width, access=RO),
             IntegerNode(self, "Height", height, access=RO),
             self.pixel_format,
@@ -591,6 +618,10 @@ class FakeCamera:
             exposure,
             self.gain_auto,
             gain,
+            self.trigger_selector,
+            self.trigger_mode,
+            self.trigger_source,
+            CommandNode(self, "TriggerSoftware", self._trigger),
             CommandNode(self, "TimestampLatch", self._latch),
             IntegerNode(
                 self,
@@ -614,6 +645,24 @@ class FakeCamera:
         self.latch_calls += 1
         self._timestamp._value = self.device_time_ns()  # type: ignore[attr-defined]
 
+    @property
+    def triggered(self) -> bool:
+        """Whether frames wait for a software trigger."""
+        return (
+            self.trigger_mode.symbolic == "On"
+            and self.trigger_source.symbolic == "Software"
+        )
+
+    def _trigger(self) -> None:
+        if not (self.streaming and self.triggered):
+            raise SpinnakerException(
+                f"camera {self.serial} isn't acquiring in software-trigger mode",
+                SPINNAKER_ERR_ACCESS_DENIED,
+            )
+        self.trigger_calls += 1
+        if self.respond_to_triggers:
+            self.pending_triggers.append(self.device_time_ns())
+
     def _require(self, initialized: bool = True) -> None:
         if not self.attached:
             raise SpinnakerException(f"camera {self.serial} lost", SPINNAKER_ERR_IO)
@@ -635,10 +684,20 @@ class FakeCamera:
             raise SpinnakerException(
                 f"camera {self.serial}: no free buffers", SPINNAKER_ERR_TIMEOUT
             )
+        waiting = self.queue and self.queue[0].timestamp_ns is not None
+        if self.triggered and not waiting:
+            if not self.pending_triggers:
+                raise SpinnakerException(
+                    f"camera {self.serial}: no frame was triggered",
+                    SPINNAKER_ERR_TIMEOUT,
+                )
+            fresh_timestamp = self.pending_triggers.popleft()
+        else:
+            fresh_timestamp = self.device_time_ns()
         spec = self.queue.popleft() if self.queue else FrameSpec()
         timestamp = spec.timestamp_ns
         if timestamp is None:
-            timestamp = self.device_time_ns()
+            timestamp = fresh_timestamp
         self.frames_grabbed += 1
         image = FakeImage(
             self,
@@ -871,7 +930,7 @@ class FakePySpin(ModuleType):
     IsWritable = staticmethod(IsWritable)
     Image_GetImageStatusDescription = staticmethod(Image_GetImageStatusDescription)
     CValuePtr = CFloatPtr = CIntegerPtr = CEnumerationPtr = staticmethod(_cast)
-    CStringPtr = CBooleanPtr = CCommandPtr = staticmethod(_cast)
+    CStringPtr = CBooleanPtr = CCommandPtr = CEnumEntryPtr = staticmethod(_cast)
 
     def __init__(self, cameras: Iterable[FakeCamera] = ()) -> None:
         super().__init__("PySpin")

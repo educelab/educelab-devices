@@ -5,20 +5,52 @@ PySpin is imported on first use, so this module imports without it. See
 """
 
 import logging
+import statistics
 import threading
-from collections.abc import Iterator
+import time
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from types import ModuleType, TracebackType
-from typing import Any, Self
+from typing import Any, Self, TypeVar
 
-from educelab.devices.device import DeviceInfo
-from educelab.devices.errors import DeviceError, NotConnected, import_optional
+import numpy as np
+import numpy.typing as npt
 
-__all__ = ["PYSPIN_INSTALL_HINT", "SpinnakerSystem", "load_pyspin"]
+from educelab.devices.cameras.base import Frame, FrameCamera, Setting, SettingValue
+from educelab.devices.device import DeviceInfo, synchronized
+from educelab.devices.errors import (
+    DeviceBusy,
+    DeviceError,
+    DeviceNotFound,
+    DeviceTimeout,
+    NotConnected,
+    import_optional,
+)
+
+__all__ = [
+    "PYSPIN_INSTALL_HINT",
+    "TIMESTAMP_SAMPLES",
+    "SpinnakerCamera",
+    "SpinnakerSystem",
+    "load_pyspin",
+]
 
 logger = logging.getLogger(__name__)
 
 BACKEND = "spinnaker"
+
+T = TypeVar("T")
+
+# Latch samples whose median gives the device-to-host timestamp offset; the
+# count comes from pgs-scan (and multi_pyspin before it). See the hardware doc.
+TIMESTAMP_SAMPLES = 20
+# Newer cameras name the latched value "Timestamp", older ones
+# "TimestampLatchValue" (docs/hardware/spinnaker.md, Protocol).
+_TIMESTAMP_NODES = ("Timestamp", "TimestampLatchValue")
+
+# Spinnaker error codes the driver tells apart (assumed; see the hardware doc).
+_ERR_ACCESS_DENIED = -1005
+_ERR_TIMEOUT = -1011
 
 PYSPIN_INSTALL_HINT = (
     "PySpin is not on PyPI. Install the Spinnaker SDK, then the PySpin wheel from "
@@ -165,6 +197,30 @@ class SpinnakerSystem:
                 cameras.Clear()
         return [info for info in found if info is not None]
 
+    @property
+    def _module(self) -> Any:
+        """The PySpin module this handle uses."""
+        return self._require_open().pyspin
+
+    def _camera(self, serial: str) -> Any | None:
+        """A pointer to the camera with this serial number, or None.
+
+        The caller owns the pointer and must drop it before the system can be
+        released.
+        """
+        with self._lock:
+            entry = self._require_open()
+            try:
+                cameras = entry.system.GetCameras()
+            except entry.pyspin.SpinnakerException as exc:
+                error = DeviceError(f"could not list Spinnaker cameras: {exc}")
+            else:
+                try:
+                    return _get_by_serial(entry.pyspin, cameras, serial)
+                finally:
+                    cameras.Clear()
+            raise error
+
     def _require_open(self) -> _SharedSystem:
         if self._entry is None:
             raise NotConnected(f"{self!r} is not open; call open() first")
@@ -211,3 +267,228 @@ def _describe(pyspin: Any, cam: Any) -> DeviceInfo | None:
     if serial is None:
         logger.warning("Spinnaker camera %r has no readable serial number", model)
     return DeviceInfo(BACKEND, model or "Spinnaker camera", serial_number=serial)
+
+
+def _get_by_serial(pyspin: Any, cameras: Any, serial: str) -> Any | None:
+    try:
+        cam = cameras.GetBySerial(serial)
+    except pyspin.SpinnakerException as exc:
+        logger.debug("no Spinnaker camera %s: %s", serial, str(exc))
+        return None
+    return cam if cam.IsValid() else None
+
+
+class SpinnakerCamera(FrameCamera):
+    """One FLIR/Teledyne camera, addressed by serial number.
+
+    ``open()`` initializes the camera and measures the offset between its
+    timestamp counter and the host clock. ``close()`` de-initializes it.
+
+    Every PySpin error becomes a `DeviceError`. Those errors are deliberately
+    not chained to the original ``SpinnakerException``, whose traceback would
+    keep the camera alive and stop the SDK from being released.
+
+    Args:
+        serial: The camera's serial number, as `discover()` reports it.
+        pyspin: A module to use in place of PySpin, for tests.
+    """
+
+    def __init__(self, serial: str, *, pyspin: ModuleType | None = None) -> None:
+        super().__init__()
+        self._serial = str(serial)
+        self._system = SpinnakerSystem(pyspin)
+        self._pyspin: Any = None
+        self._cam: Any = None
+        self._model = "Spinnaker camera"
+        self._firmware: str | None = None
+        self._timestamp_node: str | None = None
+        self._timestamp_offset: float | None = None
+
+    def __repr__(self) -> str:
+        return f"<{type(self).__name__} {self._serial}>"
+
+    @property
+    def info(self) -> DeviceInfo:
+        return DeviceInfo(
+            BACKEND,
+            self._model,
+            serial_number=self._serial,
+            firmware_version=self._firmware,
+        )
+
+    @classmethod
+    def discover(cls) -> list[DeviceInfo]:
+        """List attached Spinnaker cameras without initializing them.
+
+        Raises:
+            ImportError: PySpin isn't installed.
+        """
+        return SpinnakerSystem().discover()
+
+    @property
+    def timestamp_offset(self) -> float | None:
+        """Host clock minus the camera's timestamp counter, in seconds.
+
+        ``None`` if the camera can't latch its timestamp.
+        """
+        return self._timestamp_offset
+
+    @synchronized
+    def measure_timestamp_offset(self) -> float | None:
+        """Measure `timestamp_offset` again, e.g. after the host clock jumps.
+
+        Returns:
+            The new offset.
+        """
+        self._measure_timestamp_offset()
+        return self._timestamp_offset
+
+    # --- Lifecycle -------------------------------------------------------------
+
+    def _open(self) -> None:
+        self._system.open()
+        try:
+            self._pyspin = self._system._module
+            self._cam = self._system._camera(self._serial)
+            if self._cam is None:
+                raise DeviceNotFound(self._not_found_message())
+            self._call(
+                "initialize",
+                lambda: self._cam.Init(),
+                by_code={_ERR_ACCESS_DENIED: DeviceBusy},
+            )
+            self._model = self._read_string("DeviceModelName") or self._model
+            self._firmware = self._read_string("DeviceFirmwareVersion")
+            self._configure()
+            self._measure_timestamp_offset()
+        except BaseException:
+            for problem in self._release():
+                logger.warning("%r: while giving up on open: %s", self, problem)
+            raise
+
+    def _close(self) -> None:
+        problems = self._release()
+        if problems:
+            raise DeviceError(f"{self!r} didn't close cleanly: {'; '.join(problems)}")
+
+    def _release(self) -> list[str]:
+        """Let go of the camera and the system, collecting what went wrong."""
+        problems = []
+        if self._cam is not None:
+            for action, step in (("de-initialize", self._deinit),):
+                try:
+                    step()
+                except self._pyspin.SpinnakerException as exc:
+                    problems.append(f"{action}: {exc}")
+            self._cam = None
+        self._timestamp_offset = None
+        try:
+            self._system.close()
+        except DeviceError as exc:
+            problems.append(str(exc))
+        return problems
+
+    def _deinit(self) -> None:
+        if self._cam.IsInitialized():
+            self._cam.DeInit()
+
+    def _not_found_message(self) -> str:
+        found = [info.serial_number for info in self._system.discover()]
+        attached = ", ".join(s for s in found if s) or "none"
+        return (
+            f"no Spinnaker camera with serial number {self._serial}; "
+            f"attached: {attached}"
+        )
+
+    def _configure(self) -> None:
+        # Never hand back a frame older than the newest one (pgs-scan dev).
+        self._set_enum("StreamBufferHandlingMode", "NewestOnly", stream=True)
+        self._set_enum("AcquisitionMode", "Continuous")
+        self._timestamp_node = next(
+            (n for n in _TIMESTAMP_NODES if self._raw_node(n) is not None), None
+        )
+
+    def _measure_timestamp_offset(self) -> None:
+        latch = self._node("TimestampLatch", "CCommandPtr")
+        if self._timestamp_node is None or not self._pyspin.IsWritable(latch):
+            logger.warning("%r can't latch its timestamp", self)
+            self._timestamp_offset = None
+            return
+        value = self._node(self._timestamp_node, "CIntegerPtr")
+        offsets = []
+        for _ in range(TIMESTAMP_SAMPLES):
+            before = time.time()
+            self._call("latch the timestamp", latch.Execute)
+            after = time.time()
+            device = self._call("read the timestamp", value.GetValue)
+            offsets.append((before + after) / 2 - device / 1e9)
+        self._timestamp_offset = statistics.median(offsets)
+        logger.debug("%r timestamp offset %.6f s", self, self._timestamp_offset)
+
+    # --- Role hooks ------------------------------------------------------------
+
+    def _settings(self) -> Mapping[str, Setting]:
+        return {}
+
+    def _set_setting(self, name: str, value: SettingValue) -> None:
+        raise KeyError(name)
+
+    def _capture_frame(self) -> Frame:
+        raise NotImplementedError
+
+    def _preview_frame(self) -> npt.NDArray[np.uint8]:
+        raise NotImplementedError
+
+    # --- PySpin access ---------------------------------------------------------
+
+    def _call(
+        self,
+        action: str,
+        fn: Callable[[], T],
+        *,
+        by_code: Mapping[int, type[DeviceError]] | None = None,
+    ) -> T:
+        """Call into PySpin, turning a ``SpinnakerException`` into a `DeviceError`.
+
+        The new error is raised outside the ``except`` block and isn't chained,
+        so nothing keeps the SDK's traceback (and the camera in it) alive.
+        """
+        try:
+            return fn()
+        except self._pyspin.SpinnakerException as exc:
+            code: int = getattr(exc, "errorcode", 0)
+            kind = (by_code or {}).get(code, DeviceError)
+            if code == _ERR_TIMEOUT:
+                kind = DeviceTimeout
+            error = kind(f"{self!r} failed to {action}: {exc}")
+        del fn
+        raise error
+
+    def _raw_node(self, name: str, *, stream: bool = False) -> Any:
+        nodemap = self._cam.GetTLStreamNodeMap() if stream else self._cam.GetNodeMap()
+        return nodemap.GetNode(name)
+
+    def _node(self, name: str, cast: str, *, stream: bool = False) -> Any:
+        node = self._raw_node(name, stream=stream)
+        return None if node is None else getattr(self._pyspin, cast)(node)
+
+    def _read_string(self, name: str) -> str | None:
+        node = self._node(name, "CStringPtr")
+        if not self._pyspin.IsReadable(node):
+            return None
+        return str(self._call(f"read {name}", node.GetValue))
+
+    def _enum_symbol(self, name: str, *, stream: bool = False) -> str:
+        node = self._node(name, "CEnumerationPtr", stream=stream)
+        entry = self._call(f"read {name}", node.GetCurrentEntry)
+        return str(entry.GetSymbolic())
+
+    def _set_enum(self, name: str, symbol: str, *, stream: bool = False) -> None:
+        node = self._node(name, "CEnumerationPtr", stream=stream)
+        if not self._pyspin.IsWritable(node):
+            raise DeviceError(f"{self!r} can't set {name}: it isn't writable")
+        entry = self._pyspin.CEnumEntryPtr(node.GetEntryByName(symbol))
+        if not self._pyspin.IsReadable(entry):
+            raise DeviceError(f"{self!r} has no {name} {symbol!r}")
+        value = entry.GetValue()
+        self._call(f"set {name} to {symbol}", lambda: node.SetIntValue(value))

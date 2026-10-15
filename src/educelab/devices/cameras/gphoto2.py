@@ -79,12 +79,26 @@ class GPhoto2Camera(FileCamera):
             backend="gphoto2", model=self._model or "unknown", address=self._port
         )
 
+    @classmethod
+    def discover(cls) -> list[DeviceInfo]:
+        """List the cameras libgphoto2 can see, without opening them.
+
+        Raises:
+            ImportError: python-gphoto2 isn't installed.
+            DeviceError: libgphoto2 couldn't scan the bus.
+        """
+        try:
+            found = _default_library().autodetect()
+        except GPhoto2Error as exc:
+            raise DeviceError(f"looking for gphoto2 cameras failed: {exc}") from exc
+        return [DeviceInfo("gphoto2", model, port) for model, port in found]
+
     def __repr__(self) -> str:
         return f"<GPhoto2Camera {self._port or '(not found yet)'}>"
 
     def _open(self) -> None:
         if self._library is None:
-            self._library = LibGPhoto2()
+            self._library = _default_library()
         for attempt in range(1, OPEN_ATTEMPTS + 1):
             try:
                 session = self._try_open(self._library)
@@ -156,6 +170,10 @@ class GPhoto2Camera(FileCamera):
 
     def _capture_files(self) -> list[CameraFile]:
         raise NotImplementedError("GPhoto2Camera capture is not implemented yet")
+
+
+def _default_library() -> Library:
+    return LibGPhoto2()
 
 
 class _NotVisibleYet(Exception):

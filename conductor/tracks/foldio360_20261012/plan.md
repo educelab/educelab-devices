@@ -118,8 +118,11 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
 
 ### Tasks
 
-- [ ] Task 5.1: Write `@pytest.mark.hardware` tests (connect, status, move_to, move_by, stop mid-move, halo levels).
+- [x] Task 5.1: Write `@pytest.mark.hardware` tests (connect, status, move_to, move_by, stop mid-move, halo levels).
+  - `tests/test_foldio360_hardware.py` (`pytestmark = pytest.mark.hardware`): identity and firmware; whole-degree position; `move_to` arrival and short way (timed); `move_by` there and back, and literal past a full turn (timed, at speed 3); each speed's 90° time against the timing model (settles whether speeds 2 and 3 hold); `stop()` from another thread mid-move, checking the platter stays put afterwards (settles the open `cancel(1)` question); jog then stop; `run(24)` for three frames, printing step signs (settles which way `run` turns); `ir_shutter` without a signal answering FAIL; halo levels reading back, and a fast ramp landing its last level.
+  - Connects to `FOLDIO360_ADDRESS` if set, else scans. Skips cleanly without `bleak`, when a scan finds no turntable, or when the given address doesn't connect (all three checked locally: 18 skipped). Measurements print with `-s`, for the hardware doc.
 - [ ] Task 5.2: Run them and `el-devices foldio` on the turntable; verify cancel-during-move behavior and record it in the hardware doc.
+  - Blocked on hardware (2026-10-15): the turntable isn't available. The maintainer runs the steps in the Phase 5 report when it is.
 - [ ] Task 5.3: With the maintainer, add a README pointer to `educelab-devices` in `~/source/foldio360` and archive it.
 
 ### Verification

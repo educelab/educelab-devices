@@ -15,11 +15,18 @@ Build a fake PySpin first, then the system/enumeration layer, then the per-camer
 
 - [x] Task 1.1: Build a fake PySpin module covering the node maps, camera list, image buffers (with release tracking), timestamps, and incomplete images.
 - [x] Task 1.2: Write tests for lazy import and the install-hint error; implement.
-- [ ] Task 1.3: Write tests for `SpinnakerSystem` lifetime and `discover()` (including removal while iterating, #90); implement.
+- [x] Task 1.3: Write tests for `SpinnakerSystem` lifetime and `discover()` (including removal while iterating, #90); implement.
 
 ### Verification
 
-- [ ] System tests pass in CI.
+- [ ] System tests pass in CI. (Passed locally on 3.12 + numpy<2, 3.11 and 3.14 with numpy 2; CI not run, since the branch isn't pushed.)
+
+### Notes and deviations
+
+- `SpinnakerSystem` is a handle, not a `Device`. Handles on the same PySpin module share one `System` instance (taken on the first `open()`, released on the last `close()`), because whether PySpin reference-counts `GetInstance()` is unknown. The PySpin module is injectable (`SpinnakerSystem(pyspin=...)`) so tests use the fake without patching `sys.modules`.
+- `SpinnakerSystem.discover()` returns `DeviceInfo(backend="spinnaker", model, serial_number)` with `address=None`, since the serial number is how a camera is addressed. It skips cameras whose identity can't be read and reports a camera with an unreadable serial as `serial_number=None`. `SpinnakerCamera.discover()` (Phase 2) delegates to it, and the `BACKENDS` entry lands with that class.
+- `docs/hardware/spinnaker.md` was started in Phase 1, because the missing-PySpin error links to its install steps. Task 3.1 completes it.
+- Found with the fake: logging a `SpinnakerException` object (rather than its text) keeps its traceback, and the camera reference in it, alive in any retained log record, so `ReleaseInstance()` fails. Recorded under Hazards in the hardware doc; Phase 2 must follow the same rule (and be careful with `raise ... from` while a camera reference is in scope).
 
 ## Phase 2: Camera driver
 

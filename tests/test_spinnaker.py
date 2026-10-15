@@ -2,11 +2,14 @@
 
 import subprocess
 import sys
+import threading
 
 import pytest
 
+from educelab.devices import DeviceInfo
 from educelab.devices.cameras.spinnaker import SpinnakerSystem, load_pyspin
-from fakes.pyspin import FakePySpin
+from educelab.devices.errors import DeviceError, NotConnected
+from fakes.pyspin import FakeCamera, FakePySpin, SpinnakerException
 
 # --- Importing PySpin ---------------------------------------------------------
 
@@ -51,3 +54,181 @@ def test_an_injected_module_is_used_instead_of_pyspin(no_pyspin):
     fake = FakePySpin()
     with SpinnakerSystem(pyspin=fake):
         assert fake.system.get_instance_calls == 1
+
+
+# --- SpinnakerSystem lifetime -------------------------------------------------
+
+
+@pytest.fixture
+def pyspin():
+    return FakePySpin(
+        [
+            FakeCamera("20000001", "Blackfly S BFS-U3-51S5M"),
+            FakeCamera("20000002", "Blackfly S BFS-U3-200S6C", color=True),
+            FakeCamera("20000003", "Blackfly S BFS-U3-51S5M"),
+        ]
+    )
+
+
+def test_constructing_a_system_does_not_touch_the_sdk(pyspin):
+    system = SpinnakerSystem(pyspin=pyspin)
+    assert not system.is_open
+    assert pyspin.system.get_instance_calls == 0
+
+
+def test_open_takes_the_instance_once(pyspin):
+    system = SpinnakerSystem(pyspin=pyspin)
+    system.open()
+    system.open()
+    assert system.is_open
+    assert pyspin.system.get_instance_calls == 1
+    system.close()
+    system.close()
+    assert not system.is_open
+    assert pyspin.system.release_instance_calls == 1
+    assert pyspin.system.instances == 0
+
+
+def test_handles_share_the_instance_until_the_last_closes(pyspin):
+    first, second = SpinnakerSystem(pyspin=pyspin), SpinnakerSystem(pyspin=pyspin)
+    first.open()
+    second.open()
+    assert pyspin.system.get_instance_calls == 1
+    first.close()
+    assert pyspin.system.release_instance_calls == 0
+    assert second.discover()
+    second.close()
+    assert pyspin.system.release_instance_calls == 1
+    assert pyspin.system.instances == 0
+
+
+def test_a_closed_handle_can_reopen(pyspin):
+    system = SpinnakerSystem(pyspin=pyspin)
+    with system:
+        pass
+    with system:
+        assert system.is_open
+    assert pyspin.system.get_instance_calls == 2
+    assert pyspin.system.instances == 0
+
+
+def test_handles_on_different_modules_are_independent(pyspin):
+    other = FakePySpin()
+    with SpinnakerSystem(pyspin=pyspin), SpinnakerSystem(pyspin=other):
+        assert pyspin.system.instances == 1
+        assert other.system.instances == 1
+
+
+def test_get_instance_failure_raises_device_error_and_can_be_retried(pyspin):
+    pyspin.system.get_instance_error = SpinnakerException("no transport layer")
+    system = SpinnakerSystem(pyspin=pyspin)
+    with pytest.raises(DeviceError, match="no transport layer"):
+        system.open()
+    assert not system.is_open
+    pyspin.system.get_instance_error = None
+    system.open()
+    assert pyspin.system.instances == 1
+    system.close()
+
+
+def test_release_failure_raises_but_leaves_the_handle_closed(pyspin):
+    system = SpinnakerSystem(pyspin=pyspin)
+    system.open()
+    leaked = pyspin.system.GetCameras()
+    with pytest.raises(DeviceError, match="not cleared"):
+        system.close()
+    assert not system.is_open
+    leaked.Clear()
+    system.open()
+    assert pyspin.system.get_instance_calls == 2
+
+
+def test_library_version(pyspin):
+    system = SpinnakerSystem(pyspin=pyspin)
+    with pytest.raises(NotConnected):
+        system.library_version  # noqa: B018
+    with system:
+        assert system.library_version == "4.4.0.0"
+
+
+def test_concurrent_handles_take_and_release_the_instance_once(pyspin):
+    handles = [SpinnakerSystem(pyspin=pyspin) for _ in range(8)]
+    start = threading.Barrier(len(handles))
+
+    def cycle(handle):
+        start.wait()
+        for _ in range(20):
+            handle.open()
+            handle.close()
+
+    threads = [threading.Thread(target=cycle, args=(h,)) for h in handles]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert pyspin.system.instances == 0
+    assert pyspin.system.get_instance_calls == pyspin.system.release_instance_calls >= 1
+
+
+# --- SpinnakerSystem.discover() -----------------------------------------------
+
+
+def test_discover_lists_every_camera(pyspin):
+    # #90: every camera is visited, not just the first.
+    infos = SpinnakerSystem(pyspin=pyspin).discover()
+    assert infos == [
+        DeviceInfo("spinnaker", "Blackfly S BFS-U3-51S5M", serial_number="20000001"),
+        DeviceInfo("spinnaker", "Blackfly S BFS-U3-200S6C", serial_number="20000002"),
+        DeviceInfo("spinnaker", "Blackfly S BFS-U3-51S5M", serial_number="20000003"),
+    ]
+
+
+def test_discover_releases_everything_it_took(pyspin):
+    SpinnakerSystem(pyspin=pyspin).discover()
+    assert pyspin.system.uncleared_lists == 0
+    assert pyspin.system.live_pointers == 0
+    assert pyspin.system.release_instance_calls == 1
+    assert pyspin.system.instances == 0
+
+
+def test_discover_does_not_initialize_cameras(pyspin):
+    SpinnakerSystem(pyspin=pyspin).discover()
+    assert all(camera.init_calls == 0 for camera in pyspin.system.cameras)
+
+
+def test_discover_keeps_an_open_handle_open(pyspin):
+    with SpinnakerSystem(pyspin=pyspin) as system:
+        system.discover()
+        assert system.is_open
+        assert pyspin.system.instances == 1
+        assert pyspin.system.uncleared_lists == 0
+
+
+def test_discover_with_no_cameras_is_empty():
+    assert SpinnakerSystem(pyspin=FakePySpin()).discover() == []
+
+
+def test_discover_skips_a_camera_unplugged_while_listing(pyspin):
+    # Still in the SDK's list, but every read fails.
+    pyspin.system.cameras[1].attached = False
+    system = SpinnakerSystem(pyspin=pyspin)
+    serials = [info.serial_number for info in system.discover()]
+    assert serials == ["20000001", "20000003"]
+    assert pyspin.system.instances == 0
+
+
+def test_discover_reports_a_camera_without_a_readable_serial(pyspin):
+    pyspin.system.cameras[0].tl_device_nodes["DeviceSerialNumber"]._access = pyspin.NA
+    infos = SpinnakerSystem(pyspin=pyspin).discover()
+    assert infos[0].serial_number is None
+    assert infos[0].model == "Blackfly S BFS-U3-51S5M"
+
+
+def test_discover_raises_device_error_when_enumeration_fails(pyspin, monkeypatch):
+    def fail():
+        raise SpinnakerException("transport layer error")
+
+    monkeypatch.setattr(pyspin.system, "GetCameras", fail)
+    with pytest.raises(DeviceError, match="transport layer error"):
+        SpinnakerSystem(pyspin=pyspin).discover()
+    assert pyspin.system.instances == 0

@@ -19,6 +19,10 @@
     "cad7bb5: Add the gphoto2 extra, lazy SDK import, and libgphoto2 logging bridge",
     "05b875b: Define the gphoto2 session seam and a fake camera library",
     "baa13be: Open and close gphoto2 cameras, retrying cameras still enumerating",
-    "8834a2f: Discover gphoto2 cameras and list them in el-devices discover"
+    "8834a2f: Discover gphoto2 cameras and list them in el-devices discover",
+    "7681674: Record approval of gphoto2 Phase 1",
+    "bc8ca06: Run the gphoto2 tests on Windows and add Pillow to the dev group",
+    "67a34bc: Capture every file a gphoto2 release produces into memory",
+    "1ee1442: Run the FileCamera contract suite against the gphoto2 driver"
   ]
 }

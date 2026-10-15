@@ -54,7 +54,23 @@ A legacy Nordic DFU service occupies handles 0x0012–0x0019 and is never touche
 normal operation. Ignore it.
 
 Only one BLE central may hold the link, so the official app must be closed (or the phone's
-Bluetooth disabled) before a host can connect.
+Bluetooth disabled) before a host can connect. A second process, or a stale connection
+that was never closed, takes the device away just the same.
+
+### Connecting
+
+Measured with the original standalone client:
+
+- **Scanning** waits out the scan window (8 s by default), so opening by scan takes about
+  9.5 s. **Connecting to a known address** skips the scan and takes about 1.8 s.
+- The BLE address survives a power cycle ([Identity](#identity)), so caching it is
+  worthwhile. Caching it is the consumer's job, not the driver's. If you cache one, pass a
+  short `connect_timeout` (the original CLI used 6 s): bleak's default is 30 s, which makes
+  a stale address cost far more than it saves. Fall back to a scan when it fails.
+- **On macOS an empty scan is ambiguous.** A missing Bluetooth permission (System Settings
+  > Privacy & Security > Bluetooth) and a switched-off turntable both return no devices,
+  with no error. `scan_lines()` lists every advertiser, and `EMPTY_SCAN_NOTE` says this in
+  one place for front ends to show.
 
 ### Framing
 
@@ -431,6 +447,8 @@ Other timings the driver relies on:
 | Gap below which an ack can be lost | ~100 ms | [rotate](#rotate), [set_bright](#set_bright) |
 | Spacing between the two cancels of a blind stop | 150 ms | Clears the ~100 ms window above |
 | Brightness write pacing for reliable acks | ~50 ms | [set_bright](#set_bright) |
+| Scan window when no address is given | 8 s | Opening by scan took ~9.5 s, by address ~1.8 s ([Connecting](#connecting)) |
+| `get_position` round trip | ~180 ms | Measured with the original client; why `position()` is cached during a move |
 | Default limit for a rotation | `2 × predicted + 1 s`, per leg | The watchdog above; loose because speeds 2 and 3 are assumed |
 | Quiet time before stray replies count as drained | 300 ms | Replies arrive within ~200 ms |
 | Wait for a brightness ack before reading the level back | 500 ms | Well past the ~200 ms reply time |
@@ -469,6 +487,18 @@ Consequences for a client:
   is the consumer's, not the driver's: the driver reports the device counter as machine
   coordinates and does not home.
 - Brightness resets to 0 as well, so the LED is off at power-on regardless of its last value.
+- **Don't iterate to close the last degree.** A move to 90 that reads 89 is the counter's
+  quantization, not an error; a correction loop chases noise and never converges. The
+  driver accepts ±1° for this reason.
+- **A position is evidence that a move was commanded**, not that it happened.
+- **Don't guess at power cycles.** A position of 0 on connect proves nothing, and a wrong
+  guess is worse than the habit of re-pinning after every power-on. A consumer that
+  persists an origin has taken on this hazard and owes its users a warning wherever it
+  shows a position relative to that origin.
+- **Caching a position is sound only under conditions.** Hand-turning doesn't change the
+  counter and no second central can hold the link, so only your own commands move it.
+  Drop a cached position after any move, after any `DeviceError` (a timed-out move may have
+  stopped partway), and don't cache one while a jog is running.
 
 ## Hazards
 
@@ -481,6 +511,8 @@ Consequences for a client:
   ([Response grammar](#response-grammar)).
 - **Untried `run` frame counts wedge** until cancelled
   ([run / continue / ir_shutter](#run--continue--ir_shutter)).
+- **A jog outlives the process that started it.** It runs until cancelled, so an app that
+  can crash or be killed mid-jog should call `stop()` after opening.
 - **Acks are dropped** under back-to-back writes, which desyncs a client that waits for
   every one ([Command/response pairing](#commandresponse-pairing)).
 
@@ -537,10 +569,21 @@ How `Foldio360` maps the protocol onto the `Stage` role:
   early, and an exception from it cancels the sequence and propagates. The steps run at
   the stage's speed, and each `continue` gets the watchdog for one step (at least 5 s).
   Like a move, `stop()` from another thread sends `cancel(1)` and the sequence raises
-  `PositionError`. A frame count outside 24/36/48 is passed through; its wedge surfaces as
+  `PositionError`. A front end offering a frame count should offer `KNOWN_GOOD_FRAMES` and
+  let free entry reach the rest. A frame count outside 24/36/48 is passed through; its wedge surfaces as
   `DeviceTimeout` after a single `cancel(1)`. Moving or jogging from inside `on_frame`
   raises `DeviceBusy`. **Unverified in our use**, as are `ir_shutter()` and
   `set_signal()`.
+- **Errors.** Arguments are checked before anything is sent, because `FAIL` doesn't say
+  which argument was wrong. `CommandRejected` means the device answered `FAIL`;
+  `UnexpectedResponse` (a `DeviceError`) means a reply that makes no sense for the
+  command, which almost always means lost command/response sync: stop, and reconnect if
+  it repeats. Connection failures from bleak are wrapped: a timeout is `DeviceTimeout`,
+  anything else `DeviceNotFound`, and a failed write `NotConnected`.
+- **Testing.** `Foldio360(transport=...)` takes anything with `connected`, `address`,
+  `connect()`, `close()`, `send(command)`, `read(timeout)`, and `drain()`. Framing lives in
+  the transport: `read()` returns whole replies. `tests/fakes/foldio360.py` emulates the
+  firmware for offline tests.
 - **Speed.** `speed()` lists the firmware's three speeds as deg/s, the reciprocal of each
   speed's timing slope: about 7.30, 9.71, and 14.68 deg/s. Speeds 2 and 3 are
   **assumed**, like their timing fits.

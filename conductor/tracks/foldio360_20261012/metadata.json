@@ -7,13 +7,13 @@
   "updated": "2026-10-15T00:00:00Z",
   "phases": {
     "total": 5,
-    "completed": 1
+    "completed": 2
   },
   "tasks": {
     "total": 16,
     "completed": 9
   },
-  "current_phase": 2,
+  "current_phase": 3,
   "current_task": "3.1",
   "commits": [
     "ffba81e: Move the Foldio360 BLE client into the stages package",
@@ -28,6 +28,7 @@
     "067a74e: Test that Foldio360 position() never waits for a move",
     "9653169: Test that Foldio360 commands are serialized by the device lock",
     "76919d9: Run the Stage contract suite against Foldio360",
-    "9449f7a: Port the Foldio360 run, IR shutter, and set_signal commands"
+    "9449f7a: Port the Foldio360 run, IR shutter, and set_signal commands",
+    "30d28d4: Record Phase 2 progress for the Foldio360 track"
   ]
 }

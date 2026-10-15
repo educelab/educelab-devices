@@ -65,7 +65,11 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
 
 ### Verification
 
-- [x] All Stage tests and contracts pass. (Locally: macOS on Python 3.11, 3.13, and 3.14; CI not yet run on this phase.)
+- [x] All Stage tests and contracts pass.
+  - Approved 2026-10-15, after CI on PR #2 passed all 14 jobs.
+  - Decided (2026-10-15): `run(frames, on_frame)` keeps its callback shape.
+  - Decided (2026-10-15): `stop()` with nothing moving keeps sending both cancels, because it covers motion started by another process.
+  - Decided (2026-10-15): whether `discover()` does a real BLE scan is decided in Phase 4, together with the CLI.
 
 ## Phase 3: Halo light
 

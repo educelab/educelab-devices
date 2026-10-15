@@ -54,7 +54,8 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
 - [x] Task 2.4: Remove the origin API; add the device lock.
   - The origin API went with the old client methods in Task 2.1 (`test_no_origin_api`); the power-cycle reset is in the hardware doc's State and recovery, with the ADR 0003 pointer.
   - The lock is the `Device` base's: every `Stage` method is `@synchronized` except `stop()`/`position()`, and the halo methods are `@synchronized` too. Tests show a second thread's command waiting for a move.
-- [ ] Task 2.5: Run the `Stage` contract suite.
+- [x] Task 2.5: Run the `Stage` contract suite.
+  - `TestFoldio360Contract` runs `StageContract` on the firmware-emulating fake with `position_tolerance` set to the 1° arrival tolerance. All pass; `test_move_outside_limits_raises` skips (a wrapping axis has no limits).
 - [ ] Task 2.6: Port `run(frames)` (with `KNOWN_GOOD_FRAMES`), `ir_shutter`, and `set_signal` back as Foldio360-only methods under the device lock, with `stop()` able to cancel a `run`; restore their original tests; mark them unverified in our use in the hardware doc.
   - Decided (2026-10-15, maintainer): port these commands after all, as Foldio360-only methods outside `Stage`. They won't be used yet, but they keep the reverse-engineered behavior available. Supersedes the Task 1.1 deviation that left them out; spec updated to match.
 

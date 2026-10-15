@@ -5,7 +5,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from educelab.devices.cameras import _gphoto2
+from educelab.devices.cameras import _gphoto2, gphoto2
+from educelab.devices.cameras._gphoto2 import (
+    GP_ERROR,
+    GP_ERROR_IO_USB_CLAIM,
+    GP_ERROR_IO_USB_FIND,
+    GP_ERROR_MODEL_NOT_FOUND,
+)
+from educelab.devices.cameras.gphoto2 import GPhoto2Camera
+from educelab.devices.device import DeviceInfo
+from educelab.devices.errors import DeviceBusy, DeviceError, DeviceNotFound
 from fakes.gphoto2 import FakeCamera, FakeLibrary
 
 pytestmark = pytest.mark.skipif(
@@ -29,7 +38,7 @@ def fake_sdk():
 
 def test_driver_imports_without_the_sdk():
     code = (
-        "import sys, educelab.devices.cameras._gphoto2; "
+        "import sys, educelab.devices.cameras.gphoto2; "
         "assert 'gphoto2' not in sys.modules"
     )
     subprocess.run([sys.executable, "-c", code], check=True)
@@ -154,3 +163,103 @@ def test_fakes_fill_the_seam() -> None:
     camera: _gphoto2.Session = FakeCamera()
     library: _gphoto2.Library = FakeLibrary(FakeCamera())
     assert camera.model and library.autodetect()
+
+
+@pytest.fixture(autouse=True)
+def no_open_delay(monkeypatch):
+    monkeypatch.setattr(gphoto2, "OPEN_RETRY_DELAY_S", 0)
+
+
+def test_constructor_does_not_touch_the_library():
+    library = FakeLibrary(FakeCamera())
+    camera = GPhoto2Camera("usb:020,007", library=library)
+    assert library.open_attempts == 0
+    assert not camera.is_open
+
+
+def test_open_and_close_the_camera_at_a_port():
+    other, wanted = FakeCamera(port="usb:020,006"), FakeCamera(port="usb:020,007")
+    camera = GPhoto2Camera("usb:020,007", library=FakeLibrary(other, wanted))
+
+    with camera:
+        assert wanted.is_open and not other.is_open
+        assert camera.info == DeviceInfo(
+            backend="gphoto2", model="Nikon Z 7II", address="usb:020,007"
+        )
+    assert not wanted.is_open
+
+
+def test_without_a_port_open_uses_the_only_camera_attached():
+    attached = FakeCamera(port="usb:001,004")
+    with GPhoto2Camera(library=FakeLibrary(attached)) as camera:
+        assert attached.is_open
+        assert camera.info.address == "usb:001,004"
+
+
+def test_without_a_port_open_refuses_to_choose_between_cameras():
+    library = FakeLibrary(
+        FakeCamera(port="usb:001,004"), FakeCamera(port="usb:001,005")
+    )
+    camera = GPhoto2Camera(library=library)
+    with pytest.raises(DeviceError, match="usb:001,004.*usb:001,005"):
+        camera.open()
+    assert library.open_attempts == 0
+    assert not camera.is_open
+
+
+def test_claimed_usb_interface_raises_device_busy_naming_ptpcamerad():
+    library = FakeLibrary(FakeCamera(), open_errors=[GP_ERROR_IO_USB_CLAIM])
+    camera = GPhoto2Camera("usb:020,007", library=library)
+    with pytest.raises(DeviceBusy, match="ptpcamerad") as raised:
+        camera.open()
+    assert "killall" in str(raised.value)
+    assert library.open_attempts == 1
+    assert not camera.is_open
+
+
+def test_camera_still_enumerating_is_retried():
+    attached = FakeCamera()
+    library = FakeLibrary(
+        attached, open_errors=[GP_ERROR_MODEL_NOT_FOUND, GP_ERROR_IO_USB_FIND]
+    )
+    with GPhoto2Camera("usb:020,007", library=library):
+        assert attached.is_open
+    assert library.open_attempts == 3
+
+
+def test_camera_that_never_appears_raises_device_not_found():
+    library = FakeLibrary(
+        FakeCamera(), open_errors=[GP_ERROR_MODEL_NOT_FOUND] * gphoto2.OPEN_ATTEMPTS
+    )
+    camera = GPhoto2Camera("usb:020,007", library=library)
+    with pytest.raises(DeviceNotFound):
+        camera.open()
+    assert library.open_attempts == gphoto2.OPEN_ATTEMPTS
+
+
+def test_empty_bus_raises_device_not_found_after_retrying(monkeypatch):
+    library = FakeLibrary()
+    detections = []
+    monkeypatch.setattr(library, "autodetect", lambda: detections.append(1) or [])
+    with pytest.raises(DeviceNotFound, match="no camera"):
+        GPhoto2Camera(library=library).open()
+    assert len(detections) == gphoto2.OPEN_ATTEMPTS
+
+
+def test_other_open_errors_are_not_retried():
+    library = FakeLibrary(FakeCamera(), open_errors=[GP_ERROR])
+    with pytest.raises(DeviceError, match=r"\[-1\]"):
+        GPhoto2Camera("usb:020,007", library=library).open()
+    assert library.open_attempts == 1
+
+
+def test_close_error_still_leaves_the_camera_closed():
+    attached = FakeCamera()
+    camera = GPhoto2Camera("usb:020,007", library=FakeLibrary(attached))
+    camera.open()
+    attached.fail_next("close", GP_ERROR_IO_USB_FIND)
+    with pytest.raises(DeviceError):
+        camera.close()
+    assert not camera.is_open
+    camera.open()
+    assert camera.is_open

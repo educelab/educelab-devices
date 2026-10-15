@@ -174,8 +174,8 @@ class Library(Protocol):
         ``("Nikon Z 7II", "usb:020,007")``, without opening them."""
         ...
 
-    def open(self, port: str | None) -> Session:
-        """Open the camera at ``port``, or the first one found if ``None``."""
+    def open(self, port: str) -> Session:
+        """Open the camera at ``port``, as listed by `autodetect()`."""
         ...
 
 
@@ -257,14 +257,13 @@ class LibGPhoto2:
         with _translated(self._gp):
             return [(model, port) for model, port in self._gp.Camera.autodetect()]
 
-    def open(self, port: str | None) -> Session:
+    def open(self, port: str) -> Session:
         gp = self._gp
         with _translated(gp):
             camera = gp.Camera()
-            if port is not None:
-                ports = gp.PortInfoList()
-                ports.load()
-                camera.set_port_info(ports[ports.lookup_path(port)])
+            ports = gp.PortInfoList()
+            ports.load()
+            camera.set_port_info(ports[ports.lookup_path(port)])
             camera.init()
             try:
                 return _LibSession(gp, camera)

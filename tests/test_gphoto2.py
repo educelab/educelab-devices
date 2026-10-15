@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from contracts import FileCameraContract
+from contracts import FileCameraContract, FocusDriveContract
 from educelab.devices.app import discover
 from educelab.devices.cameras import _gphoto2, gphoto2
 from educelab.devices.cameras._gphoto2 import (
@@ -1108,3 +1108,22 @@ def test_reopening_a_focus_drive_rechecks_the_camera(focus_waits):
         focus.open()
     assert camera.focus is None
     camera.close()
+
+
+class TestGPhoto2FocusDriveContract(FocusDriveContract):
+    """The FocusDrive rules for ``camera.focus``, with keep-alive running."""
+
+    @pytest.fixture
+    def make_device(self, focus_waits, fast_keep_alive):
+        cameras = []
+
+        def make():
+            camera = opened(FakeCamera())
+            cameras.append(camera)
+            focus = camera.focus
+            focus.close()
+            return focus
+
+        yield make
+        for camera in cameras:
+            camera.close()

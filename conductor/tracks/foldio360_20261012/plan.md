@@ -49,7 +49,8 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
 - [x] Task 2.2: Write tests for `jog`/`stop`, including `stop()` from another thread during a move and stray-reply draining; implement.
   - `stop()` takes the lock only if it is free. If so it cancels synchronously (a known jog by mode, otherwise both modes, as the old client's `stop()` did); if not, it sends the cancel fire-and-forget and counts the ack as a stray, and the waiting move settles the link and raises `PositionError`. Tests cover both possible cancel behaviors (the move's OK sent or not), since the real one is unknown.
   - Added `DeviceBusy` for moving or jogging during a jog, matching `SimulatedStage`; the firmware's behavior there is untested.
-- [ ] Task 2.3: Write tests for `position()` during a move (returns last known, doesn't block); implement.
+- [x] Task 2.3: Write tests for `position()` during a move (returns last known, doesn't block); implement.
+  - When the device lock is free, `position()` asks the turntable (so it follows jogs and other clients' moves); when another thread holds it, it returns the cached value.
 - [ ] Task 2.4: Remove the origin API; add the device lock.
 - [ ] Task 2.5: Run the `Stage` contract suite.
 - [ ] Task 2.6: Port `run(frames)` (with `KNOWN_GOOD_FRAMES`), `ir_shutter`, and `set_signal` back as Foldio360-only methods under the device lock, with `stop()` able to cancel a `run`; restore their original tests; mark them unverified in our use in the hardware doc.

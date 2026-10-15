@@ -1,6 +1,8 @@
 """Stand-ins for libgphoto2's cameras, behind the driver's `Library` seam."""
 
 import dataclasses
+import functools
+import io
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping
 
@@ -17,6 +19,68 @@ from educelab.devices.cameras._gphoto2 import (
 FOLDER = "/store_00010001/DCIM/100NZ7_2"
 
 
+def _radio(name, value, choices, section="capturesettings", **extra):
+    return Widget(
+        name, name, "radio", value, choices=tuple(choices), section=section, **extra
+    )
+
+
+# A Nikon-flavoured config tree. The widget names are libgphoto2's; the choice
+# lists are illustrative, not a record of what a Z7 II reports.
+NIKON_WIDGETS = (
+    _radio(
+        "shutterspeed",
+        "1/60",
+        ["1/8000", "1/1000", "1/60", "1/3", "10/13", "1", "2.5", "30", "Bulb"],
+    ),
+    _radio("iso", "100", ["64", "100", "200", "400", "25600"], section="imgsettings"),
+    _radio("f-number", "f/8", ["f/4", "f/5.6", "f/8", "f/11"]),
+    _radio(
+        "imagequality",
+        "NEF (Raw)",
+        ["JPEG Fine", "NEF (Raw)", "NEF+Fine"],
+        section="capturesettings",
+    ),
+    _radio("continuousaf", "On", ["Off", "On"], section="capturesettings"),
+    Widget(
+        "colortemperature",
+        "Color Temperature",
+        "range",
+        5000.0,
+        minimum=2500.0,
+        maximum=10000.0,
+        step=10.0,
+        section="imgsettings",
+    ),
+    Widget("artist", "Artist", "text", "", section="settings"),
+    Widget("serialnumber", "Serial Number", "text", "6001234", True, section="status"),
+    Widget("viewfinder", "Nikon Viewfinder", "toggle", 0, section="actions"),
+    Widget(
+        "autofocusdrive", "Drive Nikon DSLR Autofocus", "toggle", 0, section="actions"
+    ),
+    Widget(
+        "manualfocusdrive",
+        "Drive Nikon DSLR Manual focus",
+        "range",
+        0.0,
+        minimum=-32767.0,
+        maximum=32767.0,
+        step=1.0,
+        section="actions",
+    ),
+)
+
+
+@functools.cache
+def jpeg(width=64, height=48):
+    """A small JPEG, like a live-view frame."""
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (width, height), (40, 120, 200)).save(buffer, "JPEG")
+    return buffer.getvalue()
+
+
 class FakeCamera:
     """One camera as libgphoto2 sees it, usable as a `Session` once opened.
 
@@ -30,9 +94,9 @@ class FakeCamera:
     Args:
         model: What libgphoto2 identifies the camera as.
         port: The camera's port, e.g. ``"usb:020,007"``.
-        widgets: The config tree, flattened.
+        widgets: The config tree, flattened. Defaults to `NIKON_WIDGETS`.
         suffixes: Files each capture produces, by extension.
-        preview: Bytes `capture_preview()` returns.
+        preview: Bytes `capture_preview()` returns. Defaults to a small JPEG.
     """
 
     def __init__(
@@ -40,15 +104,16 @@ class FakeCamera:
         model: str = "Nikon Z 7II",
         port: str = "usb:020,007",
         *,
-        widgets: Iterable[Widget] = (),
+        widgets: Iterable[Widget] = NIKON_WIDGETS,
         suffixes: Iterable[str] = (".NEF",),
-        preview: bytes = b"",
+        preview: bytes | None = None,
     ) -> None:
         self._model = model
         self.port = port
         self.widgets = {w.name: w for w in widgets}
         self.suffixes = tuple(suffixes)
-        self.preview = preview
+        self.preview = jpeg() if preview is None else preview
+        self.writes: list[dict[str, WidgetValue]] = []
         self.storage: dict[FilePath, bytes] = {}
         self.events: deque[Event] = deque()
         self.is_open = False
@@ -107,10 +172,26 @@ class FakeCamera:
     def set_config(self, values: Mapping[str, WidgetValue]) -> None:
         self._call("set_config")
         for name, value in values.items():
-            widget = self.widgets[name]
-            if widget.read_only or (widget.choices and value not in widget.choices):
+            if not self._accepts(self.widgets[name], value):
                 raise GPhoto2Error(GP_ERROR_BAD_PARAMETERS, "Bad parameters")
-            self.widgets[name] = dataclasses.replace(widget, value=value)
+        self.writes.append(dict(values))
+        for name, value in values.items():
+            self.widgets[name] = dataclasses.replace(self.widgets[name], value=value)
+
+    @staticmethod
+    def _accepts(widget: Widget, value: WidgetValue) -> bool:
+        if widget.read_only or widget.kind == "button":
+            return False
+        if widget.kind in ("radio", "menu"):
+            return value in widget.choices
+        if widget.kind == "text":
+            return isinstance(value, str)
+        if isinstance(value, str):
+            return False
+        if widget.kind == "range":
+            assert widget.minimum is not None and widget.maximum is not None
+            return widget.minimum <= value <= widget.maximum
+        return True
 
     def capture_preview(self) -> bytes:
         self._call("capture_preview")

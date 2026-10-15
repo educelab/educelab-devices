@@ -11,10 +11,10 @@
   },
   "tasks": {
     "total": 19,
-    "completed": 6
+    "completed": 7
   },
   "current_phase": 3,
-  "current_task": "3.1",
+  "current_task": "3.2",
   "commits": [
     "cad7bb5: Add the gphoto2 extra, lazy SDK import, and libgphoto2 logging bridge",
     "05b875b: Define the gphoto2 session seam and a fake camera library",

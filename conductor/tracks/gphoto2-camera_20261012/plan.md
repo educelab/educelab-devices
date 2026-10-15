@@ -66,10 +66,21 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
 
 ### Tasks
 
-- [ ] Task 3.1: Write tests for `Setting` descriptors from the config tree and `exposure_time` ↔ shutter-choice mapping; implement.
+- [x] Task 3.1: Write tests for `Setting` descriptors from the config tree and `exposure_time` ↔ shutter-choice mapping; implement.
 - [ ] Task 3.2: Write tests for live-view enabling and `preview_frame()` decoding; implement.
 - [ ] Task 3.3: Write tests for keep-alive start/pause/stop; implement the internal thread.
 - [ ] Task 3.4: Run the `Camera` contract suite.
+
+### Deviations
+
+- `iso` and `aperture` are canonical as well as `exposure_time` (from `iso` and
+  `f-number`/`aperture`), since the guide defines them and Nikon's `iso` widget would
+  otherwise take the canonical name with string values.
+- Canonical choices are the native choices that parse as numbers. When the camera is set
+  to a value that doesn't (`Bulb`, `Auto`), the canonical setting is absent and the
+  widget is listed under its native name.
+- Widgets in the config tree's `actions` section are not settings. `Widget` gained a
+  `section` field so the seam can tell.
 
 ### Verification
 

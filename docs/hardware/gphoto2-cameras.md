@@ -110,3 +110,36 @@ shutter, waits out the exposure, and returns the first file the release produced
   `DOWNLOAD_ATTEMPTS` (3) times, `DOWNLOAD_RETRY_DELAY_S` (1 s) apart. **assumed**, from
   the prototype.
 - Files stay on the camera's card after download; the driver never deletes them.
+
+## Settings
+
+Settings come from the camera's config tree, which libgphoto2 builds from PTP device
+properties. Every `settings()` call reads the whole tree, so it is a snapshot (see the
+guide). How long a full read takes on the Z7 II is **unknown**; measure it in Phase 5.
+
+- **Canonical settings** are read from these widgets, taking the first one the camera
+  has, and replace them in the list:
+
+  | Setting | Widgets | Native text | Value |
+  |---|---|---|---|
+  | `exposure_time` | `shutterspeed`, `shutterspeed2` | `1/250`, `10/13`, `2.5`, `30`, sometimes with a trailing `s` | seconds (float) |
+  | `iso` | `iso` | `100` | int |
+  | `aperture` | `f-number`, `aperture` | `f/5.6` | f-number (float) |
+
+  Choices are the native choices that parse as numbers, in the camera's order, so pick
+  one with `Setting.nearest()`. Writes send the camera's own text for the choice.
+- **Values that aren't numbers** (`Bulb` and `Time` shutter speeds, an `Auto` ISO on
+  some bodies) are left out of the canonical choices. While the camera is set to one,
+  the canonical setting is absent and the widget is listed under its native name; set a
+  numeric value there first. The shutter speed texts above come from libgphoto2's PTP
+  driver; what the Z7 II actually lists is **unknown** until Phase 5 records it.
+- **Native settings**: every other widget, by libgphoto2's name (e.g. `imagequality`,
+  `whitebalance`). Radio and menu widgets are strings with `choices`, ranges are floats
+  with `minimum`, `maximum`, and `step`, toggles are booleans, text is a string, and
+  dates are Unix times.
+- **Actions are not settings.** Widgets in the `actions` section (`viewfinder`,
+  `autofocusdrive`, `manualfocusdrive`, …) are commands; the driver uses them for live
+  view and the focus drive and doesn't list them.
+- **Aperture and live view**: the prototype paused live view to read or change the
+  aperture, because the choices were restricted while it was on. **unknown** whether this
+  applies to the Z7 II; the driver doesn't do it yet.

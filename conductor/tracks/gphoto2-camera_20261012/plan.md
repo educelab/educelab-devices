@@ -31,7 +31,12 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
 
 ### Verification
 
-- [ ] Session tests pass on Linux and macOS CI; skipped on Windows.
+- [x] Session tests pass on Linux and macOS CI; skipped on Windows.
+  - Approved 2026-10-15, after CI on draft PR #4 passed on every OS and Python version.
+  - Decided (2026-10-15): drop the Windows skip. The tests use the fake layer and run on Windows; only the extra can't install there.
+  - Decided (2026-10-15): add Pillow to the `dev` dependency group so preview and contract tests run in CI. It stays in the `[gphoto2]` extra too.
+  - Decided (2026-10-15): `all` stays last among the extras; that is the convention.
+  - Decided (2026-10-15): leave `DeviceInfo.serial_number` unset for now. Phase 5 measures how long a config read at open takes on the Z7 II and decides then.
 
 ## Phase 2: Capture
 
@@ -78,6 +83,7 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
 - [ ] Task 5.2: Add the `el-devices dslr` subcommand.
 - [ ] Task 5.3: Write `@pytest.mark.hardware` tests (capture RAW and RAW + JPEG, set exposure, preview, focus step and limits).
 - [ ] Task 5.4: Run them on the Z7 II; confirm error codes and settle timing; record findings in the hardware doc.
+- [ ] Task 5.5: Measure how long a config read at `open()` takes on the Z7 II, and decide whether `open()` reads the serial number into `DeviceInfo.serial_number`.
 
 ### Verification
 

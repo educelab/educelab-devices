@@ -135,7 +135,8 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
   - Added Identity, Nikon Z7 II, Hazards, Unknowns, and Manual check sections to the doc built up in Phases 1–4. Corrected the capture section: under `capturetarget` = `Internal RAM` files never reach the card, so discarded files are lost. Task 5.4 fills in the Z7 II facts and the manual-check results.
 - [x] Task 5.2: Add the `el-devices dslr` subcommand.
   - Options: `--port`, `--exposure SECONDS`, `--capture DIR`, `--preview`, `--focus-steps N`. A missing SDK prints the install hint instead of a traceback.
-- [ ] Task 5.3: Write `@pytest.mark.hardware` tests (capture RAW and RAW + JPEG, set exposure, preview, focus step and limits).
+- [x] Task 5.3: Write `@pytest.mark.hardware` tests (capture RAW and RAW + JPEG, set exposure, preview, focus step and limits).
+  - `tests/test_gphoto2_hardware.py` (12 tests) also prints what Tasks 5.4–5.6 need: config-read time, the setting choice texts, preview size and time, aperture choices with and without live view, and the focus range in steps. Running them without a camera (they skip) showed that iterating python-gphoto2 2.6's `CameraList` is deprecated, so `LibGPhoto2.autodetect()` now indexes it.
 - [ ] Task 5.4: Run them on the Z7 II; confirm error codes and settle timing; record findings in the hardware doc.
 - [ ] Task 5.5: Measure how long a config read at `open()` takes on the Z7 II, and decide whether `open()` reads the serial number into `DeviceInfo.serial_number`.
 - [ ] Task 5.6: Check whether the Z7 II restricts aperture choices while live view is on; if it does, pause live view around aperture reads and writes.

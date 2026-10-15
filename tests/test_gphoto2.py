@@ -18,10 +18,6 @@ from educelab.devices.device import DeviceInfo
 from educelab.devices.errors import DeviceBusy, DeviceError, DeviceNotFound
 from fakes.gphoto2 import FakeCamera, FakeLibrary
 
-pytestmark = pytest.mark.skipif(
-    sys.platform == "win32", reason="the gphoto2 extra doesn't install on Windows"
-)
-
 
 def fake_sdk():
     """Just enough of the gphoto2 module to install the logging bridge."""
@@ -45,9 +41,18 @@ def test_driver_imports_without_the_sdk():
     subprocess.run([sys.executable, "-c", code], check=True)
 
 
-def test_missing_sdk_names_the_extra(monkeypatch):
+@pytest.mark.parametrize(
+    ("platform", "remedy"),
+    [
+        ("darwin", r"educelab-devices\[gphoto2\]"),
+        ("linux", r"educelab-devices\[gphoto2\]"),
+        ("win32", "isn't available on Windows"),
+    ],
+)
+def test_missing_sdk_says_what_to_do(monkeypatch, platform, remedy):
+    monkeypatch.setattr(sys, "platform", platform)
     monkeypatch.setitem(sys.modules, "gphoto2", None)
-    with pytest.raises(ImportError, match=r"educelab-devices\[gphoto2\]"):
+    with pytest.raises(ImportError, match=remedy):
         _gphoto2.import_sdk()
 
 

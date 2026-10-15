@@ -8,6 +8,16 @@ Facts below are marked **verified**, **assumed**, or **unknown** as described in
 [README](README.md#how-sure-we-are). Most of what's here so far is carried over from
 `pgs-scan`'s spectral prototype (`SpectralCapture.py` on the `spectral-processing-module`
 branch), which drove the Z7 II, and hasn't yet been re-checked against this driver.
+Body-specific facts are in [Nikon Z7 II](#nikon-z7-ii); everything else applies to any
+camera libgphoto2 drives over PTP.
+
+## Identity
+
+- `DeviceInfo.model` is the model name libgphoto2 identifies, read when the camera
+  opens; before that it is `"unknown"`. `address` is the libgphoto2 port.
+- `serial_number` and `firmware_version` are left unset. Both are in the config tree
+  (`serialnumber`, `deviceversion` on Nikon), but reading it at `open()` costs a full
+  config read, whose time on the Z7 II is **unknown** (Task 5.5 decides).
 
 ## Transport
 
@@ -102,14 +112,19 @@ shutter, waits out the exposure, and returns the first file the release produced
   sessions. **assumed**, from the prototype.
 - **Late files are discarded, not mis-attributed.** Events are also drained before each
   release. A file added then belongs to an earlier capture that has already returned, so
-  the driver logs a warning naming it and leaves it on the card rather than returning it
+  the driver logs a warning naming it and doesn't download it, rather than returning it
   with the wrong capture.
 - **Downloads are retried.** Right after a long exposure the camera may still be writing
   to the card or running long-exposure noise reduction, and briefly rejects the bulk
   transfer with a bare `[-1]` even though the file-added event arrived. The driver tries
   `DOWNLOAD_ATTEMPTS` (3) times, `DOWNLOAD_RETRY_DELAY_S` (1 s) apart. **assumed**, from
   the prototype.
-- Files stay on the camera's card after download; the driver never deletes them.
+- **Where the files go** depends on the camera's `capturetarget` widget. With
+  `Internal RAM` (libgphoto2's default for Nikon) the camera holds each file only until
+  it is downloaded, and it never reaches the card; with `Memory card` it is also written
+  to the card. The driver doesn't change this setting and never deletes files. A file it
+  discards (see above) is lost under `Internal RAM`. **assumed**, from libgphoto2's
+  documentation; check what the Z7 II does in Task 5.4.
 
 ## Settings
 
@@ -186,7 +201,7 @@ leaving PC mode. **assumed**, from the prototype; whether the Z7 II needs it at 
   whether to close and reopen. How many failures a real unplug or PC-mode drop produces
   is **unknown**.
 - A file added between captures (a late JPEG, or a shot taken on the camera itself) is
-  logged and left on the card, as during a capture.
+  logged and not downloaded, as during a capture.
 - `close()` stops the thread before ending the session.
 
 ## Focus drive
@@ -226,3 +241,61 @@ tested on a Sony a6300. All of it is **assumed** for the Z7 II until Phase 5 che
 - **Live view**: the original code paused live view while seeking a limit, to avoid
   deadlocks. Focus moves here hold the camera's lock, so a preview can't interleave with
   them; whether the Z7 II still needs live view off is **unknown**.
+
+## Nikon Z7 II
+
+The lab's reference body. Everything here is carried over from the prototype or from
+libgphoto2's Nikon driver and is **assumed** until Task 5.4 records what this body does.
+
+- **Exposure**: set the mode dial to M so `shutterspeed`, `iso`, and `f-number` are all
+  writable. In other modes the camera owns some of them and rejects writes.
+- **Widgets the driver uses**: `shutterspeed` (exposure time), `iso`, `f-number`,
+  `viewfinder` (live view), `manualfocusdrive` (focus drive, range type), and
+  `continuousaf` if present. `imagequality` chooses NEF, JPEG, or NEF + JPEG.
+- **Leaving PC mode**: the prototype saw the Z7 II drop out of PC mode when its event
+  buffer filled (events never read), with an async capture loop, and after quiet gaps of
+  several seconds. The driver drains events around every capture, uses the blocking
+  capture, and keeps the session alive. After a drop, the next call fails with `-52`.
+- **Error codes seen** by the prototype: `-53` (claimed by `ptpcamerad`), `-105` while
+  re-enumerating, `-52` after leaving PC mode, `-1` for a download right after a long
+  exposure, and `-10` for a port wedged by repeated `ptpcamerad` kills. The focus codes
+  (`-110` busy, `-113` end stop) were seen on a Sony a6300, not on this body.
+
+## Hazards
+
+- **Discarded files under `Internal RAM`.** A file that arrives after its capture has
+  returned is logged and not downloaded; with `capturetarget` set to `Internal RAM` it is
+  then gone. Set `Memory card` if every file must survive.
+- **`-113` is a generic error.** The focus drive treats it as an end stop. If a body
+  returns `-113` for another failure, `FocusLimitReached` is wrong and the step count
+  resets to a limit the lens isn't at.
+- **Stale ports.** A port from `discover()` is only good until the camera re-enumerates.
+- **Killing `ptpcamerad` repeatedly** can wedge the USB port for about 25 s per claim.
+
+## Unknowns
+
+Each needs the Z7 II on the bench (Tasks 5.4–5.6):
+
+- The model name libgphoto2 reports, and the port format on macOS.
+- The `shutterspeed`, `iso`, and `f-number` choice texts; whether `shutterspeed2`
+  exists; and what `Bulb` and `Time` look like.
+- How long a full config read takes (decides the serial number at `open()`).
+- Whether RAW + JPEG's second file is queued by the time the capture returns, or can
+  arrive after the 50 ms quiet gap the driver waits for.
+- What `capturetarget` defaults to, and whether files reach the card.
+- Preview size, and whether live view must be on for previews.
+- Whether aperture choices are restricted while live view is on (Task 5.6).
+- Focus: the step count across the range, whether `-113` marks the end stop and `-110`
+  a busy motor, and whether the settle time (100 ms + 0.5 ms per step, capped at 3 s)
+  is enough.
+- Whether the camera needs the keep-alive at all, and how many failed pings an unplug
+  produces.
+
+## Manual check
+
+`el-devices dslr` detects the camera, lists its settings, captures to a directory, and
+steps the focus drive. The `hardware`-marked tests in `tests/test_gphoto2_hardware.py`
+cover capture (RAW and RAW + JPEG), exposure, preview, and focus. Results from real
+hardware go here.
+
+Not yet run on the Z7 II.

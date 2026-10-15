@@ -11,10 +11,10 @@
   },
   "tasks": {
     "total": 16,
-    "completed": 13
+    "completed": 14
   },
   "current_phase": 5,
-  "current_task": "5.1",
+  "current_task": "5.2",
   "commits": [
     "ffba81e: Move the Foldio360 BLE client into the stages package",
     "bf71cdf: Port the Foldio360 offline tests to pytest",
@@ -40,6 +40,8 @@
     "088477d: Fold the Foldio360 client guide into the hardware doc and guide",
     "53f06cc: Add el-devices foldio and BLE discovery for the Foldio360",
     "37f3eb4: Accept a copied TimeoutError as the cause on Python 3.11",
-    "ce7d6ec: Record Phase 4 progress for the Foldio360 track"
+    "ce7d6ec: Record Phase 4 progress for the Foldio360 track",
+    "5457eed: Record approval of Foldio360 Phase 4",
+    "1f535f1: Add hardware tests for the Foldio360"
   ]
 }

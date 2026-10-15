@@ -28,7 +28,7 @@ from educelab.devices.cameras.base import (
     Setting,
 )
 from educelab.devices.cameras.gphoto2 import GPhoto2Camera
-from educelab.devices.device import DeviceInfo
+from educelab.devices.device import DeviceInfo, Disconnected
 from educelab.devices.errors import DeviceBusy, DeviceError, DeviceNotFound
 from fakes.gphoto2 import FOLDER, NIKON_WIDGETS, FakeCamera, FakeLibrary, jpeg
 
@@ -759,3 +759,64 @@ def test_keep_alive_reports_files_added_between_captures(fast_keep_alive, caplog
         wait_until(lambda: not attached.events)
         camera.close()
     assert "DSC_0000.JPG" in caplog.text
+
+
+def disconnections(camera):
+    events = []
+    camera.add_listener(
+        lambda event: events.append(event) if isinstance(event, Disconnected) else None
+    )
+    return events
+
+
+def test_three_failed_pings_in_a_row_report_disconnected(fast_keep_alive, caplog):
+    attached = FakeCamera()
+    camera = GPhoto2Camera(attached.port, library=FakeLibrary(attached))
+    events = disconnections(camera)
+    attached.fail_next("wait_for_event", *[GP_ERROR_IO_USB_FIND] * 5)
+    with caplog.at_level(logging.WARNING, logger=gphoto2.__name__):
+        camera.open()
+        wait_until(lambda: pings(attached) >= 8)
+        camera.close()
+    assert len(events) == 1
+    assert events[0].device is camera
+    assert "-52" in events[0].reason
+    assert caplog.text.count("keep-alive ping failed") == 5
+
+
+def test_failures_interrupted_by_a_good_ping_are_not_a_disconnection(fast_keep_alive):
+    attached = FakeCamera()
+    camera = GPhoto2Camera(attached.port, library=FakeLibrary(attached))
+    events = disconnections(camera)
+    real_wait = attached.wait_for_event
+    outcomes = iter([GP_ERROR, GP_ERROR, None, GP_ERROR, GP_ERROR, None])
+
+    def flaky(timeout_s):
+        code = next(outcomes, None)
+        if code is not None:
+            attached.calls.append("wait_for_event")
+            raise _gphoto2.GPhoto2Error(code, "flaky")
+        return real_wait(timeout_s)
+
+    attached.wait_for_event = flaky
+    camera.open()
+    wait_until(lambda: pings(attached) >= 8)
+    camera.close()
+    assert events == []
+
+
+def test_listener_can_close_the_camera_on_disconnection(fast_keep_alive):
+    attached = FakeCamera()
+    camera = GPhoto2Camera(attached.port, library=FakeLibrary(attached))
+    closed = threading.Event()
+
+    def close_on_disconnect(event):
+        if isinstance(event, Disconnected):
+            event.device.close()
+            closed.set()
+
+    camera.add_listener(close_on_disconnect)
+    attached.fail_next("wait_for_event", *[GP_ERROR] * 3)
+    camera.open()
+    assert closed.wait(5)
+    assert not camera.is_open

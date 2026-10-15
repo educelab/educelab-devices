@@ -179,8 +179,12 @@ leaving PC mode. **assumed**, from the prototype; whether the Z7 II needs it at 
 
 - The ping skips any interval in which a capture is in flight or another call holds the
   device, so it never delays a capture or interleaves with one.
-- A failed ping is logged as a warning and pinging continues. The driver doesn't treat
-  one failure as a lost connection; the next real call reports the error.
+- Each failed ping is logged as a warning and pinging continues. After
+  `KEEP_ALIVE_FAILURES` (3) failures in a row, listeners get one `Disconnected` event
+  whose reason carries the last error; a good ping starts the count again. One failure
+  alone isn't treated as a lost camera. The device stays open, so the consumer decides
+  whether to close and reopen. How many failures a real unplug or PC-mode drop produces
+  is **unknown**.
 - A file added between captures (a late JPEG, or a shot taken on the camera itself) is
   logged and left on the card, as during a capture.
 - `close()` stops the thread before ending the session.

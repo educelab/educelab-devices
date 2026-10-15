@@ -121,7 +121,11 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
 
 ### Verification
 
-- [ ] Focus tests and contracts pass.
+- [x] Focus tests and contracts pass.
+  - Approved 2026-10-15, after CI on PR #4 passed all 14 jobs.
+  - Decided (2026-10-15): a canonical setting is always present when the camera has its widget, with numeric `choices`. While the camera is at a value that isn't a number (`Bulb`, `Auto` ISO), its `value` is `None`, and writing any numeric choice leaves that mode. This needs `Setting.value` to allow `None`, which lands on main in a separate PR first; implement it after rebasing onto that, replacing Phase 3 deviation 2.
+  - Decided (2026-10-15): at merge time, once the Foldio track's guide wording is on main, add `camera.focus` to `docs/guide.md` as a second example of a role handed out as a separate object.
+  - Decided (2026-10-15): `-113` as the end stop is confirmed on the Z7 II in Task 5.4.
 
 ## Phase 5: Docs, CLI, hardware verification
 
@@ -137,6 +141,11 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
 ### Verification
 
 - [ ] Maintainer confirms capture, settings, live view, and focus on the Z7 II.
+
+## Waiting on main
+
+- [ ] After `Setting.value` allows `None` on main: rebase, then make canonical settings always present with `value=None` at non-numeric camera values (Phase 4 decision).
+- [ ] After the Foldio track's guide wording is on main: add `camera.focus` to `docs/guide.md`.
 
 ## Final Verification
 

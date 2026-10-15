@@ -11,7 +11,7 @@ from educelab.devices.errors import (
     DeviceError,
     DeviceNotFound,
 )
-from fakes.pyspin import FakeCamera, FakePySpin, SpinnakerException
+from fakes.pyspin import CameraPtr, FakeCamera, FakePySpin, SpinnakerException
 
 MONO = "20000001"
 COLOR = "20000002"
@@ -286,3 +286,67 @@ def test_a_write_the_camera_refuses_raises_command_rejected(camera, fake, monkey
     with pytest.raises(CommandRejected, match="refused") as info:
         camera.set_setting(GAIN, 3.0)
     assert info.value.__context__ is None
+
+
+# --- Acquisition --------------------------------------------------------------
+
+
+def test_open_starts_acquiring_in_software_trigger_mode(camera, fake):
+    assert fake.streaming
+    assert fake.trigger_selector.symbolic == "FrameStart"
+    assert fake.trigger_source.symbolic == "Software"
+    assert fake.trigger_mode.symbolic == "On"
+
+
+def test_open_sends_no_frames_until_one_is_requested(camera, fake):
+    assert fake.trigger_calls == 0
+    assert fake.frames_grabbed == 0
+
+
+def test_open_switches_a_camera_left_in_hardware_trigger_mode(pyspin, fake):
+    # TriggerSource is only writable while TriggerMode is off.
+    fake.initialized = True
+    fake.trigger_mode.SetValue(pyspin.TriggerMode_On)
+    fake.initialized = False
+    with SpinnakerCamera(MONO, pyspin=pyspin):
+        assert fake.trigger_source.symbolic == "Software"
+        assert fake.trigger_mode.symbolic == "On"
+
+
+def test_close_ends_acquisition_before_deinit(pyspin, fake):
+    camera = SpinnakerCamera(MONO, pyspin=pyspin)
+    camera.open()
+    camera.close()
+    assert not fake.streaming
+    assert_released(pyspin)
+
+
+def test_close_raises_if_ending_acquisition_fails(pyspin, monkeypatch):
+    def refuse(self):
+        raise SpinnakerException("stream stuck")
+
+    camera = SpinnakerCamera(MONO, pyspin=pyspin)
+    camera.open()
+    monkeypatch.setattr(CameraPtr, "EndAcquisition", refuse)
+    with pytest.raises(DeviceError, match="stream stuck"):
+        camera.close()
+    assert not camera.is_open
+
+
+def test_pixel_format_change_pauses_acquisition(camera, fake):
+    assert camera.setting(PIXEL_FORMAT).read_only is False
+    camera.set_setting(PIXEL_FORMAT, "Mono16")
+    assert fake.pixel_format.symbolic == "Mono16"
+    assert fake.streaming
+
+
+def test_failed_pixel_format_change_still_resumes_acquisition(
+    camera, fake, monkeypatch
+):
+    def refuse(value):
+        raise SpinnakerException("refused")
+
+    monkeypatch.setattr(fake.pixel_format, "SetIntValue", refuse)
+    with pytest.raises(CommandRejected):
+        camera.set_setting(PIXEL_FORMAT, "Mono16")
+    assert fake.streaming

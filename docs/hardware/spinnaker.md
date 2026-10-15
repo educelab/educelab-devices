@@ -61,7 +61,33 @@ needs the SDK raises an `ImportError` that links here.
 
 ## Protocol
 
-*To come (Phase 2):* node maps, settings, acquisition, and timestamps.
+### Acquisition
+
+**Decided 2026-10-15; to be verified on a rig in Phase 3.** A camera acquires from
+`open()` to `close()` in software-trigger mode, so it stays ready but sends a frame over
+USB only when one is requested:
+
+1. `open()`: `Init()`, then `TriggerMode=Off`, `TriggerSelector=FrameStart`,
+   `TriggerSource=Software`, `TriggerMode=On`, then `BeginAcquisition()`.
+   `TriggerSource` is writable only while `TriggerMode` is off (assumed, from FLIR's
+   `Trigger.py` example), so the driver turns triggering off first even when the camera
+   was left triggered.
+2. Each capture: execute `TriggerSoftware`, then `GetNextImage()`.
+3. `close()`: `EndAcquisition()`, then `DeInit()`.
+
+`pgs-scan` `dev` instead streamed continuously with `NewestOnly` buffering and threw
+away frames older than the request. Triggering should send less over USB with several
+cameras on one host and make stale frames rare, at the cost of waiting a full exposure
+and readout per capture. Phase 3 measures both: per-capture latency, and USB bandwidth
+with several cameras.
+
+The driver still keeps `StreamBufferHandlingMode=NewestOnly`, rejects frames older than
+`not_before`, rejects incomplete frames, and releases every buffer, as safeguards. The
+trigger setup is two methods (`_configure_acquisition()` and `_request_frame()`), so a
+continuous mode could be added without a rewrite.
+
+`PixelFormat` is read-only while acquiring (assumed, standard GenICam behavior), so
+setting `pixel_format` ends acquisition, changes the format, and begins again.
 
 ## Timing
 

@@ -300,8 +300,12 @@ def _get_by_serial(pyspin: Any, cameras: Any, serial: str) -> Any | None:
 class SpinnakerCamera(FrameCamera):
     """One FLIR/Teledyne camera, addressed by serial number.
 
-    ``open()`` initializes the camera and measures the offset between its
-    timestamp counter and the host clock. ``close()`` de-initializes it.
+    ``open()`` initializes the camera, measures the offset between its
+    timestamp counter and the host clock, and starts acquiring in
+    software-trigger mode: the camera stays ready, but sends a frame over USB
+    only when one is requested. ``close()`` stops acquiring and de-initializes
+    it. Changing ``pixel_format`` pauses acquisition briefly, since cameras
+    only accept it while stopped.
 
     Every PySpin error becomes a `DeviceError`. Those errors are deliberately
     not chained to the original ``SpinnakerException``, whose traceback would
@@ -379,6 +383,8 @@ class SpinnakerCamera(FrameCamera):
             self._model = self._read_string("DeviceModelName") or self._model
             self._firmware = self._read_string("DeviceFirmwareVersion")
             self._configure()
+            self._configure_acquisition()
+            self._call("begin acquisition", lambda: self._cam.BeginAcquisition())
             self._measure_timestamp_offset()
         except BaseException:
             for problem in self._release():
@@ -394,7 +400,11 @@ class SpinnakerCamera(FrameCamera):
         """Let go of the camera and the system, collecting what went wrong."""
         problems = []
         if self._cam is not None:
-            for action, step in (("de-initialize", self._deinit),):
+            steps = (
+                ("end acquisition", self._end_acquisition),
+                ("de-initialize", self._deinit),
+            )
+            for action, step in steps:
                 try:
                     step()
                 except self._pyspin.SpinnakerException as exc:
@@ -406,6 +416,10 @@ class SpinnakerCamera(FrameCamera):
         except DeviceError as exc:
             problems.append(str(exc))
         return problems
+
+    def _end_acquisition(self) -> None:
+        if self._cam.IsStreaming():
+            self._cam.EndAcquisition()
 
     def _deinit(self) -> None:
         if self._cam.IsInitialized():
@@ -432,6 +446,31 @@ class SpinnakerCamera(FrameCamera):
             (n for n in _TIMESTAMP_NODES if self._raw_node(n) is not None), None
         )
 
+    # The acquisition seam: a continuous (free-running) mode would replace these
+    # two methods. See docs/hardware/spinnaker.md, Acquisition.
+
+    def _configure_acquisition(self) -> None:
+        """Make each frame wait for a software trigger."""
+        # TriggerSource is writable only while TriggerMode is off (FLIR's
+        # Trigger example; assumed).
+        self._set_enum("TriggerMode", "Off")
+        self._set_enum("TriggerSelector", "FrameStart")
+        self._set_enum("TriggerSource", "Software")
+        self._set_enum("TriggerMode", "On")
+
+    def _request_frame(self) -> None:
+        """Ask the camera for one frame."""
+        trigger = self._node("TriggerSoftware", "CCommandPtr")
+        self._call("trigger a frame", trigger.Execute)
+
+    @contextmanager
+    def _acquisition_paused(self) -> Iterator[None]:
+        self._call("end acquisition", self._end_acquisition)
+        try:
+            yield
+        finally:
+            self._call("begin acquisition", lambda: self._cam.BeginAcquisition())
+
     def _measure_timestamp_offset(self) -> None:
         latch = self._node("TimestampLatch", "CCommandPtr")
         if self._timestamp_node is None or not self._pyspin.IsWritable(latch):
@@ -457,7 +496,10 @@ class SpinnakerCamera(FrameCamera):
             self._enum_setting("ExposureAuto", _AUTO_MODES),
             self._float_setting(GAIN, "Gain", "dB"),
             self._enum_setting("GainAuto", _AUTO_MODES),
-            self._enum_setting("PixelFormat", _PIXEL_FORMATS, name=PIXEL_FORMAT),
+            # Read-only while acquiring, but _set_setting pauses acquisition.
+            self._enum_setting(
+                "PixelFormat", _PIXEL_FORMATS, name=PIXEL_FORMAT, writable=True
+            ),
         )
         return {s.name: s for s in found if s is not None}
 
@@ -476,9 +518,11 @@ class SpinnakerCamera(FrameCamera):
             self._call(
                 f"set {name}", lambda: node.SetValue(native), kind=CommandRejected
             )
+        elif name == PIXEL_FORMAT:
+            with self._acquisition_paused():
+                self._set_enum("PixelFormat", str(value), kind=CommandRejected)
         else:
-            node_name = "PixelFormat" if name == PIXEL_FORMAT else name
-            self._set_enum(node_name, str(value), kind=CommandRejected)
+            self._set_enum(name, str(value), kind=CommandRejected)
 
     def _float_setting(
         self, name: str, node_name: str, unit: str, scale: float = 1.0
@@ -500,7 +544,12 @@ class SpinnakerCamera(FrameCamera):
         )
 
     def _enum_setting(
-        self, node_name: str, supported: Iterable[str], *, name: str | None = None
+        self,
+        node_name: str,
+        supported: Iterable[str],
+        *,
+        name: str | None = None,
+        writable: bool = False,
     ) -> Setting | None:
         node = self._node(node_name, "CEnumerationPtr")
         if not self._pyspin.IsReadable(node):
@@ -509,7 +558,7 @@ class SpinnakerCamera(FrameCamera):
             name or node_name,
             self._enum_symbol(node_name),
             choices=self._enum_choices(node_name, supported),
-            read_only=not self._pyspin.IsWritable(node),
+            read_only=not (writable or self._pyspin.IsWritable(node)),
         )
 
     def _capture_frame(self) -> Frame:

@@ -3,10 +3,15 @@
 import pytest
 
 from educelab.devices import DeviceInfo
-from educelab.devices.cameras import spinnaker
+from educelab.devices.cameras import EXPOSURE_TIME, GAIN, PIXEL_FORMAT, spinnaker
 from educelab.devices.cameras.spinnaker import SpinnakerCamera
-from educelab.devices.errors import DeviceBusy, DeviceError, DeviceNotFound
-from fakes.pyspin import FakeCamera, FakePySpin
+from educelab.devices.errors import (
+    CommandRejected,
+    DeviceBusy,
+    DeviceError,
+    DeviceNotFound,
+)
+from fakes.pyspin import FakeCamera, FakePySpin, SpinnakerException
 
 MONO = "20000001"
 COLOR = "20000002"
@@ -179,3 +184,105 @@ def test_discover_lists_attached_cameras(pyspin, monkeypatch):
 
 def test_repr_names_the_serial(pyspin):
     assert MONO in repr(SpinnakerCamera(MONO, pyspin=pyspin))
+
+
+# --- Settings -----------------------------------------------------------------
+
+
+def test_settings_cover_exposure_gain_format_and_auto_modes(camera):
+    assert set(camera.settings()) == {
+        EXPOSURE_TIME,
+        "ExposureAuto",
+        GAIN,
+        "GainAuto",
+        PIXEL_FORMAT,
+    }
+
+
+def test_exposure_time_is_in_seconds(camera):
+    exposure = camera.setting(EXPOSURE_TIME)
+    assert exposure.value == pytest.approx(0.01)
+    assert exposure.minimum == pytest.approx(6e-6)
+    assert exposure.maximum == pytest.approx(30.0)
+    assert exposure.unit == "s"
+
+
+def test_exposure_time_is_read_only_while_auto_exposure_runs(camera):
+    assert camera.setting("ExposureAuto").value == "Continuous"
+    assert camera.setting(EXPOSURE_TIME).read_only
+    with pytest.raises(ValueError, match="read-only"):
+        camera.set_setting(EXPOSURE_TIME, 0.02)
+
+
+def test_exposure_time_is_written_in_microseconds(camera, fake):
+    camera.set_setting("ExposureAuto", "Off")
+    camera.set_setting(EXPOSURE_TIME, 0.02)
+    assert fake.nodes["ExposureTime"]._value == pytest.approx(20_000.0)
+    assert camera.setting(EXPOSURE_TIME).value == pytest.approx(0.02)
+
+
+def test_exposure_time_limits_survive_the_unit_conversion(camera, fake):
+    camera.set_setting("ExposureAuto", "Off")
+    for limit in ("minimum", "maximum"):
+        camera.set_setting(EXPOSURE_TIME, getattr(camera.setting(EXPOSURE_TIME), limit))
+    assert fake.nodes["ExposureTime"]._value == fake.nodes["ExposureTime"].maximum
+
+
+def test_gain_is_in_decibels(camera, fake):
+    gain = camera.setting(GAIN)
+    assert (gain.minimum, gain.maximum, gain.unit) == (0.0, 47.99, "dB")
+    camera.set_setting("GainAuto", "Off")
+    camera.set_setting(GAIN, 12)
+    assert fake.nodes["Gain"]._value == 12.0
+    assert camera.setting(GAIN).value == 12.0
+
+
+def test_auto_modes_offer_off_and_continuous(camera):
+    # "Once" reverts to "Off" on its own, so it would never read back.
+    assert camera.setting("ExposureAuto").choices == ("Off", "Continuous")
+    assert camera.setting("GainAuto").choices == ("Off", "Continuous")
+
+
+def test_pixel_formats_are_the_ones_the_camera_offers(pyspin):
+    with SpinnakerCamera(MONO, pyspin=pyspin) as mono:
+        assert mono.setting(PIXEL_FORMAT).choices == ("Mono8", "Mono16")
+    with SpinnakerCamera(COLOR, pyspin=pyspin) as color:
+        assert color.setting(PIXEL_FORMAT).choices == (
+            "RGB8",
+            "BayerRG8",
+            "BayerRG16",
+            "Mono8",
+            "Mono16",
+        )
+
+
+def test_set_pixel_format(camera, fake):
+    camera.set_setting(PIXEL_FORMAT, "Mono16")
+    assert fake.pixel_format.symbolic == "Mono16"
+    assert camera.setting(PIXEL_FORMAT).value == "Mono16"
+
+
+def test_open_replaces_a_pixel_format_the_driver_cannot_decode():
+    pyspin = FakePySpin([FakeCamera(MONO, formats=["Mono12Packed", "Mono8"])])
+    with SpinnakerCamera(MONO, pyspin=pyspin) as camera:
+        assert camera.setting(PIXEL_FORMAT).choices == ("Mono8",)
+        assert camera.setting(PIXEL_FORMAT).value == "Mono8"
+
+
+def test_a_feature_the_camera_lacks_is_not_a_setting(pyspin, fake):
+    del fake.nodes["Gain"]
+    del fake.nodes["GainAuto"]
+    with SpinnakerCamera(MONO, pyspin=pyspin) as camera:
+        assert GAIN not in camera.settings()
+        assert "GainAuto" not in camera.settings()
+
+
+def test_a_write_the_camera_refuses_raises_command_rejected(camera, fake, monkeypatch):
+    def refuse(value):
+        raise SpinnakerException("refused")
+
+    camera.set_setting("GainAuto", "Off")
+    monkeypatch.setattr(fake.nodes["Gain"], "SetValue", refuse)
+    with pytest.raises(CommandRejected, match="refused") as info:
+        camera.set_setting(GAIN, 3.0)
+    assert info.value.__context__ is None

@@ -37,7 +37,7 @@ Build a fake PySpin first, then the system/enumeration layer, then the per-camer
 ### Tasks
 
 - [x] Task 2.1: Write tests for open/close configuration; implement.
-- [ ] Task 2.2: Write tests for settings descriptors and `exposure_time` unit conversion; implement.
+- [x] Task 2.2: Write tests for settings descriptors and `exposure_time` unit conversion; implement.
 - [ ] Task 2.3: Decide acquisition start/stop semantics with the maintainer; implement.
 - [ ] Task 2.4: Write tests for `capture_frame(not_before=…)`: stale rejection, bounded retries, every buffer released (#83), incomplete rejection; implement.
 - [ ] Task 2.5: Implement `preview_frame()`; run the `Camera`/`FrameCamera` contract suites.

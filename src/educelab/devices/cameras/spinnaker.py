@@ -8,7 +8,7 @@ import logging
 import statistics
 import threading
 import time
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from types import ModuleType, TracebackType
 from typing import Any, Self, TypeVar
@@ -16,9 +16,18 @@ from typing import Any, Self, TypeVar
 import numpy as np
 import numpy.typing as npt
 
-from educelab.devices.cameras.base import Frame, FrameCamera, Setting, SettingValue
+from educelab.devices.cameras.base import (
+    EXPOSURE_TIME,
+    GAIN,
+    PIXEL_FORMAT,
+    Frame,
+    FrameCamera,
+    Setting,
+    SettingValue,
+)
 from educelab.devices.device import DeviceInfo, synchronized
 from educelab.devices.errors import (
+    CommandRejected,
     DeviceBusy,
     DeviceError,
     DeviceNotFound,
@@ -47,6 +56,16 @@ TIMESTAMP_SAMPLES = 20
 # Newer cameras name the latched value "Timestamp", older ones
 # "TimestampLatchValue" (docs/hardware/spinnaker.md, Protocol).
 _TIMESTAMP_NODES = ("Timestamp", "TimestampLatchValue")
+
+# Pixel formats whose arrays the driver knows how to shape. Others (e.g.
+# packed 12-bit) would come back as raw bytes.
+_PIXEL_FORMATS = frozenset(
+    {"Mono8", "Mono16", "RGB8"}
+    | {f"Bayer{order}{bits}" for order in ("RG", "GB", "GR", "BG") for bits in (8, 16)}
+)
+# "Once" isn't offered: it reverts to "Off" by itself, so it never reads back.
+_AUTO_MODES = ("Off", "Continuous")
+_US_PER_S = 1e6
 
 # Spinnaker error codes the driver tells apart (assumed; see the hardware doc).
 _ERR_ACCESS_DENIED = -1005
@@ -404,6 +423,11 @@ class SpinnakerCamera(FrameCamera):
         # Never hand back a frame older than the newest one (pgs-scan dev).
         self._set_enum("StreamBufferHandlingMode", "NewestOnly", stream=True)
         self._set_enum("AcquisitionMode", "Continuous")
+        formats = self._enum_choices("PixelFormat", _PIXEL_FORMATS)
+        if formats and self._enum_symbol("PixelFormat") not in formats:
+            preferred = "RGB8" if "RGB8" in formats else formats[0]
+            logger.info("%r: switching pixel format to %s", self, preferred)
+            self._set_enum("PixelFormat", preferred)
         self._timestamp_node = next(
             (n for n in _TIMESTAMP_NODES if self._raw_node(n) is not None), None
         )
@@ -428,10 +452,65 @@ class SpinnakerCamera(FrameCamera):
     # --- Role hooks ------------------------------------------------------------
 
     def _settings(self) -> Mapping[str, Setting]:
-        return {}
+        found = (
+            self._float_setting(EXPOSURE_TIME, "ExposureTime", "s", _US_PER_S),
+            self._enum_setting("ExposureAuto", _AUTO_MODES),
+            self._float_setting(GAIN, "Gain", "dB"),
+            self._enum_setting("GainAuto", _AUTO_MODES),
+            self._enum_setting("PixelFormat", _PIXEL_FORMATS, name=PIXEL_FORMAT),
+        )
+        return {s.name: s for s in found if s is not None}
 
     def _set_setting(self, name: str, value: SettingValue) -> None:
-        raise KeyError(name)
+        logger.debug("%r: %s = %r", self, name, value)
+        if name in (EXPOSURE_TIME, GAIN):
+            node_name, scale = (
+                ("ExposureTime", _US_PER_S) if name == EXPOSURE_TIME else ("Gain", 1.0)
+            )
+            node = self._node(node_name, "CFloatPtr")
+            # Clamp, so a limit that went through the unit conversion still fits.
+            low, high = self._call(
+                f"read the limits of {name}", lambda: (node.GetMin(), node.GetMax())
+            )
+            native = min(max(float(value) * scale, low), high)
+            self._call(
+                f"set {name}", lambda: node.SetValue(native), kind=CommandRejected
+            )
+        else:
+            node_name = "PixelFormat" if name == PIXEL_FORMAT else name
+            self._set_enum(node_name, str(value), kind=CommandRejected)
+
+    def _float_setting(
+        self, name: str, node_name: str, unit: str, scale: float = 1.0
+    ) -> Setting | None:
+        node = self._node(node_name, "CFloatPtr")
+        if not self._pyspin.IsReadable(node):
+            return None
+        value, low, high = self._call(
+            f"read {node_name}",
+            lambda: (node.GetValue(), node.GetMin(), node.GetMax()),
+        )
+        return Setting(
+            name,
+            value / scale,
+            minimum=low / scale,
+            maximum=high / scale,
+            unit=unit,
+            read_only=not self._pyspin.IsWritable(node),
+        )
+
+    def _enum_setting(
+        self, node_name: str, supported: Iterable[str], *, name: str | None = None
+    ) -> Setting | None:
+        node = self._node(node_name, "CEnumerationPtr")
+        if not self._pyspin.IsReadable(node):
+            return None
+        return Setting(
+            name or node_name,
+            self._enum_symbol(node_name),
+            choices=self._enum_choices(node_name, supported),
+            read_only=not self._pyspin.IsWritable(node),
+        )
 
     def _capture_frame(self) -> Frame:
         raise NotImplementedError
@@ -446,6 +525,7 @@ class SpinnakerCamera(FrameCamera):
         action: str,
         fn: Callable[[], T],
         *,
+        kind: type[DeviceError] = DeviceError,
         by_code: Mapping[int, type[DeviceError]] | None = None,
     ) -> T:
         """Call into PySpin, turning a ``SpinnakerException`` into a `DeviceError`.
@@ -457,9 +537,9 @@ class SpinnakerCamera(FrameCamera):
             return fn()
         except self._pyspin.SpinnakerException as exc:
             code: int = getattr(exc, "errorcode", 0)
-            kind = (by_code or {}).get(code, DeviceError)
             if code == _ERR_TIMEOUT:
                 kind = DeviceTimeout
+            kind = (by_code or {}).get(code, kind)
             error = kind(f"{self!r} failed to {action}: {exc}")
         del fn
         raise error
@@ -483,7 +563,25 @@ class SpinnakerCamera(FrameCamera):
         entry = self._call(f"read {name}", node.GetCurrentEntry)
         return str(entry.GetSymbolic())
 
-    def _set_enum(self, name: str, symbol: str, *, stream: bool = False) -> None:
+    def _enum_choices(self, name: str, supported: Iterable[str]) -> tuple[str, ...]:
+        """The entries of an enumeration that are available and in ``supported``."""
+        node = self._node(name, "CEnumerationPtr")
+        supported = set(supported)
+        symbols = []
+        for raw in self._call(f"list {name} entries", node.GetEntries):
+            entry = self._pyspin.CEnumEntryPtr(raw)
+            if self._pyspin.IsReadable(entry) and entry.GetSymbolic() in supported:
+                symbols.append(str(entry.GetSymbolic()))
+        return tuple(symbols)
+
+    def _set_enum(
+        self,
+        name: str,
+        symbol: str,
+        *,
+        stream: bool = False,
+        kind: type[DeviceError] = DeviceError,
+    ) -> None:
         node = self._node(name, "CEnumerationPtr", stream=stream)
         if not self._pyspin.IsWritable(node):
             raise DeviceError(f"{self!r} can't set {name}: it isn't writable")
@@ -491,4 +589,6 @@ class SpinnakerCamera(FrameCamera):
         if not self._pyspin.IsReadable(entry):
             raise DeviceError(f"{self!r} has no {name} {symbol!r}")
         value = entry.GetValue()
-        self._call(f"set {name} to {symbol}", lambda: node.SetIntValue(value))
+        self._call(
+            f"set {name} to {symbol}", lambda: node.SetIntValue(value), kind=kind
+        )

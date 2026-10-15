@@ -57,7 +57,14 @@ SPINNAKER_ERR_TIMEOUT = -1011
 EVENT_TIMEOUT_INFINITE = 0xFFFFFFFFFFFFFFFF
 
 _ENUMS = {
-    "PixelFormat": ("Mono8", "Mono16", "RGB8", "BayerRG8", "BayerRG16"),
+    "PixelFormat": (
+        "Mono8",
+        "Mono16",
+        "RGB8",
+        "BayerRG8",
+        "BayerRG16",
+        "Mono12Packed",
+    ),
     "PixelColorFilter": ("None", "BayerRG", "BayerGB", "BayerGR", "BayerBG"),
     "ExposureAuto": ("Off", "Once", "Continuous"),
     "GainAuto": ("Off", "Once", "Continuous"),
@@ -116,6 +123,7 @@ _LAYOUTS: dict[str, tuple[type[np.unsignedinteger[Any]], int]] = {
     "RGB8": (np.uint8, 3),
     "BayerRG8": (np.uint8, 1),
     "BayerRG16": (np.uint16, 1),
+    "Mono12Packed": (np.uint8, 1),
 }
 
 
@@ -488,6 +496,8 @@ class FakeCamera:
         uptime: Seconds the camera's timestamp counter has been running.
         timestamp_node: ``"Timestamp"`` or the older ``"TimestampLatchValue"``.
         firmware: ``DeviceFirmwareVersion``.
+        formats: ``PixelFormat`` entries, first one current. Defaults to the
+            usual mono or color set.
     """
 
     def __init__(
@@ -504,6 +514,7 @@ class FakeCamera:
         uptime: float = 1000.0,
         timestamp_node: str = "Timestamp",
         firmware: str = "1.0.0.0",
+        formats: Iterable[str] | None = None,
     ) -> None:
         self.serial = serial
         self.model = model
@@ -527,9 +538,11 @@ class FakeCamera:
         self.pending_triggers: deque[int] = deque()
         self.respond_to_triggers = True
 
-        formats = ["Mono8", "Mono16"]
-        if color:
-            formats = ["RGB8", "BayerRG8", "BayerRG16", *formats]
+        if formats is None:
+            formats = ["Mono8", "Mono16"]
+            if color:
+                formats = ["RGB8", "BayerRG8", "BayerRG16", *formats]
+        formats = list(formats)
 
         def unless_streaming() -> int:
             return RO if self.streaming else RW

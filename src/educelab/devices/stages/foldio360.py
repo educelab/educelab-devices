@@ -424,6 +424,10 @@ class Foldio360(Stage):
     (`watchdog_seconds`) rather than `move_timeout`. Turns longer than one
     revolution are made as several rotations of at most 360°.
 
+    Beyond the stage role, it offers the firmware's capture sequence (`run`)
+    and IR shutter (`ir_shutter`, `set_signal`). These are unverified with
+    this driver.
+
     Only one BLE central may hold the link, so close the official app before
     opening. See ``docs/hardware/foldio360.md`` for everything the driver
     relies on.

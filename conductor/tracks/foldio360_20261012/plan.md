@@ -65,7 +65,7 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
 
 ### Verification
 
-- [x] All Stage tests and contracts pass.
+- [x] All Stage tests and contracts pass. (Locally: macOS on Python 3.11, 3.13, and 3.14; CI not yet run on this phase.)
 
 ## Phase 3: Halo light
 

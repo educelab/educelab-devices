@@ -69,7 +69,7 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
 - [x] Task 3.1: Write tests for `Setting` descriptors from the config tree and `exposure_time` ↔ shutter-choice mapping; implement.
 - [x] Task 3.2: Write tests for live-view enabling and `preview_frame()` decoding; implement.
   - With preview working, the whole `Camera` contract passes, so this task removed the strict-xfail marker from `TestGPhoto2Contract`.
-- [ ] Task 3.3: Write tests for keep-alive start/pause/stop; implement the internal thread.
+- [x] Task 3.3: Write tests for keep-alive start/pause/stop; implement the internal thread.
 - [ ] Task 3.4: Run the `Camera` contract suite.
 
 ### Deviations
@@ -81,6 +81,8 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
   to a value that doesn't (`Bulb`, `Auto`), the canonical setting is absent and the
   widget is listed under its native name.
 - `close()` turns live view off if the driver turned it on (the prototype left it on).
+- Keep-alive skips an interval when the device lock is held as well as during a capture,
+  and logs a failed ping instead of emitting `Disconnected`.
 - Widgets in the config tree's `actions` section are not settings. `Widget` gained a
   `section` field so the seam can tell.
 

@@ -68,6 +68,12 @@ DRAIN_LIMIT_S = 2.0
 DOWNLOAD_ATTEMPTS = 3
 DOWNLOAD_RETRY_DELAY_S = 1.0
 
+# Some bodies drop out of PC mode when the bus is quiet for a while, e.g. while
+# a turntable moves between captures. From pgs-scan's spectral prototype
+# (docs/hardware/gphoto2-cameras.md#keep-alive).
+KEEP_ALIVE_INTERVAL_S = 2.0
+KEEP_ALIVE_WAIT_S = 0.01
+
 # Widgets that turn live view on, by camera family, and spellings of "off" for
 # continuous AF. From pgs-scan's spectral prototype
 # (docs/hardware/gphoto2-cameras.md#live-view).
@@ -126,6 +132,8 @@ class GPhoto2Camera(FileCamera):
         # Set while the shutter is released or files are downloading, so the
         # keep-alive thread stays off the bus.
         self._capture_in_flight = threading.Event()
+        self._keep_alive_stop = threading.Event()
+        self._keep_alive_thread: threading.Thread | None = None
         self._live_view_tried = False
         # The widget that turned live view on, so close() can turn it off.
         self._live_view: str | None = None
@@ -172,6 +180,34 @@ class GPhoto2Camera(FileCamera):
         self._session = session
         self._model = session.model
         logger.debug("%r opened: %s", self, self._model)
+        self._keep_alive_stop = threading.Event()
+        self._keep_alive_thread = threading.Thread(
+            target=self._keep_alive,
+            args=(self._keep_alive_stop,),
+            name=f"{self!r} keep-alive",
+            daemon=True,
+        )
+        self._keep_alive_thread.start()
+
+    def _keep_alive(self, stop: threading.Event) -> None:
+        """Ping the camera whenever it has been idle for an interval."""
+        while not stop.wait(KEEP_ALIVE_INTERVAL_S):
+            if self._capture_in_flight.is_set():
+                continue
+            # A call holding the lock is already talking to the camera.
+            if not self._lock.acquire(blocking=False):
+                continue
+            try:
+                if stop.is_set() or self._session is None:
+                    return
+                event = self._session.wait_for_event(KEEP_ALIVE_WAIT_S)
+            except GPhoto2Error as exc:
+                logger.warning("%r keep-alive ping failed: %s", self, exc)
+                continue
+            finally:
+                self._lock.release()
+            if event.kind == "file_added" and event.path is not None:
+                self._discarded(event.path)
 
     def _try_open(self, library: Library) -> Session:
         """Open a session, raising `_NotVisibleYet` for failures worth a retry."""
@@ -195,6 +231,10 @@ class GPhoto2Camera(FileCamera):
         return found[0][1]
 
     def _close(self) -> None:
+        self._keep_alive_stop.set()
+        if self._keep_alive_thread is not None:
+            self._keep_alive_thread.join()
+            self._keep_alive_thread = None
         session, self._session = self._session, None
         live_view, self._live_view = self._live_view, None
         self._live_view_tried = False
@@ -308,11 +348,7 @@ class GPhoto2Camera(FileCamera):
         self._capture_in_flight.set()
         try:
             for stale in self._drain(session):
-                logger.warning(
-                    "%r discarded %s, which arrived after its capture had returned",
-                    self,
-                    stale.name,
-                )
+                self._discarded(stale)
             try:
                 first = session.capture()
             except GPhoto2Error as exc:
@@ -322,6 +358,13 @@ class GPhoto2Camera(FileCamera):
             return [CameraFile(p.name, self._download(session, p)) for p in paths]
         finally:
             self._capture_in_flight.clear()
+
+    def _discarded(self, path: FilePath) -> None:
+        logger.warning(
+            "%r discarded %s, which arrived after its capture had returned",
+            self,
+            path.name,
+        )
 
     def _drain(self, session: Session) -> list[FilePath]:
         """Read events until the camera goes quiet, returning the files added."""

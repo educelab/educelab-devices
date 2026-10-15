@@ -167,3 +167,20 @@ continuous AF off keeps the lens from hunting between frames, and it stays off a
   left running. A failure there is logged, not raised.
 - Preview images are JPEG on Nikon and Canon bodies. Their size on the Z7 II is
   **unknown**; record it in Phase 5.
+
+## Keep-alive
+
+While a camera is open, an internal daemon thread reads one event (a 10 ms
+`wait_for_event`) whenever the camera has been idle for `KEEP_ALIVE_INTERVAL_S` (2 s).
+The prototype added this because multi-second gaps with no USB traffic, such as a
+turntable move plus light settling between captures, were followed by the camera
+leaving PC mode. **assumed**, from the prototype; whether the Z7 II needs it at all is
+**unknown**.
+
+- The ping skips any interval in which a capture is in flight or another call holds the
+  device, so it never delays a capture or interleaves with one.
+- A failed ping is logged as a warning and pinging continues. The driver doesn't treat
+  one failure as a lost connection; the next real call reports the error.
+- A file added between captures (a late JPEG, or a shot taken on the camera itself) is
+  logged and left on the card, as during a capture.
+- `close()` stops the thread before ending the session.

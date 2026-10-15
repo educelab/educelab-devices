@@ -14,12 +14,44 @@ A small driver: fake brainstem seam, driver, then docs, CLI, and hardware check.
 ### Tasks
 
 - [x] Task 1.1: Declare the `[acroname]` extra; lazy import; define the internal brainstem seam and a fake.
-- [ ] Task 1.2: Write tests for discovery, port power, `power_cycle`, enumeration delay, and error mapping; implement.
+- [x] Task 1.2: Write tests for discovery, port power, `power_cycle`, enumeration delay, and error mapping; implement.
 - [ ] Task 1.3: Run the `Hub` contract suite.
 
 ### Verification
 
 - [ ] Hub tests and contracts pass.
+
+### Notes and deviations
+
+- The spec names `power_cycle(port, off_seconds)`; the `Hub` role's parameter is
+  `off_time`, and the driver keeps the role's signature.
+- The `Hub` role has no settings API, so the enumeration delay is a pair of
+  driver methods: `enumeration_delay() -> Setting` (seconds, step 0.1) and
+  `set_enumeration_delay(seconds)`, which snaps to the nearest 100 ms. It sets
+  the running hub only. `pgs-scan`'s `usb_hub3p_config.py` also called
+  `system.save()` and `system.reset()`; whether that's needed for the delay to
+  take effect is open (see the report to the maintainer).
+- `AcronameHub()` with no serial number opens the only hub attached and refuses
+  to guess between several (as `MishaLight` does). Serial number 0 is rejected
+  because the SDK reads it as "any hub".
+- The driver connects with `discoverAndConnect(Spec.USB, serial)`: concrete
+  stem classes override `connect()` with a different signature.
+- For Task 2.1 (hardware doc), from reading brainstem 2.12.5 and running it on
+  macOS with no hub attached (2026-10-15):
+  - verified: `discoverAndConnect` with an absent serial returns 3 (not found);
+    calls on an unconnected stem return 25 (connection error); `disconnect()`
+    on an unconnected stem returns 0; `findAllModules(Spec.USB)` returns `[]`.
+  - from the SDK source: on Windows, `import brainstem` raises `OSError` when
+    the MSVC 2015 redistributable is missing (the driver turns it into an
+    `ImportError`); on Linux it raises `ImportError` unless one of its bundled
+    builds loads (Ubuntu 18.04–24.04 x86_64/aarch64, Debian 12 x86_64,
+    Debian 11.7 armv7l).
+  - assumed (SDK docstrings): 8 downstream ports, 0–7; `setPortEnable`/
+    `setPortDisable` switch power and data; port state bit 0 is VBUS enabled;
+    enumeration delay in 100 ms increments.
+  - unknown: the enumeration delay's maximum; whether it applies without
+    `system.save()` and a reset; whether missing udev rules show up as error 12
+    (permission) or as "not found".
 
 ## Phase 2: Docs, CLI, hardware verification
 

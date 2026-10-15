@@ -30,6 +30,13 @@
     "58164df: Read gphoto2 camera settings from the config tree",
     "399dacb: Turn on live view and decode gphoto2 previews with Pillow",
     "77a8fd8: Keep idle gphoto2 cameras alive from an internal thread",
-    "cef12aa: Run the Camera contract suite with keep-alive active"
+    "cef12aa: Run the Camera contract suite with keep-alive active",
+    "55b778c: Record gphoto2 Phase 3 commits in the track metadata",
+    "ec0bfa1: Record approval of gphoto2 Phase 3",
+    "6a606c7: Report a gphoto2 camera as disconnected after three failed pings",
+    "f56602e: Drive gphoto2 lens focus in chunked, settled steps",
+    "e439e1a: Test driving gphoto2 focus to its near and far limits",
+    "14db510: Offer camera.focus only when the lens has a range-type focus drive",
+    "9aaa541: Run the FocusDrive contract suite against camera.focus"
   ]
 }

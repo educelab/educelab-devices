@@ -30,6 +30,7 @@ from educelab.devices.errors import (
     PositionError,
     import_optional,
 )
+from educelab.devices.lights.base import RGB, Channel, ChannelKind, Light
 from educelab.devices.settings import Setting
 from educelab.devices.stages.base import Axis, AxisKind, Stage
 
@@ -38,6 +39,7 @@ __all__ = [
     "CW",
     "KNOWN_GOOD_FRAMES",
     "Foldio360",
+    "Foldio360Halo",
     "NusTransport",
     "UnexpectedResponse",
     "predicted_move_seconds",
@@ -112,13 +114,22 @@ _MAX_LEG_DEG = 360
 # How often a move waiting for its OK checks for stop().
 _POLL_S = 0.05
 
-# After a cancel or a fire-and-forget write, how long the link must be silent
+# After a cancel or a lost ack, how long the link must be silent
 # before stray replies count as drained. Replies come within ~200 ms.
 _SETTLE_QUIET_S = 0.3
 
 # Frame counts run() is known to complete; others wedge after frame 1 (hardware
 # doc, run / continue / ir_shutter). Passed through, not enforced.
 KNOWN_GOOD_FRAMES = (24, 36, 48)
+
+# Brightness writes closer than ~50 ms lose acks; paced to that, each one is
+# acknowledged (hardware doc, set_bright).
+_BRIGHT_PACING_S = 0.05
+
+# How long to wait for a brightness ack before reading the level back instead.
+_BRIGHT_ACK_S = 0.5
+
+_HALO_CHANNELS = (Channel("halo", ChannelKind.MONO),)
 
 # Two cancels stop motion of an unknown mode; they must be spaced past the
 # ~100 ms window in which back-to-back commands cost an ack (hardware doc, rotate).
@@ -424,6 +435,8 @@ class Foldio360(Stage):
     (`watchdog_seconds`) rather than `move_timeout`. Turns longer than one
     revolution are made as several rotations of at most 360°.
 
+    The LED ring is a separate `Light`, `halo`, on the same connection.
+
     Beyond the stage role, it offers the firmware's capture sequence (`run`)
     and IR shutter (`ir_shutter`, `set_signal`). These are unverified with
     this driver.
@@ -464,9 +477,11 @@ class Foldio360(Stage):
         self._running = False  # inside run()
         self._jogging = False
         self._stop_requested = threading.Event()
-        # Replies that no command will claim: acks from fire-and-forget writes
-        # and from cancels sent while another command was waiting.
+        # Replies that no command will claim: acks that arrive after their
+        # timeout, and acks from cancels sent while another command waited.
         self._strays = 0
+        self._last_bright_write = -math.inf
+        self._halo = Foldio360Halo(self)
 
     @property
     def info(self) -> DeviceInfo:
@@ -605,28 +620,36 @@ class Foldio360(Stage):
 
     # -- halo ---------------------------------------------------------------------
 
-    @synchronized
-    def get_brightness(self) -> int:
-        """Return the halo level, 0-100."""
+    @property
+    def halo(self) -> "Foldio360Halo":
+        """The LED ring, as a `Light` that shares this turntable's connection."""
+        return self._halo
+
+    def _write_brightness(self, percent: int) -> None:
+        """Set the halo, 0-100, pacing writes so their acks come back."""
+        wait = self._last_bright_write + _BRIGHT_PACING_S - time.monotonic()
+        if wait > 0:
+            time.sleep(wait)
+        command = f"set_bright({percent})"
+        try:
+            reply = self._command(command, expect_ok=True, timeout=_BRIGHT_ACK_S)
+        except DeviceTimeout as exc:
+            # The ack can be lost even when the level lands (hardware doc,
+            # set_bright), so trust the halo's own reading.
+            actual = self._read_brightness()
+            if actual != percent:
+                raise DeviceTimeout(
+                    f"{self!r} didn't acknowledge {command}, and the halo reads "
+                    f"{actual}"
+                ) from exc
+            logger.debug("%r %s landed without an ack", self, command)
+        else:
+            _check_ok(reply, command)
+        finally:
+            self._last_bright_write = time.monotonic()
+
+    def _read_brightness(self) -> int:
         return self._expect_int("get_bright", 100)
-
-    @synchronized
-    def set_brightness(self, level: int, wait: bool = True) -> None:
-        """Set the halo LED ring, 0-100. Takes effect immediately.
-
-        Pass ``wait=False`` when ramping: the device drops acks under rapid
-        writes even though the values land.
-        """
-        if not isinstance(level, int) or not 0 <= level <= 100:
-            raise ValueError(f"brightness must be an int in 0..100, got {level!r}")
-        command = f"set_bright({level})"
-        if wait:
-            _check_ok(self._command(command, expect_ok=True), command)
-            return
-        self._settle()
-        self._transport.send(command)
-        with self._state_lock:
-            self._strays += 1
 
     # -- capture sequence and IR shutter --------------------------------------------
 
@@ -877,7 +900,13 @@ class Foldio360(Stage):
             )
         return int(reply)
 
-    def _command(self, command: str | bytes, *, expect_ok: bool = False) -> str:
+    def _command(
+        self,
+        command: str | bytes,
+        *,
+        expect_ok: bool = False,
+        timeout: float | None = None,
+    ) -> str:
         """Send one command and return its reply.
 
         Exactly one command is outstanding at a time; replies match commands
@@ -887,7 +916,7 @@ class Foldio360(Stage):
         self._transport.send(command)
         try:
             while True:
-                reply: str = self._transport.read(ACK_TIMEOUT_S)
+                reply: str = self._transport.read(timeout or ACK_TIMEOUT_S)
                 if reply == "OK" and not expect_ok and self._claim_stray():
                     continue
                 break
@@ -923,6 +952,66 @@ class Foldio360(Stage):
         self._transport.drain()
         with self._state_lock:
             self._strays = 0
+
+
+class Foldio360Halo(Light):
+    """The Foldio360's LED ring, as a light with one mono channel, ``"halo"``.
+
+    Get it from `Foldio360.halo`. It is a second role of the same device, so it
+    shares the turntable's connection and lock: opening or closing either one
+    opens or closes both, and halo commands wait for a move to finish.
+
+    Levels are sent as whole percent (0-100, rounded), and `level()` reads the
+    halo back from the turntable. Writes are paced 50 ms apart, and a lost
+    ack is accepted when the halo reads back the level that was set. The halo
+    is off after the turntable powers on.
+    """
+
+    def __init__(self, turntable: Foldio360) -> None:
+        super().__init__()
+        self._turntable = turntable
+        self._lock = turntable._lock
+
+    @property
+    def info(self) -> DeviceInfo:
+        return self._turntable.info
+
+    @property
+    def channels(self) -> tuple[Channel, ...]:
+        return _HALO_CHANNELS
+
+    @property
+    def is_open(self) -> bool:
+        return self._turntable.is_open
+
+    def open(self) -> None:
+        """Open the turntable's connection, which the halo shares."""
+        self._turntable.open()
+
+    def close(self) -> None:
+        """Close the turntable's connection, which the halo shares."""
+        self._turntable.close()
+
+    def __repr__(self) -> str:
+        return f"<{self._turntable!r} halo>"
+
+    def _open(self) -> None:
+        self._turntable.open()
+
+    def _close(self) -> None:
+        self._turntable.close()
+
+    def _require_open(self) -> None:
+        self._turntable._require_open()
+
+    def _set_level(self, channel: Channel, level: float) -> None:
+        self._turntable._write_brightness(round(level * 100))
+
+    def _set_color(self, channel: Channel, color: RGB) -> None:
+        raise ValueError(f"{self!r} has no RGB channels")
+
+    def _get_level(self, channel: Channel) -> float | None:
+        return self._turntable._read_brightness() / 100
 
 
 def _check_ok(reply: str, what: str) -> None:

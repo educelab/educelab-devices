@@ -24,8 +24,10 @@ remembers only what it learned since `open()`. Most of what follows comes from t
    something remembered, your application owns that, along with the hazard of it going
    stale.
 4. **Roles, not vendors.** Code against `Camera`, `Light`, `Stage`, `Hub`, or `FocusDrive`.
-   One device can offer several roles; a turntable with a built-in light is both a
-   `Stage` and a `Light`.
+   One device can offer several roles. A driver either implements them in one class or
+   hands out a second object for a role that shares the device's connection and lock:
+   the Foldio360 is a `Stage`, and its built-in light is the `Light` at
+   `Foldio360.halo`. Opening or closing either opens or closes the device.
 5. **Positions are machine coordinates.** A stage reports what the hardware counts, not
    an origin you pinned (ADR 0003).
 

@@ -433,6 +433,7 @@ Other timings the driver relies on:
 | Brightness write pacing for reliable acks | ~50 ms | [set_bright](#set_bright) |
 | Default limit for a rotation | `2 × predicted + 1 s`, per leg | The watchdog above; loose because speeds 2 and 3 are assumed |
 | Quiet time before stray replies count as drained | 300 ms | Replies arrive within ~200 ms |
+| Wait for a brightness ack before reading the level back | 500 ms | Well past the ~200 ms reply time |
 
 ## State and recovery
 
@@ -519,9 +520,16 @@ How `Foldio360` maps the protocol onto the `Stage` role:
   `rotate` still sends its own OK is **unknown**, see [cancel](#cancel)), re-reads the
   counter, and raises `PositionError`.
 - **Stray replies.** Acks nobody waits for (a cancel sent during another command, a
-  brightness write with `wait=False`, a reply that arrived after its timeout) are counted.
+  reply that arrived after its timeout) are counted.
   The next command first waits for the link to go quiet and discards them, and a query
   that gets an unexpected `OK` while one is outstanding skips it.
+- **Halo.** `Foldio360.halo` is a `Light` with one mono channel, `"halo"`, on the
+  turntable's connection and lock: opening or closing either opens or closes both, and a
+  halo command waits for a move. Levels 0.0–1.0 are sent as whole percent (rounded), and
+  `level()` reads `get_bright`. Writes are paced at least 50 ms apart, so ramps get their
+  acks. If an ack still doesn't arrive within 0.5 s, the driver reads the level back:
+  if it landed, the write counts as done (the ack is counted as a stray and drained),
+  and otherwise `DeviceTimeout` is raised.
 - **Capture sequence.** `run(frames, on_frame)` holds the device lock for the whole
   sequence and calls `on_frame(index)` at each frame; `on_frame` returning `False` ends it
   early, and an exception from it cancels the sequence and propagates. The steps run at

@@ -23,6 +23,7 @@ from educelab.devices.errors import (
     NotConnected,
     PositionError,
 )
+from educelab.devices.lights import Channel, ChannelKind, Light
 from educelab.devices.stages import Stage
 from educelab.devices.stages import foldio360 as f
 from educelab.devices.stages.foldio360 import Foldio360
@@ -292,37 +293,94 @@ def test_rotate_sends_no_trailing_cancel():
     assert not [c for c in t.sent if c.startswith("cancel")]
 
 
-# -- halo brightness (becomes the halo Light in Phase 3) ------------------------
+# -- the halo ----------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("level", [101, -1, 1.5])
-def test_brightness_is_validated_before_sending(level):
+def test_halo_is_a_light_with_one_mono_channel():
+    dev = Foldio360(transport=FakeNusTransport())
+    assert isinstance(dev.halo, Light)
+    assert dev.halo is dev.halo
+    assert dev.halo.channels == (Channel("halo", ChannelKind.MONO),)
+
+
+@pytest.mark.parametrize(
+    ("level", "command"),
+    [
+        (0.0, "set_bright(0)"),
+        (0.5, "set_bright(50)"),
+        (0.333, "set_bright(33)"),
+        (1.0, "set_bright(100)"),
+    ],
+)
+def test_halo_level_maps_to_percent(level, command):
     dev, t = table()
-    with pytest.raises(ValueError):
-        dev.set_brightness(level)
-    assert t.sent == []
+    dev.halo.set_level("halo", level)
+    assert t.sent == [command]
 
 
-def test_get_brightness():
+def test_halo_level_is_read_from_the_device():
     dev, t = table()
     t.brightness = 37
-    assert dev.get_brightness() == 37
+    assert dev.halo.level("halo") == pytest.approx(0.37)
     assert t.sent == ["get_bright"]
 
 
-def test_brightness_fire_and_forget_does_not_wait():
-    dev, t = table({"set_bright(50)": TIMEOUT})
-    dev.set_brightness(50, wait=False)  # would raise if it waited
-    assert t.sent == ["set_bright(50)"]
+def test_halo_shares_the_turntables_connection():
+    dev = Foldio360(transport=FakeNusTransport())
+    assert not dev.halo.is_open
+    with dev.halo:
+        assert dev.is_open
+        dev.halo.set_level("halo", 0.2)
+    assert not dev.is_open
+    dev.open()
+    assert dev.halo.is_open
+    dev.close()
+    with pytest.raises(NotConnected):
+        dev.halo.set_level("halo", 0.2)
 
 
-def test_fire_and_forget_ack_is_not_read_as_the_next_reply():
+def test_halo_info_is_the_turntables():
+    with Foldio360(transport=FakeNusTransport()) as dev:
+        assert dev.halo.info == dev.info
+
+
+def test_halo_writes_are_paced():
     dev, t = table()
-    dev.set_brightness(50, wait=False)
+    start = time.monotonic()
+    for level in (0.1, 0.2, 0.3):
+        dev.halo.set_level("halo", level)
+    assert time.monotonic() - start >= 2 * f._BRIGHT_PACING_S * 0.9
+    assert t.brightness == 30
+
+
+def test_halo_tolerates_a_lost_ack_when_the_level_landed(monkeypatch):
+    monkeypatch.setattr(f, "_BRIGHT_ACK_S", 0.05)
+    dev, t = table(lost_acks={"set_bright(50)"})
+    dev.halo.set_level("halo", 0.5)
+    assert t.sent == ["set_bright(50)", "get_bright"]
+    assert dev.halo.level("halo") == 0.5
+
+
+def test_halo_raises_when_the_ack_is_lost_and_the_level_did_not_land(monkeypatch):
+    monkeypatch.setattr(f, "_BRIGHT_ACK_S", 0.05)
+    dev, _ = table({"set_bright(50)": TIMEOUT})
+    with pytest.raises(DeviceTimeout):
+        dev.halo.set_level("halo", 0.5)
+
+
+def test_a_late_halo_ack_is_drained(monkeypatch):
+    monkeypatch.setattr(f, "_BRIGHT_ACK_S", 0.05)
+    monkeypatch.setattr(f, "_SETTLE_QUIET_S", 0.2)
+    dev, t = table(ack_delays={"set_bright(50)": 0.1})
+    dev.halo.set_level("halo", 0.5)
     t.angle = 42
-    assert dev.get_brightness() == 50
-    dev.move_to({"theta": 42.0})
-    assert t.sent[-1] == "get_position"
+    assert dev.position() == {"theta": 42.0}, "the late OK isn't read as a position"
+
+
+def test_halo_works_inside_a_run():
+    dev, t = table()
+    dev.run(24, lambda index: dev.halo.set_level("halo", index / 100) or False)
+    assert "set_bright(1)" in t.sent
 
 
 # -- protocol helpers and the transport ---------------------------------------
@@ -535,13 +593,6 @@ def test_stop_while_another_command_holds_the_lock_cancels_a_jog():
     )
 
 
-def test_unclaimed_ok_is_skipped_by_a_query():
-    dev, t = table()
-    dev.set_brightness(20, wait=False)
-    t.angle = 5
-    assert dev.position() == {"theta": 5.0}
-
-
 # -- position ---------------------------------------------------------------------
 
 
@@ -582,9 +633,9 @@ def test_commands_wait_for_a_move_to_finish():
     dev, t = table(hold_moves=True)
     mover, _ = in_thread(dev.move_to, {"theta": 90.0})
     assert t.move_started.wait(timeout=2)
-    lighter, outcome = in_thread(dev.set_brightness, 40)
+    lighter, outcome = in_thread(dev.halo.set_level, "halo", 0.4)
     time.sleep(0.1)
-    assert lighter.is_alive(), "set_brightness must wait for the device lock"
+    assert lighter.is_alive(), "the halo must wait for the shared device lock"
     assert "set_bright(40)" not in t.sent
     t.finish_move()
     mover.join(timeout=2)
@@ -596,7 +647,7 @@ def test_commands_wait_for_a_move_to_finish():
 def test_commands_on_a_closed_device_raise_not_connected():
     dev = Foldio360(transport=FakeNusTransport())
     with pytest.raises(NotConnected):
-        dev.set_brightness(10)
+        dev.halo.set_level("halo", 0.1)
     with pytest.raises(NotConnected):
         dev.move_to({"theta": 10.0})
 

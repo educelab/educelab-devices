@@ -3,7 +3,7 @@
 import queue
 import re
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 
 from educelab.devices.errors import DeviceTimeout
 
@@ -42,6 +42,9 @@ class FakeNusTransport:
             unknown (docs/hardware/foldio360.md, cancel).
         cancelled_fraction: How much of a held rotation is done when it is
             cancelled.
+        lost_acks: Commands that take effect but whose reply never arrives,
+            as under rapid writes (docs/hardware/foldio360.md, set_bright).
+        ack_delays: Seconds to hold back each command's reply.
     """
 
     def __init__(
@@ -52,6 +55,8 @@ class FakeNusTransport:
         hold_moves: bool = False,
         cancel_acks_move: bool = True,
         cancelled_fraction: float = 0.5,
+        lost_acks: Iterable[str] = (),
+        ack_delays: Mapping[str, float] | None = None,
     ) -> None:
         self.sent: list[str | bytes] = []
         self.connected = False
@@ -70,6 +75,8 @@ class FakeNusTransport:
         self.frames: int | None = None
         """Frame count of the run sequence in progress."""
         self.frame = 0
+        self.lost_acks = set(lost_acks)
+        self.ack_delays = dict(ack_delays or {})
         self._replies = dict(replies or {})
         self._queue: queue.Queue[str] = queue.Queue()
         self._lock = threading.Lock()
@@ -90,8 +97,15 @@ class FakeNusTransport:
                     return
                 self._queue.put(reply() if callable(reply) else reply)  # type: ignore[arg-type]
                 return
-            for reply in self._respond(text):
-                self._queue.put(reply)
+            replies = self._respond(text)
+            if text in self.lost_acks:
+                return
+            delay = self.ack_delays.get(text)
+            for reply in replies:
+                if delay is None:
+                    self._queue.put(reply)
+                else:
+                    threading.Timer(delay, self._queue.put, (reply,)).start()
 
     def read(self, timeout: float | None) -> str:
         try:

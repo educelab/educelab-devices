@@ -30,7 +30,7 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
 
 ### Verification
 
-- [~] Ported tests pass on all CI platforms. (Local: macOS, Python 3.13, with and without `bleak` installed. CI runs on push/PR, which this run doesn't do.)
+- [~] Ported tests pass on all CI platforms. (Local: macOS on Python 3.11, 3.13, and 3.14, and 3.13 without `bleak`. Linux/Windows CI not yet run: nothing has been pushed.)
 
 ## Phase 2: Stage adaptation
 

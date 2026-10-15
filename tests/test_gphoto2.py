@@ -29,7 +29,12 @@ from educelab.devices.cameras.base import (
 )
 from educelab.devices.cameras.gphoto2 import GPhoto2Camera
 from educelab.devices.device import DeviceInfo, Disconnected
-from educelab.devices.errors import DeviceBusy, DeviceError, DeviceNotFound
+from educelab.devices.errors import (
+    DeviceBusy,
+    DeviceError,
+    DeviceNotFound,
+    FocusLimitReached,
+)
 from fakes.gphoto2 import FOLDER, NIKON_WIDGETS, FakeCamera, FakeLibrary, jpeg
 
 
@@ -820,3 +825,148 @@ def test_listener_can_close_the_camera_on_disconnection(fast_keep_alive):
     camera.open()
     assert closed.wait(5)
     assert not camera.is_open
+
+
+@pytest.fixture
+def focus_waits(monkeypatch):
+    """Record the focus drive's waits instead of sleeping."""
+    waits = []
+    monkeypatch.setattr(gphoto2, "_wait", waits.append)
+    return waits
+
+
+def focus_of(attached):
+    camera = opened(attached)
+    focus = camera.focus
+    assert focus is not None
+    return camera, focus
+
+
+def test_step_drives_focus_by_that_many_steps(focus_waits):
+    attached = FakeCamera(focus_position=2500)
+    camera, focus = focus_of(attached)
+    focus.step(300)
+    focus.step(-100)
+    camera.close()
+    assert attached.focus_moves == [300.0, -100.0]
+    assert attached.focus_position == 2700
+
+
+def test_large_steps_are_chunked(focus_waits, monkeypatch):
+    monkeypatch.setattr(gphoto2, "FOCUS_CHUNK_STEPS", 1000)
+    attached = FakeCamera(focus_position=2500, focus_travel=10000)
+    camera, focus = focus_of(attached)
+    focus.step(2500)
+    focus.step(-2500)
+    camera.close()
+    assert attached.focus_moves == [1000, 1000, 500, -1000, -1000, -500]
+
+
+def test_chunks_never_exceed_the_widget_range(focus_waits):
+    widgets = [w for w in NIKON_WIDGETS if w.name != "manualfocusdrive"]
+    widgets.append(
+        _gphoto2.Widget(
+            "manualfocusdrive",
+            "MF",
+            "range",
+            0.0,
+            False,
+            (),
+            -200.0,
+            200.0,
+            1.0,
+            section="actions",
+        )
+    )
+    attached = FakeCamera(widgets=widgets)
+    camera, focus = focus_of(attached)
+    focus.step(500)
+    camera.close()
+    assert attached.focus_moves == [200, 200, 100]
+
+
+def test_each_chunk_waits_to_settle(focus_waits, monkeypatch):
+    monkeypatch.setattr(gphoto2, "FOCUS_CHUNK_STEPS", 1000)
+    camera, focus = focus_of(FakeCamera(focus_position=0, focus_travel=10000))
+    focus.step(2500)
+    camera.close()
+    assert focus_waits == pytest.approx([0.6, 0.6, 0.35])
+
+
+@pytest.mark.parametrize(
+    ("steps", "seconds"), [(1, 0.1005), (-1000, 0.6), (5800, 3.0), (32767, 3.0)]
+)
+def test_settle_time_grows_with_the_move_up_to_a_cap(steps, seconds):
+    assert gphoto2.focus_settle_s(steps) == pytest.approx(seconds)
+
+
+def test_busy_focus_drive_is_retried(focus_waits):
+    attached = FakeCamera()
+    camera, focus = focus_of(attached)
+    attached.fail_next("set_config", GP_ERROR_CAMERA_BUSY, GP_ERROR_CAMERA_BUSY)
+    focus.step(100)
+    camera.close()
+    assert attached.focus_moves == [100]
+    assert focus_waits.count(gphoto2.FOCUS_BUSY_WAIT_S) == 2
+
+
+def test_focus_drive_that_stays_busy_raises(focus_waits):
+    attached = FakeCamera()
+    camera, focus = focus_of(attached)
+    attached.fail_next(
+        "set_config", *[GP_ERROR_CAMERA_BUSY] * gphoto2.FOCUS_BUSY_ATTEMPTS
+    )
+    with pytest.raises(DeviceBusy):
+        focus.step(100)
+    camera.close()
+    assert attached.focus_moves == []
+
+
+@pytest.mark.parametrize(
+    ("start", "steps", "limit", "end"),
+    [(4900, 300, "far", 5000), (100, -300, "near", 0)],
+)
+def test_end_stop_raises_focus_limit_reached(focus_waits, start, steps, limit, end):
+    attached = FakeCamera(focus_position=start, focus_travel=5000)
+    camera, focus = focus_of(attached)
+    with pytest.raises(FocusLimitReached) as raised:
+        focus.step(steps)
+    assert raised.value.limit == limit
+    assert (focus.last_limit, focus.focus_steps) == (limit, 0)
+    focus.step(-50 if limit == "far" else 50)
+    assert focus.focus_steps == (-50 if limit == "far" else 50)
+    camera.close()
+    assert attached.focus_position == end + (-50 if limit == "far" else 50)
+
+
+def test_end_stop_stops_the_remaining_chunks(focus_waits, monkeypatch):
+    monkeypatch.setattr(gphoto2, "FOCUS_CHUNK_STEPS", 1000)
+    attached = FakeCamera(focus_position=4500, focus_travel=5000)
+    camera, focus = focus_of(attached)
+    with pytest.raises(FocusLimitReached):
+        focus.step(2500)
+    camera.close()
+    assert attached.focus_moves == [1000]
+
+
+def test_end_stop_drains_events_and_waits_to_recover(focus_waits):
+    attached = FakeCamera(focus_position=4900, focus_travel=5000)
+    camera, focus = focus_of(attached)
+    attached.events.append(Event("unknown", detail="PTP Property d1a6 changed"))
+    with pytest.raises(FocusLimitReached):
+        focus.step(300)
+    camera.close()
+    assert not attached.events
+    assert focus_waits[-1] == gphoto2.FOCUS_LIMIT_RECOVERY_S
+
+
+def test_other_focus_errors_raise_and_lose_the_count(focus_waits):
+    attached = FakeCamera(focus_position=4900, focus_travel=5000)
+    camera, focus = focus_of(attached)
+    with pytest.raises(FocusLimitReached):
+        focus.step(300)
+    attached.fail_next("set_config", GP_ERROR)
+    with pytest.raises(DeviceError, match="focus"):
+        focus.step(-100)
+    camera.close()
+    assert focus.focus_steps is None

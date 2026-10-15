@@ -188,3 +188,38 @@ leaving PC mode. **assumed**, from the prototype; whether the Z7 II needs it at 
 - A file added between captures (a late JPEG, or a shot taken on the camera itself) is
   logged and left on the card, as during a capture.
 - `close()` stops the thread before ending the session.
+
+## Focus drive
+
+`camera.focus` is a `FocusDrive` when the camera's config tree has a range-type
+`manualfocusdrive` widget (Nikon and Sony bodies), and `None` otherwise. Writing a
+number to the widget drives the lens motor by that many steps, positive toward far.
+Canon bodies have a choice-type `manualfocusdrive` (`Near 1`–`3`, `Far 1`–`3`), which this
+driver doesn't support yet.
+
+Everything below comes from `usb-dslr-capture-demo` (`origin/ankan:capture-gui.py`),
+tested on a Sony a6300. All of it is **assumed** for the Z7 II until Phase 5 checks it.
+
+- **Direction**: positive steps move toward far (infinity).
+- **End stops**: a move into an end stop fails with `-113` (`GP_ERROR_CAMERA_ERROR`). The
+  driver raises `FocusLimitReached` for `-113`, choosing near or far from the direction
+  of the move. `-113` is libgphoto2's generic camera error, so on a body that reports
+  end stops differently, or fails with `-113` for another reason, this would misreport.
+  Confirm the code on the Z7 II.
+- **After an end stop**, the camera queues events about the failed move. The driver
+  reads them and waits `FOCUS_LIMIT_RECOVERY_S` (1 s) before the next command, which is
+  what kept the a6300 responsive.
+- **Busy**: a move sent while the motor is still turning fails with `-110`
+  (`GP_ERROR_CAMERA_BUSY`). The driver retries up to `FOCUS_BUSY_ATTEMPTS` (15) times,
+  `FOCUS_BUSY_WAIT_S` (0.5 s) apart, then raises `DeviceBusy`.
+- **Settle time**: after each write the driver waits 100 ms + 0.5 ms per step, capped at
+  3 s (`focus_settle_s()`).
+- **Chunks**: `step(n)` writes at most `FOCUS_CHUNK_STEPS` (1000) steps at a time, and
+  never more than the widget's range allows. `drive_to_limit()` writes chunks as large
+  as the widget's range allows until it hits the end stop, and gives up after
+  `FOCUS_LIMIT_MAX_STEPS` (1,000,000).
+- **Step size**: how many steps span the Z7 II's focus range, and whether a step is the
+  same size in both directions, is **unknown**. The a6300's range was never measured.
+- **Live view**: the original code paused live view while seeking a limit, to avoid
+  deadlocks. Focus moves here hold the camera's lock, so a preview can't interleave with
+  them; whether the Z7 II still needs live view off is **unknown**.

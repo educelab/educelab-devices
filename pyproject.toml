@@ -22,6 +22,9 @@ classifiers = [
 ]
 dependencies = ["numpy>=1.26"]
 
+# Each driver track adds its vendor SDK as an extra named for its backend.
+[project.optional-dependencies]
+
 [project.scripts]
 el-devices = "educelab.devices.app.cli:main"
 

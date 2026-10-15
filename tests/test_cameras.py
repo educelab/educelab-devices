@@ -1,3 +1,4 @@
+import math
 from collections.abc import Mapping
 from datetime import UTC, datetime
 
@@ -50,9 +51,7 @@ class StubCamera(FrameCamera):
     def _preview_frame(self) -> npt.NDArray[np.uint8]:
         return np.zeros((4, 4), dtype=np.uint8)
 
-    def _capture_frame(
-        self, not_before: datetime | None, timeout: float | None
-    ) -> Frame:
+    def _capture_frame(self, not_before: datetime | None, timeout: float) -> Frame:
         self.capture_args = (not_before, timeout)
         return Frame(np.zeros((4, 4), np.uint16), "Mono16", datetime.now(UTC))
 
@@ -132,18 +131,33 @@ def test_camera_methods_need_open_device():
 
 def test_capture_frame_returns_frame(camera):
     assert camera.capture_frame().pixels.shape == (4, 4)
-    assert camera.capture_args == (None, None)
+    assert camera.capture_args == (None, camera.capture_timeout)
 
 
-def test_capture_frame_passes_not_before_as_utc_datetime(camera):
-    camera.capture_frame(not_before=1_700_000_000.0, timeout=2.0)
-    assert camera.capture_args == (datetime.fromtimestamp(1_700_000_000, UTC), 2.0)
+def test_capture_frame_passes_timeout_through(camera):
+    camera.capture_frame(timeout=2.0)
+    assert camera.capture_args == (None, 2.0)
+
+
+def test_capture_frame_accepts_infinite_timeout(camera):
+    camera.capture_frame(timeout=math.inf)
+    assert camera.capture_args == (None, math.inf)
+
+
+def test_capture_frame_rejects_nan_timeout(camera):
+    with pytest.raises(ValueError, match="timeout"):
+        camera.capture_frame(timeout=math.nan)
 
 
 def test_capture_frame_passes_aware_datetime_through(camera):
     when = datetime(2026, 10, 15, tzinfo=UTC)
     camera.capture_frame(not_before=when)
-    assert camera.capture_args == (when, None)
+    assert camera.capture_args == (when, camera.capture_timeout)
+
+
+def test_capture_frame_rejects_float_not_before(camera):
+    with pytest.raises(TypeError, match="datetime"):
+        camera.capture_frame(not_before=1_700_000_000.0)
 
 
 def test_capture_frame_rejects_naive_not_before(camera):

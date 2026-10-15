@@ -191,6 +191,7 @@ code.
 | Pin origins on stages | Stages use machine coordinates (ADR 0003). Offsets belong to the consumer |
 | Home on connect | Homing moves hardware and is always an explicit `home()` |
 | Decode raw camera files | Cameras return files exactly as produced (ADR 0002). Decode the bytes in memory if you need pixels |
+| Guess at state the hardware can't report | A wrong guess (e.g. that a turntable was power-cycled because it reads 0) is worse than a documented habit. The hardware doc says what can't be detected |
 | Retry commands | Whether a retry is safe depends on the device and on what the consumer is doing |
 | Sequence a capture or manage a rig | Rigs and workflows belong to consumers |
 | Offer framework wrappers | Qt or asyncio wrappers live in consumers until two of them need the same one (ADR 0001) |

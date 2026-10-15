@@ -95,7 +95,10 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
 
 ### Tasks
 
-- [~] Task 4.1: Fold the relevant `CLIENT_GUIDE.md` content into `docs/hardware/foldio360.md` and `docs/guide.md`.
+- [x] Task 4.1: Fold the relevant `CLIENT_GUIDE.md` content into `docs/hardware/foldio360.md` and `docs/guide.md`.
+  - Into the hardware doc: a Transport > Connecting subsection (scan vs. direct-connect times, caching the address with a short `connect_timeout` and scan fallback, the macOS empty-scan ambiguity), two Timing rows (scan window, `get_position` round trip), consumer rules under State and recovery (don't chase the last degree, a position shows a move was commanded, don't guess at power cycles, when a cached position is sound), a Hazards item for jogs outliving their process, and Driver behavior items for errors, the transport seam, and offering `KNOWN_GOOD_FRAMES` in a UI.
+  - Into `docs/guide.md`: a §8 row for not guessing at state the hardware can't report.
+  - Left out as already covered by the guide or superseded by the `Stage` API: lifecycle, the `AUTO` timeout convention, the origin API, `rotate`/`cancel`/`jogging`, `wait=False` brightness, the generator form of `run`, and the "no lock" concurrency rule (the driver now has one).
   - Deviation: `CLIENT_GUIDE.md` §2 notes that bleak's own exceptions escaped `connect()` unwrapped. The guide promises a `DeviceError` for hardware and connection problems, so the transport now wraps them: a connection timeout becomes `DeviceTimeout`, any other connection failure `DeviceNotFound`, and a failed write `NotConnected`. Writing the tests exposed a real bug: on Python 3.11+, `concurrent.futures.TimeoutError` is the builtin `TimeoutError`, so `_LoopThread.call()` mistook a coroutine's own timeout (e.g. bleak's connect timeout) for its wait expiring and crashed formatting `None`. Fixed.
 - [ ] Task 4.2: Add the `el-devices foldio` subcommand.
 

@@ -423,6 +423,8 @@ Other timings the driver relies on:
 | Gap below which an ack can be lost | ~100 ms | [rotate](#rotate), [set_bright](#set_bright) |
 | Spacing between the two cancels of a blind stop | 150 ms | Clears the ~100 ms window above |
 | Brightness write pacing for reliable acks | ~50 ms | [set_bright](#set_bright) |
+| Default limit for a rotation | `2 × predicted + 1 s`, per leg | The watchdog above; loose because speeds 2 and 3 are assumed |
+| Quiet time before stray replies count as drained | 300 ms | Replies arrive within ~200 ms |
 
 ## State and recovery
 
@@ -472,6 +474,30 @@ Consequences for a client:
   ([run / continue / ir_shutter](#run--continue--ir_shutter)).
 - **Acks are dropped** under back-to-back writes, which desyncs a client that waits for
   every one ([Command/response pairing](#commandresponse-pairing)).
+
+## Driver behavior
+
+How `Foldio360` maps the protocol onto the `Stage` role:
+
+- **Axis.** One wrapping rotary axis, `"theta"`, in degrees. Its machine coordinate is
+  the firmware's position counter, so it inherits everything in
+  [State and recovery](#state-and-recovery). `can_home` is false: the counter has no
+  hardware reference.
+- **Whole degrees.** The counter counts whole degrees, so the driver rounds every target
+  and offset to the nearest degree, and a move counts as arrived when `get_position`
+  reads within ±1° of the target (decided 2026-10-15, from the counter's ±1° resolution
+  in [get_position / get_bright](#get_position--get_bright)). A reading further off
+  raises `PositionError`. `position()` always reports whole degrees.
+- **Moves.** `move_to` reads the counter and turns the shorter way; an exact half-turn
+  goes counter-clockwise. `move_by` is literal: `+720` turns twice. Turns longer than one
+  revolution are sent as rotations of at most 360°, because rotations up to 380° are
+  verified and longer ones untried.
+- **Timeouts.** With `timeout=None`, each rotation's limit is the watchdog from
+  [Timing](#timing), not `Stage.move_timeout`. A rotation that outlives its limit is
+  cancelled, the counter is re-read, and `DeviceTimeout` is raised.
+- **Speed.** `speed()` lists the firmware's three speeds as deg/s, the reciprocal of each
+  speed's timing slope: about 7.30, 9.71, and 14.68 deg/s. Speeds 2 and 3 are
+  **assumed**, like their timing fits.
 
 ## Notes for a client
 

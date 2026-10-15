@@ -39,7 +39,13 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
 
 ### Tasks
 
-- [~] Task 2.1: Write tests for the `"theta"` axis, `move_to` shortest path, literal `move_by`, default timeouts, and arrival verification; implement on the `Stage` hooks.
+- [x] Task 2.1: Write tests for the `"theta"` axis, `move_to` shortest path, literal `move_by`, default timeouts, and arrival verification; implement on the `Stage` hooks.
+  - `Foldio360` is now the `Stage` itself (exported from `educelab.devices.stages`); the old client methods (`rotate`, `rotate_by`, `get_status`, `get_position`, `get_device_position`, `cancel`, the origin API) are gone, so Task 2.4's origin removal landed here. `get_brightness`/`set_brightness` stay as public, locked methods until the halo replaces them in Phase 3.
+  - `timeout=None` is detected by overriding the base's private `_timeout()` to return `inf`, which the hooks turn into the per-leg watchdog. No change to the `Stage` ABC.
+  - Turns over 360° are split into legs of at most 360° (rotations over 380° are untried), each verified on arrival.
+  - Speeds are `1 / slope` deg/s for levels 1–3 (≈7.30, 9.71, 14.68).
+  - The fake transport now emulates the firmware (position counter, held moves, cancel behavior) instead of only replaying scripts; scripted replies still override it.
+  - The jog/stop/position code went in with this task, since the hooks are abstract; Tasks 2.2 and 2.3 add their tests.
 - [ ] Task 2.2: Write tests for `jog`/`stop`, including `stop()` from another thread during a move and stray-reply draining; implement.
 - [ ] Task 2.3: Write tests for `position()` during a move (returns last known, doesn't block); implement.
 - [ ] Task 2.4: Remove the origin API; add the device lock.

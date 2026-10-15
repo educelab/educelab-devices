@@ -69,10 +69,11 @@ closed one. A closed device can be opened again.
 
 ## 3. Blocking and timeouts
 
-Long operations take a `timeout` in seconds. `None` means the device's default (for
-stages, `Stage.move_timeout`; for frame cameras, `FrameCamera.capture_timeout`). Pass
-`math.inf` to wait indefinitely. A device that doesn't finish in time raises
-`DeviceTimeout`, which is also a `TimeoutError`.
+Long operations take a `timeout` in seconds. `None` means the device's default: for
+stages, `Stage.move_timeout`, or, on stages that can predict a move's duration (the
+Foldio360), a limit derived from that prediction; for frame cameras,
+`FrameCamera.capture_timeout`. Pass `math.inf` to wait indefinitely. A device that
+doesn't finish in time raises `DeviceTimeout`, which is also a `TimeoutError`.
 
 Pass your own timeout when you know something the default doesn't, e.g. a heavy load
 that accelerates slowly, or a test where you'd rather fail fast. Defaults are deliberately
@@ -263,6 +264,11 @@ Otherwise they report the last value set since `open()`, or `None` if nothing ha
 `speed()` is a `Setting` named `"speed"`, in mm/s if the stage has any linear axis and deg/s
 if it is rotary only. Stages with fixed speeds (the Foldio360) list them as `choices`;
 others (GRBL feed rates) give a range. `set_speed()` applies to later moves and jogs.
+
+Positions are only as fine as the hardware counts them. A stage that counts whole degrees
+(the Foldio360) rounds targets to the nearest degree and accepts a move that lands within
+±1° of it, so compare its positions with that tolerance, not exactly. The stage's hardware
+doc gives its resolution.
 
 
 `can_home` says the stage has a hardware reference, such as limit switches, that `home()`

@@ -1,4 +1,4 @@
-"""Offline tests for the Foldio360 driver, against a scripted fake transport.
+"""Offline tests for the Foldio360 driver, against a fake transport.
 
 They cover the command/response pairing hazards and the client-side validation
 documented in docs/hardware/foldio360.md.
@@ -11,15 +11,37 @@ from pathlib import Path
 
 import pytest
 
-from educelab.devices.errors import CommandRejected, DeviceTimeout
+from educelab.devices.errors import (
+    CommandRejected,
+    DeviceTimeout,
+    PositionError,
+)
+from educelab.devices.stages import Stage
 from educelab.devices.stages import foldio360 as f
-from educelab.devices.stages.foldio360 import CCW, CW, Foldio360
-from fakes.foldio360 import TIMEOUT, FakeNusTransport
+from educelab.devices.stages.foldio360 import Foldio360
+from fakes.foldio360 import FIRMWARE, TIMEOUT, FakeNusTransport
 
 
-def table(replies=None) -> tuple[Foldio360, FakeNusTransport]:
-    transport = FakeNusTransport(replies)
-    return Foldio360(transport=transport), transport
+@pytest.fixture(autouse=True)
+def fast_settle(monkeypatch):
+    """Shrink the driver's waits for stray replies and between cancels."""
+    monkeypatch.setattr(f, "_SETTLE_QUIET_S", 0.02)
+    monkeypatch.setattr(f, "_CANCEL_SPACING_S", 0.0)
+
+
+def table(replies=None, **fake) -> tuple[Foldio360, FakeNusTransport]:
+    """An open turntable on a fake transport, with the open traffic cleared."""
+    transport = FakeNusTransport(replies, **fake)
+    dev = Foldio360(transport=transport)
+    dev.open()
+    transport.sent.clear()
+    return dev, transport
+
+
+def sequence(*replies: str):
+    """A scripted reply that steps through ``replies``, then repeats the last."""
+    remaining = list(replies)
+    return lambda: remaining.pop(0) if len(remaining) > 1 else remaining[0]
 
 
 def connected_transport() -> f.NusTransport:
@@ -29,51 +51,267 @@ def connected_transport() -> f.NusTransport:
     return transport
 
 
-# -- validation: FAIL doesn't say which argument was wrong, so the client checks --
+# -- the stage ---------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "call",
-    [
-        lambda d: d.rotate("Left", 90),  # the app's label
-        lambda d: d.rotate(CW, 90, speed=4),
-        lambda d: d.rotate(CW, 0),  # untested on the device
-        lambda d: d.rotate(CW, -5),
-        lambda d: d.rotate(CW, 1.5),
-        lambda d: d.set_brightness(101),
-        lambda d: d.set_brightness(-1),
-    ],
-)
-def test_invalid_arguments_raise_before_sending(call):
+def test_is_a_stage_with_one_wrapping_rotary_axis():
+    dev = Foldio360(transport=FakeNusTransport())
+    assert isinstance(dev, Stage)
+    (axis,) = dev.axes
+    assert axis.name == "theta"
+    assert axis.unit == "deg"
+    assert axis.wraps
+    assert not dev.can_home
+    assert not dev.requires_homing
+
+
+def test_constructor_touches_nothing():
+    transport = FakeNusTransport()
+    Foldio360(transport=transport)
+    assert not transport.connected
+    assert transport.sent == []
+
+
+def test_open_reads_firmware_and_position():
+    transport = FakeNusTransport(angle=123)
+    with Foldio360(transport=transport) as dev:
+        assert transport.sent == ["get_status", "get_position"]
+        assert dev.info.firmware_version == FIRMWARE
+        assert dev.info.backend == "foldio360"
+        assert dev.info.address == "FA:KE"
+        assert dev.position() == {"theta": 123.0}
+    assert not transport.connected
+
+
+def test_home_is_not_supported():
     dev, t = table()
-    with pytest.raises(ValueError):
-        call(dev)
+    with pytest.raises(NotImplementedError):
+        dev.home()
     assert t.sent == []
 
 
-def test_rotate_wire_format_passes_speed_for_any_angle():
+def test_no_origin_api():
+    dev = Foldio360(transport=FakeNusTransport())
+    for name in ("origin", "set_origin", "clear_origin", "get_position"):
+        assert not hasattr(dev, name), name
+
+
+@pytest.mark.parametrize(
+    ("current", "target", "command"),
+    [
+        (10, 350, "rotate(CCW,20,1,1)"),  # not +340
+        (350, 10, "rotate(CW,20,1,1)"),  # not -340
+        (0, 180, "rotate(CCW,180,1,1)"),  # a tie, broken counter-clockwise
+        (0, 450, "rotate(CW,90,1,1)"),  # absolute: 450 is 90
+    ],
+)
+def test_move_to_takes_the_short_way(current, target, command):
+    dev, t = table(angle=current)
+    dev.move_to({"theta": target})
+    assert t.sent == ["get_position", command, "get_position"]
+    assert dev.position()["theta"] == target % 360
+
+
+def test_move_to_current_position_sends_no_rotation():
+    dev, t = table(angle=90)
+    dev.move_to({"theta": 90.0})
+    assert t.sent == ["get_position"]
+
+
+def test_move_to_rounds_to_whole_degrees():
     dev, t = table()
-    dev.rotate(CCW, 25, speed=3)
-    assert t.sent == ["rotate(CCW,25,3,1)"]
+    dev.move_to({"theta": 44.6})
+    assert "rotate(CW,45,1,1)" in t.sent
+    assert dev.position() == {"theta": 45.0}
+    dev.move_to({"theta": 45.4})
+    assert t.sent.count("rotate(CW,45,1,1)") == 1, "45.4 rounds to where it is"
+
+
+def test_move_by_is_literal():
+    dev, t = table()
+    dev.move_by({"theta": 720.0})
+    rotations = [c for c in t.sent if c.startswith("rotate")]
+    assert rotations == ["rotate(CW,360,1,1)", "rotate(CW,360,1,1)"], "+720 turns twice"
+    assert dev.position() == {"theta": 0.0}
+
+
+def test_move_by_negative_and_rounded():
+    dev, t = table(angle=100)
+    dev.move_by({"theta": -25.4})
+    assert "rotate(CCW,25,1,1)" in t.sent
+    assert dev.position() == {"theta": 75.0}
+
+
+def test_move_by_less_than_half_a_degree_sends_nothing():
+    dev, t = table()
+    dev.move_by({"theta": 0.4})
+    assert not [c for c in t.sent if c.startswith("rotate")]
+
+
+def test_large_turns_split_into_legs_of_at_most_one_revolution():
+    dev, t = table()
+    dev.move_by({"theta": -800.0})
+    rotations = [c for c in t.sent if c.startswith("rotate")]
+    assert rotations == [
+        "rotate(CCW,360,1,1)",
+        "rotate(CCW,360,1,1)",
+        "rotate(CCW,80,1,1)",
+    ]
+    assert dev.position() == {"theta": 280.0}
+
+
+def test_arrival_is_verified():
+    dev, t = table()
+    replies = sequence("0", "50")  # before the move, then 40 degrees short
+    t._replies["get_position"] = replies
+    with pytest.raises(PositionError, match="50"):
+        dev.move_to({"theta": 90.0})
+    assert dev.position() == {"theta": 50.0}
+
+
+def test_arrival_within_one_degree_is_accepted():
+    dev, t = table()
+    replies = sequence("0", "91")
+    t._replies["get_position"] = replies
+    dev.move_to({"theta": 90.0})
+    assert dev.position() == {"theta": 91.0}
+
+
+def test_arrival_tolerance_wraps_through_zero():
+    dev, t = table(angle=10)
+    replies = sequence("10", "359")
+    t._replies["get_position"] = replies
+    dev.move_to({"theta": 0.0})
+    assert dev.position() == {"theta": 359.0}
+
+
+def test_default_timeout_comes_from_the_timing_model(monkeypatch):
+    limits = []
+    dev, t = table()
+    real_read = t.read
+
+    def read(timeout):
+        limits.append(timeout)
+        return real_read(timeout)
+
+    monkeypatch.setattr(t, "read", read)
+    monkeypatch.setattr(f, "_POLL_S", 1e9)  # one read per wait, so we see its limit
+    dev.move_to({"theta": 90.0})
+    assert max(limits) == pytest.approx(f.watchdog_seconds(90, 1), abs=0.05)
+
+
+def test_explicit_timeout_bounds_the_move():
+    dev, t = table(hold_moves=True)
+    with pytest.raises(DeviceTimeout):
+        dev.move_to({"theta": 90.0}, timeout=0.1)
+    assert "cancel(1)" in t.sent, "a move that timed out is cancelled"
+    assert dev.position() == {"theta": 45.0}, "and its position re-read"
+
+
+def test_timeout_drops_late_replies():
+    dev, t = table(hold_moves=True, cancel_acks_move=True)
+    with pytest.raises(DeviceTimeout):
+        dev.move_to({"theta": 90.0}, timeout=0.1)
+    t.hold_moves = False
+    dev.move_to({"theta": 100.0})
+    assert dev.position() == {"theta": 100.0}
+
+
+def test_speed_lists_the_three_firmware_speeds_in_degrees_per_second():
+    dev, _ = table()
+    speed = dev.speed()
+    assert speed.name == "speed"
+    assert speed.unit == "deg/s"
+    assert speed.choices == tuple(1 / f.SLOPE_S_PER_DEG[s] for s in (1, 2, 3))
+    assert speed.value == speed.choices[0]
+
+
+def test_set_speed_applies_to_later_moves():
+    dev, t = table()
+    fastest = max(dev.speed().choices)
+    dev.set_speed(fastest)
+    assert dev.speed().value == fastest
+    dev.move_by({"theta": 25.0})
+    assert "rotate(CW,25,3,1)" in t.sent
+
+
+def test_set_speed_rejects_other_speeds():
+    dev, _ = table()
+    with pytest.raises(ValueError):
+        dev.set_speed(10.0)
+
+
+def test_fail_raises_command_rejected():
+    dev, _ = table({"rotate(CW,90,1,1)": "FAIL"})
+    with pytest.raises(CommandRejected):
+        dev.move_to({"theta": 90.0})
+
+
+def test_unexpected_reply_to_a_move():
+    dev, _ = table({"rotate(CW,90,1,1)": "7"})
+    with pytest.raises(f.UnexpectedResponse):
+        dev.move_to({"theta": 90.0})
+
+
+def test_position_out_of_range_is_unexpected():
+    with pytest.raises(f.UnexpectedResponse):
+        Foldio360(transport=FakeNusTransport({"get_position": "400"})).open()
+
+
+def test_open_failure_closes_the_transport():
+    transport = FakeNusTransport({"get_status": "FAIL"})
+    dev = Foldio360(transport=transport)
+    with pytest.raises(CommandRejected):
+        dev.open()
+    assert not dev.is_open
+    assert not transport.connected
 
 
 def test_rotate_sends_no_trailing_cancel():
     """The app's post-move cancel is bookkeeping, not protocol."""
     dev, t = table()
-    dev.rotate(CW, 90, speed=1)
-    assert t.sent == ["rotate(CW,90,1,1)"]
+    dev.move_to({"theta": 90.0})
+    assert not [c for c in t.sent if c.startswith("cancel")]
 
 
-def test_position_is_read_from_the_device():
-    dev, t = table({"get_position": "301"})
-    assert dev.get_position() == 301
-    assert t.sent == ["get_position"]
-    assert not hasattr(dev, "set_position"), "position is read-only on the device"
+# -- halo brightness (becomes the halo Light in Phase 3) ------------------------
+
+
+@pytest.mark.parametrize("level", [101, -1, 1.5])
+def test_brightness_is_validated_before_sending(level):
+    dev, t = table()
+    with pytest.raises(ValueError):
+        dev.set_brightness(level)
+    assert t.sent == []
+
+
+def test_get_brightness():
+    dev, t = table()
+    t.brightness = 37
+    assert dev.get_brightness() == 37
+    assert t.sent == ["get_bright"]
+
+
+def test_brightness_fire_and_forget_does_not_wait():
+    dev, t = table({"set_bright(50)": TIMEOUT})
+    dev.set_brightness(50, wait=False)  # would raise if it waited
+    assert t.sent == ["set_bright(50)"]
+
+
+def test_fire_and_forget_ack_is_not_read_as_the_next_reply():
+    dev, t = table()
+    dev.set_brightness(50, wait=False)
+    t.angle = 42
+    assert dev.get_brightness() == 50
+    dev.move_to({"theta": 42.0})
+    assert t.sent[-1] == "get_position"
+
+
+# -- protocol helpers and the transport ---------------------------------------
 
 
 def test_driver_touches_no_disk():
-    """The driver holds state in memory only; an origin cached to disk outlives
-    the firmware counter it refers to."""
+    """The driver holds state in memory only (ADR 0003)."""
     tree = ast.parse(Path(f.__file__).read_text(encoding="utf-8"))
     imported = set()
     for node in ast.walk(tree):
@@ -101,165 +339,6 @@ def test_driver_touches_no_disk():
     assert "open" not in calls
 
 
-def test_origin_shifts_the_frame():
-    dev, _ = table({"get_position": "100"})
-    assert dev.origin is None
-    assert dev.get_position() == 100
-    assert dev.set_origin() == 100
-    assert dev.get_position() == 0
-    assert dev.get_device_position() == 100
-    dev.set_origin(30)
-    assert dev.get_position() == 70
-    dev.set_origin(150)
-    assert dev.get_position() == 310  # wraps, never negative
-    with pytest.raises(TypeError):
-        dev.set_origin(1.5)
-    dev.clear_origin()
-    assert dev.origin is None
-    assert dev.get_position() == 100
-
-
-def test_origin_validates_on_assignment():
-    dev, t = table({"get_position": "10"})
-    with pytest.raises(TypeError):
-        dev.origin = 1.5
-    with pytest.raises(TypeError):
-        dev.origin = "90"
-    assert dev.origin is None, "a rejected assignment must not land"
-    dev.origin = 400
-    assert dev.origin == 40
-    dev.origin = -30
-    assert dev.origin == 330
-    assert dev.get_position() == 40
-    dev.origin = None
-    assert dev.origin is None
-    assert t.sent == ["get_position"], "setting an origin is client-side only"
-
-
-def test_origin_zero_is_pinned_not_absent():
-    dev, _ = table({"get_position": "0"})
-    assert dev.set_origin() == 0
-    assert dev.origin is not None, "0 must not read as 'no origin pinned'"
-    dev.clear_origin()
-    assert dev.origin is None
-
-
-def test_home_goes_to_the_origin():
-    dev, t = table({"get_position": "100"})
-    dev.set_origin(90)
-    assert dev.get_position() == 10
-    assert dev.home(speed=3) == -10
-    assert t.sent[-1] == "rotate(CCW,10,3,1)"
-
-
-def test_rotate_by_signs():
-    """Positive is clockwise, the direction get_position counts up."""
-    dev, t = table()
-    dev.rotate_by(25, speed=3)
-    dev.rotate_by(-25, speed=3)
-    assert t.sent == ["rotate(CW,25,3,1)", "rotate(CCW,25,3,1)"]
-    dev.rotate_by(0)
-    assert len(t.sent) == 2, "a zero turn sends nothing"
-    with pytest.raises(TypeError):
-        dev.rotate_by(1.5)
-
-
-@pytest.mark.parametrize(
-    ("current", "target", "expected"),
-    [
-        ("10", 350, -20),
-        ("350", 10, 20),
-        ("0", 180, -180),  # exact half-turn: a tie, broken counter-clockwise
-        ("90", 90, 0),
-    ],
-)
-def test_move_to_takes_the_short_way(current, target, expected):
-    dev, t = table({"get_position": current})
-    assert dev.move_to(target) == expected
-    if expected == 0:
-        assert t.sent == ["get_position"], "a zero move must not be sent"
-
-
-def test_home_is_move_to_zero():
-    dev, t = table({"get_position": "300"})
-    assert dev.home(speed=2) == 60
-    assert t.sent == ["get_position", "rotate(CW,60,2,1)"]
-
-
-def test_fail_raises_command_rejected():
-    dev, _ = table({"rotate(CW,90,1,1)": "FAIL"})
-    with pytest.raises(CommandRejected):
-        dev.rotate(CW, 90)
-    dev2, _ = table({"get_position": "FAIL"})
-    with pytest.raises(CommandRejected):
-        dev2.get_position()
-
-
-def test_get_brightness():
-    dev, t = table({"get_bright": "37"})
-    assert dev.get_brightness() == 37
-    assert t.sent == ["get_bright"]
-
-
-def test_timeout_stops_the_motor_then_raises():
-    dev, t = table({"rotate(CW,90,1,1)": TIMEOUT})
-    with pytest.raises(DeviceTimeout):
-        dev.rotate(CW, 90)
-    assert t.sent == ["rotate(CW,90,1,1)", "cancel(1)"]
-    assert t.drained >= 1, "a late reply must be discarded"
-
-
-def test_jog_acks_on_spin_up_and_cancel_picks_its_mode():
-    dev, t = table()
-    dev.jog(CW, speed=2)
-    assert t.sent == ["rotate(CW,0,2,0)"]
-    assert dev.jogging
-    dev.cancel()
-    assert t.sent[-1] == "cancel(0)"
-    assert not dev.jogging
-    dev2, t2 = table()
-    dev2.cancel()
-    assert t2.sent == ["cancel(1)"]
-
-
-def test_cancel_mode_is_selectable():
-    dev, t = table()
-    dev.cancel(f.MODE_JOG)
-    dev.cancel(f.MODE_FIXED)
-    assert t.sent == ["cancel(0)", "cancel(1)"]
-
-
-def test_stop_sends_both_cancels(monkeypatch):
-    monkeypatch.setattr(f.time, "sleep", lambda _s: None)
-    dev, t = table()
-    dev.stop()
-    assert t.sent == ["cancel(0)", "cancel(1)"]
-
-
-def test_brightness_fire_and_forget_does_not_wait():
-    dev, t = table({"set_bright(50)": TIMEOUT})
-    dev.set_brightness(50, wait=False)  # would raise if it waited
-    assert t.sent == ["set_bright(50)"]
-
-
-def test_fire_and_forget_ack_is_not_read_as_the_next_reply():
-    dev, t = table({"get_position": "42"})
-    dev.set_brightness(50, wait=False)
-    assert t.drained == 0, "the ack may still land; nothing to drain yet"
-    assert dev.get_position() == 42
-    assert t.drained == 1, "the stray ack must be cleared before the next command"
-    dev.get_position()
-    assert t.drained == 1, "and only once"
-
-
-def test_unexpected_response():
-    dev, _ = table({"get_status": "OK"})
-    assert dev.get_status() == "OK"  # get_status is not OK-checked
-    dev2, _ = table({"rotate(CW,90,1,1)": "7"})
-    with pytest.raises(f.UnexpectedResponse):
-        dev2.rotate(CW, 90)
-
-
 def test_timing_model_reproduces_the_published_fit():
     assert f.predicted_move_seconds(380, 1) == pytest.approx(52.18, abs=0.02)
     assert f.predicted_move_seconds(90, 1) == pytest.approx(12.47, abs=0.05)
@@ -284,14 +363,7 @@ def test_transport_read_times_out_with_device_timeout():
         t.read(0.01)
 
 
-def test_close_never_raises():
-    class Exploding(FakeNusTransport):
-        def close(self):
-            raise RuntimeError("link already gone")
-
-    dev = Foldio360(transport=Exploding())
-    with pytest.raises(RuntimeError):
-        dev.close()  # the fake is free to be rude
+def test_transport_close_never_raises():
     t = f.NusTransport()
     t.close()  # never connected: a no-op
     t.close()

@@ -11,21 +11,27 @@ we are of it, in ``docs/hardware/foldio360.md``.
 import asyncio
 import concurrent.futures
 import logging
+import math
 import queue
 import re
 import threading
 import time
-from collections.abc import Callable, Coroutine
-from typing import Any, Self, TypeVar
+from collections.abc import Callable, Coroutine, Mapping
+from typing import Any, NoReturn, TypeVar
 
+from educelab.devices.device import DeviceInfo, synchronized
 from educelab.devices.errors import (
     CommandRejected,
+    DeviceBusy,
     DeviceError,
     DeviceNotFound,
     DeviceTimeout,
     NotConnected,
+    PositionError,
     import_optional,
 )
+from educelab.devices.settings import Setting
+from educelab.devices.stages.base import Axis, AxisKind, Stage
 
 __all__ = [
     "CCW",
@@ -75,10 +81,6 @@ MODE_JOG = 0
 # those, used wherever the timing model does not apply.
 ACK_TIMEOUT_S = 5.0
 
-# Timeout sentinel: None disables the watchdog, AUTO derives it from the timing
-# model, and a number is taken as seconds.
-AUTO = -1
-
 # The four reply shapes (hardware doc, Response grammar). Anything else is the
 # head of a fragmented reply.
 _RESPONSE = re.compile(r"^(?:OK|FAIL|\d+|V\d+\.\d+\.\d+_\S+)$")
@@ -90,6 +92,28 @@ _FRAGMENT_GRACE_S = 0.25
 # A complete `3` and the head of `302` are the same bytes, so a digits-only
 # reply gets a brief settle before it is believed.
 _NUMERIC_SETTLE_S = 0.030
+
+# Sustained rate of each firmware speed, the reciprocal of its timing slope.
+# Speeds 2 and 3 are assumed (hardware doc, Timing).
+_DEG_PER_S = {level: 1 / SLOPE_S_PER_DEG[level] for level in SPEEDS}
+
+_THETA = "theta"
+_AXES = (Axis(_THETA, AxisKind.ROTARY, wraps=True),)
+
+# The counter counts whole degrees and is good to ±1° (hardware doc,
+# get_position / get_bright), so that is how close a move must land.
+_ARRIVAL_TOLERANCE_DEG = 1
+
+# Rotations up to 380° are verified; longer ones are untried (hardware doc,
+# Open questions), so longer turns are split into legs of one revolution.
+_MAX_LEG_DEG = 360
+
+# How often a move waiting for its OK checks for stop().
+_POLL_S = 0.05
+
+# After a cancel or a fire-and-forget write, how long the link must be silent
+# before stray replies count as drained. Replies come within ~200 ms.
+_SETTLE_QUIET_S = 0.3
 
 # Two cancels stop motion of an unknown mode; they must be spaced past the
 # ~100 ms window in which back-to-back commands cost an ack (hardware doc, rotate).
@@ -310,15 +334,17 @@ class NusTransport:
             logger.debug("Foldio360 stop_notify failed", exc_info=True)
         await self._client.disconnect()
 
-    def send(self, command: str) -> None:
+    def send(self, command: str | bytes) -> None:
         """Write a command, chunked at the 20-byte payload ceiling.
 
-        Uses unacknowledged writes, matching the official app.
+        Takes bytes for commands that aren't ASCII (``set_signal``). Uses
+        unacknowledged writes, matching the official app.
         """
         if not self.connected or self._loop is None:
             raise NotConnected("Foldio360 is not connected; call connect() first")
         logger.debug("-> %r", command)
-        self._loop.call(self._write(command.encode("ascii")), timeout=10.0)
+        payload = command.encode("ascii") if isinstance(command, str) else command
+        self._loop.call(self._write(payload), timeout=10.0)
 
     async def _write(self, payload: bytes) -> None:
         for start in range(0, len(payload), MAX_PAYLOAD):
@@ -378,220 +404,202 @@ class NusTransport:
                 return
 
 
-class Foldio360:
-    """The Foldio360 turntable and its halo LED ring.
+class Foldio360(Stage):
+    """The Foldio360 turntable, as a stage with one wrapping rotary axis.
 
-    Exactly one command is outstanding at a time, and every method blocks until
-    the device replies; for a move that is when motion finishes, which can take
-    most of a minute. Only one BLE central may hold the link, so close the
-    official app before connecting.
+    The axis is ``"theta"``, in degrees, counted clockwise by the turntable's
+    own position counter. That counter has no hardware reference: it re-zeros
+    wherever the platter sits at power-on, so the stage can't home (ADR 0003).
+
+    Positions are whole degrees. Targets are rounded to the nearest degree,
+    and a move counts as arrived when the counter reads within 1° of the
+    target; otherwise it raises `PositionError`.
+
+    With ``timeout=None``, a move's limit comes from the predicted move time
+    (`watchdog_seconds`) rather than `move_timeout`. Turns longer than one
+    revolution are made as several rotations of at most 360°.
+
+    Only one BLE central may hold the link, so close the official app before
+    opening. See ``docs/hardware/foldio360.md`` for everything the driver
+    relies on.
 
     Args:
         address: BLE address, or ``None`` to scan for the turntable.
         name: Advertised name to match when scanning.
         scan_timeout: Seconds to scan for.
-        transport: Replaces the BLE transport; tests inject a scripted fake.
         connect_timeout: Seconds to wait for a connection, or ``None`` for
             bleak's default.
+        transport: Replaces the BLE transport; tests inject a fake.
     """
 
     def __init__(
         self,
         address: str | None = None,
+        *,
         name: str = DEVICE_NAME,
         scan_timeout: float = 8.0,
-        transport: Any = None,
         connect_timeout: float | None = None,
+        transport: Any = None,
     ) -> None:
+        super().__init__()
         self._transport = transport or NusTransport(
             address, name, scan_timeout, connect_timeout
         )
+        self._firmware: str | None = None
+        self._speed_level = 1
+        # Guards the state below, which stop() and position() read without
+        # the device lock.
+        self._state_lock = threading.Lock()
+        self._last_position = 0
+        self._motion: int | None = None  # mode of the rotate awaiting its reply
         self._jogging = False
-        # Set by a write sent without reading its reply. The firmware usually
-        # drops that ack under rapid writes, but when one does arrive it must be
-        # cleared before the next command mistakes it for its own.
-        self._unacked = False
-        self._origin: int | None = None
+        self._stop_requested = threading.Event()
+        # Replies that no command will claim: acks from fire-and-forget writes
+        # and from cancels sent while another command was waiting.
+        self._strays = 0
 
     @property
-    def origin(self) -> int | None:
-        """The device angle that counts as zero, or ``None`` if none is pinned.
-
-        ``None`` and ``0`` are different answers: only one means the caller
-        pinned something that a power cycle will silently invalidate. Assigning
-        an int wraps it into 0..359; anything else raises `TypeError`.
-        """
-        return self._origin
-
-    @origin.setter
-    def origin(self, value: int | None) -> None:
-        if value is None:
-            self._origin = None
-            return
-        if not isinstance(value, int):
-            raise TypeError(f"origin must be an int or None, got {value!r}")
-        self._origin = value % 360
+    def info(self) -> DeviceInfo:
+        return DeviceInfo(
+            backend="foldio360",
+            model="Foldio360",
+            address=getattr(self._transport, "address", None),
+            firmware_version=self._firmware,
+        )
 
     @property
-    def jogging(self) -> bool:
-        """Whether a jog this client started is still turning."""
-        return self._jogging
+    def axes(self) -> tuple[Axis, ...]:
+        return _AXES
 
-    @property
-    def connected(self) -> bool:
-        return bool(self._transport.connected)
+    def __repr__(self) -> str:
+        address = getattr(self._transport, "address", None)
+        return f"<Foldio360 {address}>" if address else "<Foldio360>"
 
-    @property
-    def address(self) -> str | None:
-        return getattr(self._transport, "address", None)
+    # -- lifecycle --------------------------------------------------------------
 
-    def connect(self) -> Self:
+    def _open(self) -> None:
         self._transport.connect()
-        return self
+        try:
+            self._firmware = self._command("get_status")
+            self._read_position()
+        except BaseException:
+            self._transport.close()
+            raise
 
-    def close(self) -> None:
-        self._transport.close()
+    def _close(self) -> None:
+        try:
+            if self._jogging:
+                self._safe_cancel(MODE_JOG)
+        finally:
+            self._transport.close()
 
-    def __enter__(self) -> Self:
-        return self.connect()
+    def _reset_state(self) -> None:
+        super()._reset_state()
+        self._firmware = None
+        with self._state_lock:
+            self._motion = None
+            self._jogging = False
+            self._strays = 0
+        self._stop_requested.clear()
 
-    def __exit__(self, *_exc: object) -> None:
-        self.close()
+    # -- stage hooks --------------------------------------------------------------
 
-    # -- queries ------------------------------------------------------------
+    def _timeout(self, timeout: float | None) -> float:
+        # None reaches the hooks as inf, meaning "derive from the timing model".
+        return math.inf if timeout is None else super()._timeout(timeout)
 
-    def get_status(self, timeout: float | None = AUTO) -> str:
-        """Return the firmware string, e.g. ``"V1.0.2_1712M02669"``."""
-        return self._command("get_status", timeout, ACK_TIMEOUT_S)
-
-    def get_position(self, timeout: float | None = AUTO) -> int:
-        """Return the platter's angle, 0-359 clockwise, relative to `origin`."""
-        return (self.get_device_position(timeout) - (self.origin or 0)) % 360
-
-    def get_device_position(self, timeout: float | None = AUTO) -> int:
-        """Return the firmware's own angle, 0-359, counted clockwise.
-
-        The counter integrates commanded motion (it can't see the platter) and
-        re-zeros at power-on; see the hardware doc, State and recovery.
-        """
-        return self._expect_index("get_position", timeout, ACK_TIMEOUT_S)
-
-    def set_origin(
-        self, device_angle: int | None = None, timeout: float | None = AUTO
-    ) -> int:
-        """Declare which device angle counts as zero, and return it.
-
-        With no argument, pins the platter's current position. The origin lives
-        only in this object, and a power cycle silently invalidates it.
-        """
-        if device_angle is None:
-            device_angle = self.get_device_position(timeout)
-        self.origin = device_angle
-        return device_angle % 360
-
-    def clear_origin(self) -> None:
-        """Forget the pinned origin; positions read the device's counter again."""
-        self.origin = None
-
-    def get_brightness(self, timeout: float | None = AUTO) -> int:
-        """Return the halo level, 0-100."""
-        return self._expect_index("get_bright", timeout, ACK_TIMEOUT_S)
-
-    # -- motion -------------------------------------------------------------
-
-    def rotate(
-        self, direction: str, degrees: int, speed: int = 1, timeout: float | None = AUTO
-    ) -> None:
-        """Turn a fixed angle and stop, blocking until the motion completes.
-
-        Angles above 360 are executed literally. If the watchdog expires, the
-        motor is stopped before `DeviceTimeout` is raised.
-        """
-        _check_direction(direction)
-        _check_speed(speed)
-        if not isinstance(degrees, int) or degrees < 1:
-            raise ValueError(
-                f"degrees must be an int >= 1 for a fixed-angle move, got "
-                f"{degrees!r}; the firmware's response to 0 is untested"
-            )
-        self._expect_ok(
-            f"rotate({direction},{degrees},{speed},{MODE_FIXED})",
-            timeout,
-            watchdog_seconds(degrees, speed),
-            cancel_mode=MODE_FIXED,
-        )
-
-    def rotate_by(
-        self, degrees: int, speed: int = 1, timeout: float | None = AUTO
-    ) -> None:
-        """Turn a signed angle: positive clockwise, negative counter-clockwise.
-
-        Zero is a no-op, since the firmware's response to it is untested.
-        """
-        if not isinstance(degrees, int):
-            raise TypeError(f"degrees must be an int, got {degrees!r}")
-        if degrees == 0:
-            return
-        direction = CW if degrees > 0 else CCW
-        self.rotate(direction, abs(degrees), speed=speed, timeout=timeout)
-
-    def move_to(self, angle: int, speed: int = 1, timeout: float | None = AUTO) -> int:
-        """Turn to an absolute angle, 0-359, the shorter way round.
-
-        Returns the signed angle travelled.
-        """
-        if not isinstance(angle, int):
-            raise TypeError(f"angle must be an int, got {angle!r}")
+    def _move_to(self, targets: Mapping[str, float], timeout: float) -> None:
+        target = round(targets[_THETA]) % 360
+        current = self._read_position()
         # Shortest signed path in [-180, 180); an exact half-turn goes CCW.
-        delta = (angle % 360 - self.get_position() + 540) % 360 - 180
-        self.rotate_by(delta, speed=speed, timeout=timeout)
-        return delta
+        delta = (target - current + 540) % 360 - 180
+        self._turn(delta, current, timeout)
 
-    def home(self, speed: int = 1, timeout: float | None = AUTO) -> int:
-        """Turn to `origin` (or the firmware's zero) the shorter way round."""
-        return self.move_to(0, speed=speed, timeout=timeout)
-
-    def jog(self, direction: str, speed: int = 1, timeout: float | None = AUTO) -> None:
-        """Start turning continuously and return; `cancel()` stops it.
-
-        The device acknowledges on spin-up, not on cancel.
-        """
-        _check_direction(direction)
-        _check_speed(speed)
-        self._expect_ok(
-            f"rotate({direction},0,{speed},{MODE_JOG})",
-            timeout,
-            ACK_TIMEOUT_S,
-            cancel_mode=MODE_JOG,
-        )
-        self._jogging = True
-
-    def cancel(self, mode: int | None = None, timeout: float | None = AUTO) -> None:
-        """Stop motion. Safe and idempotent even when nothing is moving.
-
-        ``mode`` mirrors the move being cancelled; left unset, it is the jog
-        mode if this client started a jog and the fixed mode otherwise.
-        """
-        if mode is None:
-            mode = MODE_JOG if self._jogging else MODE_FIXED
-        self._expect_ok(f"cancel({mode})", timeout, ACK_TIMEOUT_S)
-        self._jogging = False
-
-    def stop(self, timeout: float | None = AUTO) -> None:
-        """Halt whatever is moving, without knowing which mode it is.
-
-        Sends both cancels, spaced past the window where back-to-back commands
-        can lose an acknowledgement.
-        """
-        self.cancel(MODE_JOG, timeout=timeout)
-        time.sleep(_CANCEL_SPACING_S)
-        self.cancel(MODE_FIXED, timeout=timeout)
-
-    # -- lighting -----------------------------------------------------------
-
-    def set_brightness(
-        self, level: int, wait: bool = True, timeout: float | None = AUTO
+    def _move_by(
+        self, offsets: Mapping[str, float], start: Mapping[str, float], timeout: float
     ) -> None:
+        self._turn(round(offsets[_THETA]), round(start[_THETA]) % 360, timeout)
+
+    def _jog(self, axis: str, direction: int) -> None:
+        if self._jogging:
+            raise DeviceBusy(f"{self!r} is already jogging; call stop() first")
+        wire = CW if direction > 0 else CCW
+        with self._state_lock:
+            self._motion = MODE_JOG
+            stopped = self._stop_requested.is_set()
+        try:
+            if stopped:
+                return  # a stop() arrived while the jog was starting
+            reply = self._command(
+                f"rotate({wire},0,{self._speed_level},{MODE_JOG})", expect_ok=True
+            )
+            _check_ok(reply, "jog")
+            with self._state_lock:
+                # A stop() during the spin-up ack has already cancelled it.
+                self._jogging = not self._stop_requested.is_set()
+        except DeviceTimeout:
+            self._safe_cancel(MODE_JOG)
+            raise
+        finally:
+            with self._state_lock:
+                self._motion = None
+
+    def _motion_starting(self) -> None:
+        self._stop_requested.clear()
+
+    def _stop(self) -> None:
+        self._stop_requested.set()
+        if self._lock.acquire(blocking=False):
+            try:
+                self._stop_idle()
+            finally:
+                self._lock.release()
+            return
+        # Another thread holds the lock, usually waiting on a move: send the
+        # cancel without waiting for its ack, which that thread will discard.
+        with self._state_lock:
+            mode = MODE_JOG if self._jogging else self._motion
+            if mode is not None:
+                self._strays += 1
+        if mode is not None:
+            self._transport.send(f"cancel({mode})")
+
+    def _position(self) -> Mapping[str, float]:
+        # Ask the turntable when nothing else is talking to it (it follows
+        # jogs); during a move, report the last position read.
+        if self._lock.acquire(blocking=False):
+            try:
+                if self._is_open:
+                    self._read_position()
+            finally:
+                self._lock.release()
+        with self._state_lock:
+            return {_THETA: float(self._last_position)}
+
+    def _speed(self) -> Setting:
+        return Setting(
+            "speed",
+            _DEG_PER_S[self._speed_level],
+            choices=tuple(_DEG_PER_S[level] for level in SPEEDS),
+            unit="deg/s",
+        )
+
+    def _set_speed(self, speed: float) -> None:
+        for level, rate in _DEG_PER_S.items():
+            if rate == speed:
+                self._speed_level = level
+                return
+        raise ValueError(f"{speed} deg/s is not one of the Foldio360's speeds")
+
+    # -- halo ---------------------------------------------------------------------
+
+    @synchronized
+    def get_brightness(self) -> int:
+        """Return the halo level, 0-100."""
+        return self._expect_int("get_bright", 100)
+
+    @synchronized
+    def set_brightness(self, level: int, wait: bool = True) -> None:
         """Set the halo LED ring, 0-100. Takes effect immediately.
 
         Pass ``wait=False`` when ramping: the device drops acks under rapid
@@ -600,88 +608,213 @@ class Foldio360:
         if not isinstance(level, int) or not 0 <= level <= 100:
             raise ValueError(f"brightness must be an int in 0..100, got {level!r}")
         command = f"set_bright({level})"
-        if not wait:
-            self._transport.send(command)
-            self._unacked = True
+        if wait:
+            _check_ok(self._command(command, expect_ok=True), command)
             return
-        self._expect_ok(command, timeout, ACK_TIMEOUT_S)
-
-    # -- plumbing -----------------------------------------------------------
-
-    def _expect_ok(
-        self,
-        command: str,
-        timeout: float | None,
-        auto: float,
-        cancel_mode: int | None = None,
-    ) -> None:
-        reply = self._command(command, timeout, auto, cancel_mode)
-        if reply != "OK":
-            raise UnexpectedResponse(f"expected OK for {command}, got {reply!r}")
-
-    def _expect_index(
-        self,
-        command: str,
-        timeout: float | None,
-        auto: float,
-        cancel_mode: int | None = None,
-    ) -> int:
-        reply = self._command(command, timeout, auto, cancel_mode)
-        try:
-            return int(reply)
-        except ValueError:
-            raise UnexpectedResponse(
-                f"expected an integer for {command}, got {reply!r}"
-            ) from None
-
-    def _command(
-        self,
-        command: str,
-        timeout: float | None,
-        auto: float,
-        cancel_mode: int | None = None,
-    ) -> str:
-        """Send one command and wait for its reply."""
-        if self._unacked:
-            # A stray ack from a fire-and-forget write would be read as this
-            # command's reply, since replies match commands by order alone.
-            self._transport.drain()
-            self._unacked = False
-        resolved = auto if timeout == AUTO else timeout
+        self._settle()
         self._transport.send(command)
-        try:
-            reply: str = self._transport.read(resolved)
-        except DeviceTimeout:
-            # Sync is lost with a machine that has moving parts: stop the motor
-            # first, then drop any late reply so the next command can't take it.
-            if cancel_mode is not None:
-                self._safe_cancel(cancel_mode)
-            self._transport.drain()
-            raise
-        if reply == "FAIL":
-            raise CommandRejected(f"Foldio360 rejected {command}")
-        return reply
+        with self._state_lock:
+            self._strays += 1
 
-    def _safe_cancel(self, mode: int) -> None:
-        """Best-effort stop on an error path, where raising again helps nobody."""
+    # -- motion -------------------------------------------------------------------
+
+    def _turn(self, degrees: int, start: int, timeout: float) -> None:
+        """Turn by a signed whole-degree offset, in legs of at most 360°."""
+        deadline = None if math.isinf(timeout) else time.monotonic() + timeout
+        remaining = degrees
+        position = start
+        while remaining:
+            leg = max(-_MAX_LEG_DEG, min(_MAX_LEG_DEG, remaining))
+            if deadline is None:
+                limit = watchdog_seconds(leg, self._speed_level)
+            else:
+                limit = deadline - time.monotonic()
+                if limit <= 0:
+                    raise DeviceTimeout(
+                        f"{self!r} move did not finish within {timeout:g} s"
+                    )
+            position = self._rotate(leg, position, limit)
+            remaining -= leg
+
+    def _rotate(self, degrees: int, start: int, limit: float) -> int:
+        """Make one fixed-angle rotation and check where it ended.
+
+        Returns the position read afterwards.
+        """
+        wire = CW if degrees > 0 else CCW
+        command = f"rotate({wire},{abs(degrees)},{self._speed_level},{MODE_FIXED})"
+        with self._state_lock:
+            self._motion = MODE_FIXED
+            stopped = self._stop_requested.is_set()
         try:
-            self._transport.send(f"cancel({mode})")
-            self._transport.read(ACK_TIMEOUT_S)
-        except DeviceError:
-            logger.debug("Foldio360 cancel after timeout failed", exc_info=True)
+            if stopped:
+                self._interrupted()
+            self._settle()
+            self._transport.send(command)
+            self._await_move(command, limit)
         finally:
-            self._jogging = False
-            self._transport.drain()
+            with self._state_lock:
+                self._motion = None
+        expected = (start + degrees) % 360
+        actual = self._read_position()
+        if _angle_between(actual, expected) > _ARRIVAL_TOLERANCE_DEG:
+            raise PositionError(
+                f"{self!r} reads {actual}° after turning to {expected}°. The "
+                "counter only tracks commanded motion, so another client or a "
+                "cancel may have cut the move short."
+            )
+        return actual
 
+    def _await_move(self, command: str, limit: float) -> None:
+        """Wait for a rotation's OK, watching for stop() and the time limit."""
+        deadline = time.monotonic() + limit
+        while True:
+            if self._stop_requested.is_set():
+                self._interrupted()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self._abandon(command, limit)
+            try:
+                reply = self._transport.read(min(remaining, _POLL_S))
+            except DeviceTimeout:
+                continue
+            if self._stop_requested.is_set():
+                # This OK may be the cancel's rather than the move's.
+                self._interrupted()
+            if reply == "FAIL":
+                raise CommandRejected(f"{self!r} rejected {command}")
+            _check_ok(reply, command)
+            return
 
-def _check_direction(direction: str) -> None:
-    if direction not in (CW, CCW):
-        raise ValueError(
-            f"direction must be {CW!r} or {CCW!r}, got {direction!r}; note the "
-            "official app labels CW 'Left'"
+    def _interrupted(self) -> NoReturn:
+        """End a move that stop() cancelled."""
+        self._settle(force=True)
+        self._refresh_position()
+        raise PositionError(f"{self!r} move was interrupted by stop()")
+
+    def _abandon(self, command: str, limit: float) -> NoReturn:
+        """Stop a move that outlived its limit, then report the timeout."""
+        self._safe_cancel(MODE_FIXED)
+        self._refresh_position()
+        raise DeviceTimeout(
+            f"{self!r} {command} did not finish within {limit:g} s and was "
+            "cancelled; read position() before relying on where it stopped"
         )
 
+    def _stop_idle(self) -> None:
+        """stop() when no other thread is talking to the turntable."""
+        # A jog this driver started is cancelled by mode. Otherwise motion of
+        # an unknown mode (another process's) needs both cancels, spaced past
+        # the window in which back-to-back commands lose an ack.
+        modes = (MODE_JOG,) if self._jogging else (MODE_JOG, MODE_FIXED)
+        for index, mode in enumerate(modes):
+            if index:
+                time.sleep(_CANCEL_SPACING_S)
+            try:
+                _check_ok(self._command(f"cancel({mode})", expect_ok=True), "cancel")
+            except DeviceTimeout:
+                # The ack can be lost even when the cancel lands (hardware
+                # doc, rotate); a late one is drained before the next command.
+                logger.debug("%r cancel(%d) was not acknowledged", self, mode)
+        with self._state_lock:
+            self._jogging = False
 
-def _check_speed(speed: int) -> None:
-    if speed not in SPEEDS:
-        raise ValueError(f"speed must be 1, 2 or 3, got {speed!r}")
+    def _safe_cancel(self, mode: int) -> None:
+        """Best-effort cancel on an error path, where raising again helps nobody."""
+        try:
+            self._transport.send(f"cancel({mode})")
+            with self._state_lock:
+                self._strays += 1
+            self._settle(force=True)
+        except DeviceError:
+            logger.debug("%r cancel after an error failed", self, exc_info=True)
+        finally:
+            with self._state_lock:
+                self._jogging = False
+
+    # -- protocol -----------------------------------------------------------------
+
+    def _read_position(self) -> int:
+        position = self._expect_int("get_position", 359)
+        with self._state_lock:
+            self._last_position = position
+        return position
+
+    def _refresh_position(self) -> None:
+        """Re-read the position on an error path, keeping the original error."""
+        try:
+            self._read_position()
+        except DeviceError:
+            logger.debug("%r could not re-read its position", self, exc_info=True)
+
+    def _expect_int(self, command: str, maximum: int) -> int:
+        reply = self._command(command)
+        if not reply.isdigit() or int(reply) > maximum:
+            raise UnexpectedResponse(
+                f"{self!r} expected 0-{maximum} for {command}, got {reply!r}"
+            )
+        return int(reply)
+
+    def _command(self, command: str | bytes, *, expect_ok: bool = False) -> str:
+        """Send one command and return its reply.
+
+        Exactly one command is outstanding at a time; replies match commands
+        by order alone (hardware doc, Command/response pairing).
+        """
+        self._settle()
+        self._transport.send(command)
+        try:
+            while True:
+                reply: str = self._transport.read(ACK_TIMEOUT_S)
+                if reply == "OK" and not expect_ok and self._claim_stray():
+                    continue
+                break
+        except DeviceTimeout:
+            # A late reply must not be taken as the next command's.
+            with self._state_lock:
+                self._strays += 1
+            raise
+        if reply == "FAIL":
+            raise CommandRejected(f"{self!r} rejected {_render(command)}")
+        return reply
+
+    def _claim_stray(self) -> bool:
+        with self._state_lock:
+            if self._strays:
+                self._strays -= 1
+                return True
+            return False
+
+    def _settle(self, force: bool = False) -> None:
+        """Discard stray replies, waiting until the link has gone quiet."""
+        with self._state_lock:
+            pending = self._strays
+        if not pending and not force:
+            return
+        deadline = time.monotonic() + ACK_TIMEOUT_S
+        while time.monotonic() < deadline:
+            try:
+                reply = self._transport.read(_SETTLE_QUIET_S)
+            except DeviceTimeout:
+                break
+            logger.debug("%r discarded stray reply %r", self, reply)
+        self._transport.drain()
+        with self._state_lock:
+            self._strays = 0
+
+
+def _check_ok(reply: str, what: str) -> None:
+    if reply != "OK":
+        raise UnexpectedResponse(f"expected OK for {what}, got {reply!r}")
+
+
+def _angle_between(a: int, b: int) -> int:
+    """Unsigned distance between two angles, in degrees, the short way round."""
+    return abs((a - b + 180) % 360 - 180)
+
+
+def _render(command: str | bytes) -> str:
+    """Command text for an error message, with a binary payload abbreviated."""
+    if isinstance(command, str):
+        return command
+    return command[:11].decode("ascii", "replace") + f"...({len(command)} B)"

@@ -913,7 +913,8 @@ def test_connection_failures_are_device_errors(monkeypatch, error, expected):
     dev = Foldio360("AA:BB")
     with pytest.raises(expected) as caught:
         dev.open()
-    assert caught.value.__cause__ is error
+    # Python 3.11's run_coroutine_threadsafe copies a TimeoutError on the way out.
+    assert isinstance(caught.value.__cause__, type(error))
     assert "AA:BB" in str(caught.value)
     assert not dev.is_open
 

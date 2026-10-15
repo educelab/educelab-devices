@@ -10,7 +10,6 @@ import subprocess
 import sys
 import threading
 import time
-import types
 from pathlib import Path
 
 import pytest
@@ -29,7 +28,7 @@ from educelab.devices.lights import Channel, ChannelKind, Light
 from educelab.devices.stages import Stage
 from educelab.devices.stages import foldio360 as f
 from educelab.devices.stages.foldio360 import Foldio360
-from fakes.foldio360 import FIRMWARE, TIMEOUT, FakeNusTransport
+from fakes.foldio360 import FIRMWARE, TIMEOUT, FakeNusTransport, fake_bleak
 
 
 @pytest.fixture(autouse=True)
@@ -65,7 +64,20 @@ def connected_transport() -> f.NusTransport:
 # -- the stage ---------------------------------------------------------------
 
 
+FOLDIO_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
+ADVERTISERS = [
+    ("AA:01", "Foldio360", (FOLDIO_UUID,), -60),
+    ("AA:02", None, (FOLDIO_UUID.upper(),), -80),  # found by service UUID alone
+    ("AA:03", "Headphones", (), -40),
+    ("AA:04", None, (), None),  # no name and no RSSI
+]
+
+
 class TestFoldio360Contract(StageContract):
+    @pytest.fixture(autouse=True)
+    def no_radio(self, monkeypatch):
+        monkeypatch.setattr(f, "_bleak", fake_bleak(ADVERTISERS))
+
     @pytest.fixture
     def make_device(self):
         return lambda: Foldio360(transport=FakeNusTransport(angle=17))
@@ -889,19 +901,6 @@ def test_moves_during_a_run_are_refused():
     assert len(errors) == 1
 
 
-def fake_bleak(error: BaseException):
-    """A stand-in for the bleak module whose connections fail with ``error``."""
-
-    class Client:
-        def __init__(self, address, **kwargs):
-            self.address = address
-
-        async def connect(self):
-            raise error
-
-    return lambda: types.SimpleNamespace(BleakClient=Client)
-
-
 @pytest.mark.parametrize(
     ("error", "expected"),
     [
@@ -910,7 +909,7 @@ def fake_bleak(error: BaseException):
     ],
 )
 def test_connection_failures_are_device_errors(monkeypatch, error, expected):
-    monkeypatch.setattr(f, "_bleak", fake_bleak(error))
+    monkeypatch.setattr(f, "_bleak", fake_bleak(connect_error=error))
     dev = Foldio360("AA:BB")
     with pytest.raises(expected) as caught:
         dev.open()
@@ -939,3 +938,24 @@ def test_loop_thread_timeout_is_a_device_timeout():
             loop.call(asyncio.sleep(1), timeout=0.05)
     finally:
         loop.stop()
+
+
+def test_discover_finds_turntables_by_name_or_service(monkeypatch):
+    monkeypatch.setattr(f, "_bleak", fake_bleak(ADVERTISERS))
+    infos = Foldio360.discover()
+    assert [i.address for i in infos] == ["AA:01", "AA:02"]
+    assert all(i.backend == "foldio360" and i.model == "Foldio360" for i in infos)
+
+
+def test_discover_wraps_scan_failures(monkeypatch):
+    monkeypatch.setattr(f, "_bleak", fake_bleak(scan_error=OSError("no adapter")))
+    with pytest.raises(DeviceError, match="no adapter"):
+        Foldio360.discover()
+
+
+def test_scan_lines_lists_every_advertiser_strongest_first(monkeypatch):
+    monkeypatch.setattr(f, "_bleak", fake_bleak(ADVERTISERS))
+    lines = f.scan_lines(0.1)
+    assert [line.split()[0] for line in lines] == ["AA:03", "AA:01", "AA:02", "AA:04"]
+    assert lines[1].endswith("<-- Foldio360")
+    assert "   - dBm  -" in lines[3]

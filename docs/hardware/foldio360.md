@@ -580,6 +580,9 @@ How `Foldio360` maps the protocol onto the `Stage` role:
   command, which almost always means lost command/response sync: stop, and reconnect if
   it repeats. Connection failures from bleak are wrapped: a timeout is `DeviceTimeout`,
   anything else `DeviceNotFound`, and a failed write `NotConnected`.
+- **Discovery.** `Foldio360.discover()` scans for the scan window (8 s) and lists
+  advertisers that match by name or service UUID, without connecting. A failed scan
+  (e.g. no adapter) raises `DeviceError`.
 - **Testing.** `Foldio360(transport=...)` takes anything with `connected`, `address`,
   `connect()`, `close()`, `send(command)`, `read(timeout)`, and `drain()`. Framing lives in
   the transport: `read()` returns whole replies. `tests/fakes/foldio360.py` emulates the
@@ -648,8 +651,26 @@ Minimal working capture, for reference: enable notifications → `set_bright(60)
 
 ## Manual check
 
-`el-devices foldio` (planned). Not yet run against hardware with the `educelab-devices`
-driver.
+`el-devices foldio` checks a turntable by hand. Close the official app first.
+
+```bash
+el-devices foldio scan                       # list advertisers; find the address
+el-devices foldio --address XX:XX status     # firmware, position, halo level
+el-devices foldio --address XX:XX rotate CW 90 -s 3
+el-devices foldio --address XX:XX goto 0     # the counter's zero, not a fixed place
+el-devices foldio --address XX:XX halo 0.5
+el-devices foldio --address XX:XX stop       # cancels both modes, e.g. a stray jog
+```
+
+Without `--address` each command scans first (8 s by default, `--scan-timeout`). The
+command doesn't cache the address; that is the caller's job. Directions are the wire
+values `CW` and `CCW`; the app's Left/Right labels are refused because they are inverted.
+Speeds are the firmware's 1–3. Ctrl-C during a move stops the turntable before exiting.
+
+`el-devices discover` scans too, and lists turntables found by name or service UUID. A
+turntable connected to another host doesn't advertise, so it isn't listed.
+
+Not yet run against hardware with the `educelab-devices` driver.
 
 ## Capture provenance
 

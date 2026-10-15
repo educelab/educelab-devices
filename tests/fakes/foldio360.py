@@ -3,6 +3,7 @@
 import queue
 import re
 import threading
+import types
 from collections.abc import Callable, Iterable, Mapping
 
 from educelab.devices.errors import DeviceTimeout
@@ -204,3 +205,44 @@ class FakeNusTransport:
                 replies.append("OK")
         replies.append("OK")
         return replies
+
+
+def fake_bleak(
+    advertisers: Iterable[tuple[str, str | None, tuple[str, ...], int | None]] = (),
+    *,
+    connect_error: BaseException | None = None,
+    scan_error: BaseException | None = None,
+) -> Callable[[], types.SimpleNamespace]:
+    """A stand-in for the bleak module, to replace the driver's ``_bleak``.
+
+    Args:
+        advertisers: ``(address, name, service_uuids, rssi)`` for each device
+            a scan finds.
+        connect_error: What connecting to any address raises.
+        scan_error: What scanning raises.
+    """
+    found = {
+        address: (
+            types.SimpleNamespace(address=address, name=name),
+            types.SimpleNamespace(local_name=name, service_uuids=uuids, rssi=rssi),
+        )
+        for address, name, uuids, rssi in advertisers
+    }
+
+    class BleakScanner:
+        @staticmethod
+        async def discover(timeout: float, return_adv: bool) -> dict:
+            if scan_error is not None:
+                raise scan_error
+            return found
+
+    class BleakClient:
+        def __init__(self, address: str, **kwargs: object) -> None:
+            self.address = address
+
+        async def connect(self) -> None:
+            if connect_error is not None:
+                raise connect_error
+
+    module = types.SimpleNamespace(BleakScanner=BleakScanner, BleakClient=BleakClient)
+    return lambda: module

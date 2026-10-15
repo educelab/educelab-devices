@@ -11,10 +11,10 @@
   },
   "tasks": {
     "total": 16,
-    "completed": 11
+    "completed": 13
   },
   "current_phase": 4,
-  "current_task": "4.1",
+  "current_task": "5.1",
   "commits": [
     "ffba81e: Move the Foldio360 BLE client into the stages package",
     "bf71cdf: Port the Foldio360 offline tests to pytest",
@@ -33,6 +33,10 @@
     "3cb25a2: Record approval of Foldio360 Phase 2",
     "40e1bfa: Add the Foldio360 halo as a Light on the turntable's connection",
     "9e29a12: Run the Light contract suite against the Foldio360 halo",
-    "c233bb7: Record Phase 3 progress for the Foldio360 track"
+    "c233bb7: Record Phase 3 progress for the Foldio360 track",
+    "05fd4df: Record approval of Foldio360 Phase 3",
+    "7466641: Let the Foldio360 halo close the turntable only if it opened it",
+    "ac11216: Wrap bleak's connection errors in the Foldio360 transport",
+    "088477d: Fold the Foldio360 client guide into the hardware doc and guide"
   ]
 }

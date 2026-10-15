@@ -7,12 +7,15 @@ documented in docs/hardware/foldio360.md.
 import ast
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 import pytest
 
 from educelab.devices.errors import (
     CommandRejected,
+    DeviceBusy,
+    DeviceError,
     DeviceTimeout,
     PositionError,
 )
@@ -27,6 +30,7 @@ def fast_settle(monkeypatch):
     """Shrink the driver's waits for stray replies and between cancels."""
     monkeypatch.setattr(f, "_SETTLE_QUIET_S", 0.02)
     monkeypatch.setattr(f, "_CANCEL_SPACING_S", 0.0)
+    monkeypatch.setattr(f, "ACK_TIMEOUT_S", 0.2)
 
 
 def table(replies=None, **fake) -> tuple[Foldio360, FakeNusTransport]:
@@ -381,3 +385,144 @@ def test_importing_the_driver_does_not_import_bleak():
         "sys.exit('bleak' in sys.modules)"
     )
     assert subprocess.run([sys.executable, "-c", code], check=False).returncode == 0
+
+
+# -- jog and stop ---------------------------------------------------------------
+
+
+def in_thread(func, *args, **kwargs) -> tuple[threading.Thread, list]:
+    outcome: list = []
+
+    def target() -> None:
+        try:
+            outcome.append(func(*args, **kwargs))
+        except DeviceError as exc:
+            outcome.append(exc)
+
+    thread = threading.Thread(target=target)
+    thread.start()
+    return thread, outcome
+
+
+@pytest.mark.parametrize(("direction", "wire"), [(1, "CW"), (-1, "CCW")])
+def test_jog_acks_on_spin_up(direction, wire):
+    dev, t = table()
+    dev.set_speed(dev.speed().choices[1])
+    dev.jog("theta", direction)
+    assert t.sent == [f"rotate({wire},0,2,0)"]
+    assert t.jogging
+
+
+def test_stop_cancels_a_jog_by_its_mode():
+    dev, t = table()
+    dev.jog("theta", 1)
+    dev.stop()
+    assert t.sent[-1] == "cancel(0)"
+    assert "cancel(1)" not in t.sent
+    assert not t.jogging
+
+
+def test_stop_when_idle_sends_both_cancels():
+    """Motion started elsewhere has an unknown mode, so stop() covers both."""
+    dev, t = table()
+    dev.stop()
+    assert t.sent == ["cancel(0)", "cancel(1)"]
+
+
+def test_stop_survives_a_lost_cancel_ack():
+    dev, t = table({"cancel(0)": TIMEOUT})
+    dev.stop()
+    assert t.sent == ["cancel(0)", "cancel(1)"]
+    dev.move_to({"theta": 10.0})
+    assert dev.position() == {"theta": 10.0}
+
+
+def test_jog_while_jogging_raises_busy():
+    dev, _ = table()
+    dev.jog("theta", 1)
+    with pytest.raises(DeviceBusy):
+        dev.jog("theta", -1)
+
+
+def test_move_while_jogging_raises_busy():
+    dev, t = table()
+    dev.jog("theta", 1)
+    with pytest.raises(DeviceBusy):
+        dev.move_to({"theta": 90.0})
+    with pytest.raises(DeviceBusy):
+        dev.move_by({"theta": 90.0})
+    assert not [c for c in t.sent if c.startswith("rotate(CW,90")]
+
+
+def test_jog_without_ack_is_cancelled():
+    dev, t = table({"rotate(CW,0,1,0)": TIMEOUT})
+    with pytest.raises(DeviceTimeout):
+        dev.jog("theta", 1)
+    assert t.sent[-1] == "cancel(0)"
+
+
+def test_close_cancels_a_jog():
+    dev, t = table()
+    dev.jog("theta", 1)
+    dev.close()
+    assert t.sent[-1] == "cancel(0)"
+    assert not t.connected
+
+
+@pytest.mark.parametrize("cancel_acks_move", [True, False])
+def test_stop_from_another_thread_interrupts_a_move(cancel_acks_move):
+    dev, t = table(hold_moves=True, cancel_acks_move=cancel_acks_move)
+    thread, outcome = in_thread(dev.move_to, {"theta": 90.0})
+    assert t.move_started.wait(timeout=2)
+    dev.stop()
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert isinstance(outcome[0], PositionError)
+    assert t.sent.count("cancel(1)") == 1
+    assert dev.position() == {"theta": 45.0}, "position is re-read after the stop"
+    # Whatever acks the cancel produced are drained, not read as replies.
+    t.hold_moves = False
+    dev.move_to({"theta": 100.0})
+    assert dev.position() == {"theta": 100.0}
+
+
+def test_stop_is_cleared_by_the_next_move():
+    dev, t = table(hold_moves=True)
+    thread, _ = in_thread(dev.move_to, {"theta": 90.0})
+    assert t.move_started.wait(timeout=2)
+    dev.stop()
+    thread.join(timeout=2)
+    t.hold_moves = False
+    dev.move_by({"theta": 10.0})
+    assert dev.position() == {"theta": 55.0}
+
+
+def test_stop_while_another_command_holds_the_lock_cancels_a_jog():
+    dev, t = table()
+    dev.jog("theta", 1)
+    holding, release = threading.Event(), threading.Event()
+
+    def hold_lock() -> None:
+        with dev._lock:
+            holding.set()
+            release.wait(timeout=5)
+
+    holder = threading.Thread(target=hold_lock)
+    holder.start()
+    assert holding.wait(timeout=2)
+    dev.stop()  # must not wait for the lock
+    release.set()
+    holder.join()
+    assert t.sent[-1] == "cancel(0)"
+    assert not t.jogging
+    t.angle = 30
+    assert dev.position() == {"theta": 30.0}, (
+        "the cancel's ack isn't read as a position"
+    )
+
+
+def test_unclaimed_ok_is_skipped_by_a_query():
+    dev, t = table()
+    dev.set_brightness(20, wait=False)
+    t.angle = 5
+    assert dev.position() == {"theta": 5.0}

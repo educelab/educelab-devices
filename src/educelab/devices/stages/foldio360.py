@@ -509,6 +509,7 @@ class Foldio360(Stage):
         return math.inf if timeout is None else super()._timeout(timeout)
 
     def _move_to(self, targets: Mapping[str, float], timeout: float) -> None:
+        self._check_not_jogging()
         target = round(targets[_THETA]) % 360
         current = self._read_position()
         # Shortest signed path in [-180, 180); an exact half-turn goes CCW.
@@ -518,11 +519,11 @@ class Foldio360(Stage):
     def _move_by(
         self, offsets: Mapping[str, float], start: Mapping[str, float], timeout: float
     ) -> None:
+        self._check_not_jogging()
         self._turn(round(offsets[_THETA]), round(start[_THETA]) % 360, timeout)
 
     def _jog(self, axis: str, direction: int) -> None:
-        if self._jogging:
-            raise DeviceBusy(f"{self!r} is already jogging; call stop() first")
+        self._check_not_jogging()
         wire = CW if direction > 0 else CCW
         with self._state_lock:
             self._motion = MODE_JOG
@@ -617,6 +618,11 @@ class Foldio360(Stage):
             self._strays += 1
 
     # -- motion -------------------------------------------------------------------
+
+    def _check_not_jogging(self) -> None:
+        # What the firmware does with a rotate during a jog is untested.
+        if self._jogging:
+            raise DeviceBusy(f"{self!r} is jogging; call stop() first")
 
     def _turn(self, degrees: int, start: int, timeout: float) -> None:
         """Turn by a signed whole-degree offset, in legs of at most 360°."""

@@ -321,8 +321,9 @@ class SpinnakerCamera(FrameCamera):
     ``open()`` initializes the camera, measures the offset between its
     timestamp counter and the host clock, and starts free-running acquisition
     that keeps only the newest frame, which is the fastest way to capture.
-    ``close()`` stops acquiring and de-initializes it. Changing ``pixel_format`` pauses acquisition briefly, since cameras
-    only accept it while stopped.
+    ``close()`` stops acquiring and de-initializes it. Changing
+    ``pixel_format`` pauses acquisition briefly, since cameras only accept it
+    while stopped.
 
     Every PySpin error becomes a `DeviceError`. Those errors are deliberately
     not chained to the original ``SpinnakerException``, whose traceback would

@@ -18,6 +18,7 @@ from educelab.devices.errors import (
     DeviceBusy,
     DeviceError,
     DeviceTimeout,
+    NotConnected,
     PositionError,
 )
 from educelab.devices.stages import Stage
@@ -559,3 +560,30 @@ def test_position_follows_a_jog():
     t.angle = 15
     assert dev.position() == {"theta": 15.0}
     dev.stop()
+
+
+# -- the device lock ----------------------------------------------------------------
+
+
+def test_commands_wait_for_a_move_to_finish():
+    """One command at a time: a second thread's command waits for the move."""
+    dev, t = table(hold_moves=True)
+    mover, _ = in_thread(dev.move_to, {"theta": 90.0})
+    assert t.move_started.wait(timeout=2)
+    lighter, outcome = in_thread(dev.set_brightness, 40)
+    time.sleep(0.1)
+    assert lighter.is_alive(), "set_brightness must wait for the device lock"
+    assert "set_bright(40)" not in t.sent
+    t.finish_move()
+    mover.join(timeout=2)
+    lighter.join(timeout=2)
+    assert outcome == [None]
+    assert t.sent.index("set_bright(40)") > t.sent.index("rotate(CW,90,1,1)")
+
+
+def test_commands_on_a_closed_device_raise_not_connected():
+    dev = Foldio360(transport=FakeNusTransport())
+    with pytest.raises(NotConnected):
+        dev.set_brightness(10)
+    with pytest.raises(NotConnected):
+        dev.move_to({"theta": 10.0})

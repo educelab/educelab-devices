@@ -1,6 +1,8 @@
 import logging
 import subprocess
 import sys
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -9,14 +11,18 @@ from educelab.devices.app import discover
 from educelab.devices.cameras import _gphoto2, gphoto2
 from educelab.devices.cameras._gphoto2 import (
     GP_ERROR,
+    GP_ERROR_CAMERA_BUSY,
     GP_ERROR_IO_USB_CLAIM,
     GP_ERROR_IO_USB_FIND,
     GP_ERROR_MODEL_NOT_FOUND,
+    Event,
+    FilePath,
 )
+from educelab.devices.cameras.base import CameraFile
 from educelab.devices.cameras.gphoto2 import GPhoto2Camera
 from educelab.devices.device import DeviceInfo
 from educelab.devices.errors import DeviceBusy, DeviceError, DeviceNotFound
-from fakes.gphoto2 import FakeCamera, FakeLibrary
+from fakes.gphoto2 import FOLDER, FakeCamera, FakeLibrary
 
 
 def fake_sdk():
@@ -303,3 +309,136 @@ def test_el_devices_discover_includes_gphoto2():
         discover.Backend("gphoto2", "educelab.devices.cameras.gphoto2", "GPhoto2Camera")
         in discover.BACKENDS
     )
+
+
+@pytest.fixture
+def fast_capture(monkeypatch):
+    monkeypatch.setattr(gphoto2, "DOWNLOAD_RETRY_DELAY_S", 0)
+    monkeypatch.setattr(gphoto2, "EVENT_POLL_S", 0)
+
+
+def opened(attached):
+    camera = GPhoto2Camera(attached.port, library=FakeLibrary(attached))
+    camera.open()
+    return camera
+
+
+def test_capture_returns_the_file_in_memory(fast_capture):
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        assert camera.capture_files() == [
+            CameraFile("DSC_0001.NEF", b"DSC_0001.NEF contents")
+        ]
+        assert camera.capture_files()[0].name == "DSC_0002.NEF"
+
+
+def test_capture_returns_every_file_one_release_produces(fast_capture):
+    attached = FakeCamera(suffixes=(".NEF", ".JPG"))
+    with opened(attached) as camera:
+        files = camera.capture_files()
+    assert [(f.name, f.data) for f in files] == [
+        ("DSC_0001.NEF", b"DSC_0001.NEF contents"),
+        ("DSC_0001.JPG", b"DSC_0001.JPG contents"),
+    ]
+    assert attached.calls.count("capture") == 1
+
+
+def test_capture_drains_the_camera_events(fast_capture):
+    attached = FakeCamera(suffixes=(".NEF", ".JPG"))
+    with opened(attached) as camera:
+        camera.capture_files()
+        assert not attached.events
+
+
+def test_file_added_twice_is_returned_once(fast_capture):
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        attached.on_capture = lambda: attached.events.append(
+            Event("file_added", FilePath(FOLDER, "DSC_0001.NEF"))
+        )
+        assert [f.name for f in camera.capture_files()] == ["DSC_0001.NEF"]
+
+
+def test_files_left_over_from_an_earlier_capture_are_not_returned(fast_capture, caplog):
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        late = FilePath(FOLDER, "DSC_0000.JPG")
+        attached.storage[late] = b"late"
+        attached.events.append(Event("file_added", late))
+        with caplog.at_level(logging.WARNING, logger=gphoto2.__name__):
+            files = camera.capture_files()
+    assert [f.name for f in files] == ["DSC_0001.NEF"]
+    assert "DSC_0000.JPG" in caplog.text
+
+
+def test_endless_events_stop_the_drain(fast_capture, monkeypatch):
+    class Chatty(FakeCamera):
+        def wait_for_event(self, timeout_s):
+            super().wait_for_event(timeout_s)
+            return Event("unknown", detail="PTP Property d1a6 changed")
+
+    monkeypatch.setattr(gphoto2, "DRAIN_LIMIT_S", 0.01)
+    with opened(Chatty()) as camera:
+        assert [f.name for f in camera.capture_files()] == ["DSC_0001.NEF"]
+
+
+def test_failed_download_is_retried(fast_capture):
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        attached.fail_next("download", GP_ERROR, GP_ERROR)
+        assert camera.capture_files()[0].data == b"DSC_0001.NEF contents"
+    assert attached.calls.count("download") == 3
+
+
+def test_download_that_keeps_failing_raises(fast_capture):
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        attached.fail_next("download", *[GP_ERROR] * gphoto2.DOWNLOAD_ATTEMPTS)
+        with pytest.raises(DeviceError, match="DSC_0001.NEF"):
+            camera.capture_files()
+        assert not camera._capture_in_flight.is_set()
+        assert camera.capture_files()[0].name == "DSC_0002.NEF"
+
+
+def test_failed_capture_raises_device_error(fast_capture):
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        attached.fail_next("capture", GP_ERROR_CAMERA_BUSY)
+        with pytest.raises(DeviceBusy):
+            camera.capture_files()
+        assert not camera._capture_in_flight.is_set()
+
+
+def test_capture_in_flight_is_flagged_and_blocks_other_captures(fast_capture):
+    attached = FakeCamera()
+    camera = opened(attached)
+    released, second_done = threading.Event(), threading.Event()
+    seen_in_flight = []
+
+    def hold_shutter():
+        seen_in_flight.append(camera._capture_in_flight.is_set())
+        if len(seen_in_flight) == 1:
+            released.wait(5)
+
+    attached.on_capture = hold_shutter
+    first = threading.Thread(target=camera.capture_files)
+    first.start()
+    while not seen_in_flight:
+        time.sleep(0.001)
+
+    def capture_again():
+        camera.capture_files()
+        second_done.set()
+
+    second = threading.Thread(target=capture_again)
+    second.start()
+    assert not second_done.wait(0.05)
+    assert attached.calls.count("capture") == 1
+
+    released.set()
+    first.join(5)
+    second.join(5)
+    assert second_done.is_set()
+    assert seen_in_flight == [True, True]
+    assert not camera._capture_in_flight.is_set()
+    camera.close()

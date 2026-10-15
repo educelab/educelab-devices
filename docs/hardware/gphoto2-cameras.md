@@ -65,3 +65,36 @@ kill it once and then wait rather than looping. **assumed**, from the prototype'
 
 On Linux the equivalent is usually a desktop's `gvfs-gphoto2-volume-monitor`, which
 mounts cameras as they appear. **assumed**, from the gphoto2 FAQ.
+
+## Capturing
+
+`capture_files()` uses libgphoto2's blocking `gp_camera_capture()`, which releases the
+shutter, waits out the exposure, and returns the first file the release produced.
+
+- **Use the blocking capture, not `trigger_capture()` + event polling.** The prototype's
+  async version was what made the Z7 II drop out of PC mode between shots; the blocking
+  call (what `gphoto2 --capture-image-and-download` uses) handled a 10 s exposure
+  repeatedly on the same camera, cable, and host. **assumed**, from the prototype's
+  side-by-side test.
+- **Further files arrive as events.** With RAW + JPEG, the first file comes back from the
+  capture call and the rest as `GP_EVENT_FILE_ADDED`. The driver reads events every
+  `EVENT_POLL_S` (50 ms) until the camera goes quiet, collecting added files, and gives up
+  after `DRAIN_LIMIT_S` (2 s) if events keep coming (live view can report property
+  changes continuously). **unknown** for the Z7 II: whether the JPEG's event is already
+  queued when the capture returns, or can arrive after a 50 ms quiet gap. Settle it with
+  the RAW + JPEG hardware test.
+- **Drain events after every capture.** The camera queues events (file added, capture
+  complete) in a finite buffer. If the host never reads them the buffer fills, PTP
+  transactions then fail with `[-1]`, and the camera leaves PC mode, which shows up as
+  `-52` on the next call. The prototype saw this on the Z7 II over multi-hundred-shot
+  sessions. **assumed**, from the prototype.
+- **Late files are discarded, not mis-attributed.** Events are also drained before each
+  release. A file added then belongs to an earlier capture that has already returned, so
+  the driver logs a warning naming it and leaves it on the card rather than returning it
+  with the wrong capture.
+- **Downloads are retried.** Right after a long exposure the camera may still be writing
+  to the card or running long-exposure noise reduction, and briefly rejects the bulk
+  transfer with a bare `[-1]` even though the file-added event arrived. The driver tries
+  `DOWNLOAD_ATTEMPTS` (3) times, `DOWNLOAD_RETRY_DELAY_S` (1 s) apart. **assumed**, from
+  the prototype.
+- Files stay on the camera's card after download; the driver never deletes them.

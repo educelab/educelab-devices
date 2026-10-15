@@ -42,8 +42,18 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
 
 ### Tasks
 
-- [ ] Task 2.1: Write tests for single-file and multi-file (RAW + JPEG) captures, download retries, and the in-flight guard; implement `capture_files()`.
+- [x] Task 2.1: Write tests for single-file and multi-file (RAW + JPEG) captures, download retries, and the in-flight guard; implement `capture_files()`.
 - [ ] Task 2.2: Run the `FileCamera` contract suite.
+
+### Deviations
+
+- Capture drains events before the release as well as after, and discards (with a
+  warning) any file added before the release. The prototype downloaded only the first
+  file, so it never had to decide which capture a late file belongs to; returning it
+  with the next capture would silently pair the wrong files.
+- "A capture in flight blocks concurrent captures" is the device lock: a second
+  `capture_files()` waits for the first. The internal `_capture_in_flight` flag exists
+  for the keep-alive thread (Phase 3), which must not wait on the bus.
 
 ### Verification
 

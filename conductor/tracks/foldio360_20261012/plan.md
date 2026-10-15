@@ -81,11 +81,12 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
   - Ack handling: writes are paced at least 50 ms apart (`_BRIGHT_PACING_S`); if an ack still doesn't come within 0.5 s, the level is read back and accepted if it landed, else `DeviceTimeout`. The lost ack is counted as a stray and drained before the next command.
   - Removed the turntable's public `get_brightness`/`set_brightness` and the `wait=False` fire-and-forget path; pacing replaces it for ramps.
   - `docs/guide.md` §1.4 now says a driver may offer a role as a second object sharing the connection (the halo); `CONTEXT.md` is unchanged.
-- [ ] Task 3.2: Run the `Light` contract suite against the halo.
+- [x] Task 3.2: Run the `Light` contract suite against the halo.
+  - `TestFoldio360HaloContract` runs `LightContract` (and its `DeviceContract` lifecycle tests) on `Foldio360(transport=FakeNusTransport()).halo`. All pass.
 
 ### Verification
 
-- [ ] Halo tests and contracts pass.
+- [x] Halo tests and contracts pass. (Locally: macOS on Python 3.11, 3.13, and 3.14; CI not yet run on this phase.)
 
 ## Phase 4: Docs and CLI
 

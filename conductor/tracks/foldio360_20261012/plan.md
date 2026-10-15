@@ -39,11 +39,13 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
 
 ### Tasks
 
-- [ ] Task 2.1: Write tests for the `"theta"` axis, `move_to` shortest path, literal `move_by`, default timeouts, and arrival verification; implement on the `Stage` hooks.
+- [~] Task 2.1: Write tests for the `"theta"` axis, `move_to` shortest path, literal `move_by`, default timeouts, and arrival verification; implement on the `Stage` hooks.
 - [ ] Task 2.2: Write tests for `jog`/`stop`, including `stop()` from another thread during a move and stray-reply draining; implement.
 - [ ] Task 2.3: Write tests for `position()` during a move (returns last known, doesn't block); implement.
 - [ ] Task 2.4: Remove the origin API; add the device lock.
 - [ ] Task 2.5: Run the `Stage` contract suite.
+- [ ] Task 2.6: Port `run(frames)` (with `KNOWN_GOOD_FRAMES`), `ir_shutter`, and `set_signal` back as Foldio360-only methods under the device lock, with `stop()` able to cancel a `run`; restore their original tests; mark them unverified in our use in the hardware doc.
+  - Decided (2026-10-15, maintainer): port these commands after all, as Foldio360-only methods outside `Stage`. They won't be used yet, but they keep the reverse-engineered behavior available. Supersedes the Task 1.1 deviation that left them out; spec updated to match.
 
 ### Verification
 

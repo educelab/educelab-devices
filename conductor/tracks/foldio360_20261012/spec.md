@@ -27,7 +27,7 @@ As a developer of spectral photogrammetry software, I want to rotate the turntab
 - [ ] The origin API (`origin`, `set_origin`, `clear_origin`, `home()` as move-to-origin) is removed, per ADR 0003; the power-cycle counter reset is documented in the hardware doc.
 - [ ] `foldio.halo` is a `Light` with one mono channel `"halo"` sharing the connection; brightness ack unreliability under load is handled (paced writes or tolerant ack draining).
 - [ ] Public methods are serialized by the device lock (the original client had none).
-- [ ] `run(frames)` and the IR shutter / `set_signal` commands are not exposed.
+- [ ] `run(frames)`, `ir_shutter`, and `set_signal` are Foldio360-only methods (not part of `Stage`), ported with their original tests. They hold the device lock, `stop()` cancels a `run` the same as a move, and the hardware doc marks them unverified in our use. Nothing uses them yet; they keep the reverse-engineered behavior available.
 - [ ] The original offline tests are ported to the injected fake transport, and the `Stage` and `Light` contract suites pass.
 - [ ] `docs/hardware/foldio360.md` contains the protocol spec (from `PROTOCOL.md`, keeping verified/assumed/unknown markers); behavior-level content from `CLIENT_GUIDE.md` is folded into the hardware doc or `docs/guide.md`.
 - [ ] `el-devices foldio` subcommand: status, rotate, move to angle, halo level. Takes `--address`; caching the address is not the library's job.
@@ -40,7 +40,6 @@ As a developer of spectral photogrammetry software, I want to rotate the turntab
 ## Out of Scope
 
 - Origins and address caching (consumer concerns; ADR 0003).
-- `run(frames)` sequences and IR camera triggering.
 - Reverse-engineering tools (`tools/parse_btsnoop.py`, `probe.py`, `docs/foldio360-protocol.html`), which stay in the archived `foldio360` repo.
 - Migrating the spectral prototype to this driver.
 

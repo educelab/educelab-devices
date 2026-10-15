@@ -46,7 +46,9 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
   - Speeds are `1 / slope` deg/s for levels 1–3 (≈7.30, 9.71, 14.68).
   - The fake transport now emulates the firmware (position counter, held moves, cancel behavior) instead of only replaying scripts; scripted replies still override it.
   - The jog/stop/position code went in with this task, since the hooks are abstract; Tasks 2.2 and 2.3 add their tests.
-- [ ] Task 2.2: Write tests for `jog`/`stop`, including `stop()` from another thread during a move and stray-reply draining; implement.
+- [x] Task 2.2: Write tests for `jog`/`stop`, including `stop()` from another thread during a move and stray-reply draining; implement.
+  - `stop()` takes the lock only if it is free. If so it cancels synchronously (a known jog by mode, otherwise both modes, as the old client's `stop()` did); if not, it sends the cancel fire-and-forget and counts the ack as a stray, and the waiting move settles the link and raises `PositionError`. Tests cover both possible cancel behaviors (the move's OK sent or not), since the real one is unknown.
+  - Added `DeviceBusy` for moving or jogging during a jog, matching `SimulatedStage`; the firmware's behavior there is untested.
 - [ ] Task 2.3: Write tests for `position()` during a move (returns last known, doesn't block); implement.
 - [ ] Task 2.4: Remove the origin API; add the device lock.
 - [ ] Task 2.5: Run the `Stage` contract suite.

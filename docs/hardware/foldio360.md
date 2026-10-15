@@ -495,6 +495,21 @@ How `Foldio360` maps the protocol onto the `Stage` role:
 - **Timeouts.** With `timeout=None`, each rotation's limit is the watchdog from
   [Timing](#timing), not `Stage.move_timeout`. A rotation that outlives its limit is
   cancelled, the counter is re-read, and `DeviceTimeout` is raised.
+- **Jog.** `jog()` sends a mode-0 `rotate` and returns on its spin-up ack. Moving or
+  jogging again while a jog runs raises `DeviceBusy`, since what the firmware does with a
+  `rotate` during a jog is untested. Closing the device cancels a jog it started.
+- **Stop.** `stop()` never waits for the device lock. When no other thread is talking to
+  the turntable, it cancels a jog it started with `cancel(0)`, and otherwise sends both
+  `cancel(0)` and `cancel(1)` 150 ms apart, because motion started elsewhere has an
+  unknown mode. A lost cancel ack is logged, not raised. During a move it sends
+  `cancel(1)` without waiting; the move then waits until the link has been quiet for
+  300 ms, discarding whatever OKs the cancel produced (one or two: whether a cancelled
+  `rotate` still sends its own OK is **unknown**, see [cancel](#cancel)), re-reads the
+  counter, and raises `PositionError`.
+- **Stray replies.** Acks nobody waits for (a cancel sent during another command, a
+  brightness write with `wait=False`, a reply that arrived after its timeout) are counted.
+  The next command first waits for the link to go quiet and discards them, and a query
+  that gets an unexpected `OK` while one is outstanding skips it.
 - **Speed.** `speed()` lists the firmware's three speeds as deg/s, the reciprocal of each
   speed's timing slope: about 7.30, 9.71, and 14.68 deg/s. Speeds 2 and 3 are
   **assumed**, like their timing fits.

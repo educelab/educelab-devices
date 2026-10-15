@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from educelab.devices.cameras import _gphoto2
+from fakes.gphoto2 import FakeCamera, FakeLibrary
 
 pytestmark = pytest.mark.skipif(
     sys.platform == "win32", reason="the gphoto2 extra doesn't install on Windows"
@@ -63,3 +64,93 @@ def test_logging_bridge_installs_once():
     bridge.install(sdk)
     bridge.install(sdk)
     assert len(sdk.added) == 1
+
+
+class StubWidget:
+    """A python-gphoto2 ``CameraWidget`` with fixed contents."""
+
+    def __init__(self, kind, name, value=None, *, children=(), **extra):
+        self.kind, self.name, self.value = kind, name, value
+        self.children = list(children)
+        self.extra = extra
+
+    def get_type(self):
+        return self.kind
+
+    def get_name(self):
+        return self.name
+
+    def get_label(self):
+        return self.name.title()
+
+    def get_value(self):
+        return self.value
+
+    def get_readonly(self):
+        return int(self.extra.get("read_only", False))
+
+    def get_children(self):
+        return iter(self.children)
+
+    def get_choices(self):
+        return iter(self.extra["choices"])
+
+    def get_range(self):
+        return self.extra["range"]
+
+
+WIDGET_TYPES = SimpleNamespace(
+    GP_WIDGET_WINDOW=0,
+    GP_WIDGET_SECTION=1,
+    GP_WIDGET_TEXT=2,
+    GP_WIDGET_RANGE=3,
+    GP_WIDGET_TOGGLE=4,
+    GP_WIDGET_RADIO=5,
+    GP_WIDGET_MENU=6,
+    GP_WIDGET_BUTTON=7,
+    GP_WIDGET_DATE=8,
+)
+
+
+def test_config_tree_is_flattened_by_name():
+    t = WIDGET_TYPES
+    shutter = StubWidget(
+        t.GP_WIDGET_RADIO, "shutterspeed", "1/60", choices=["1/60", "1/30"]
+    )
+    focus = StubWidget(
+        t.GP_WIDGET_RANGE, "manualfocusdrive", 0.0, range=(-32767, 32767, 1)
+    )
+    serial = StubWidget(t.GP_WIDGET_TEXT, "serialnumber", "6001234", read_only=True)
+    duplicate = StubWidget(t.GP_WIDGET_TEXT, "shutterspeed", "ignored")
+    root = StubWidget(
+        t.GP_WIDGET_WINDOW,
+        "main",
+        children=[
+            StubWidget(t.GP_WIDGET_SECTION, "capturesettings", children=[shutter]),
+            StubWidget(t.GP_WIDGET_SECTION, "actions", children=[focus]),
+            StubWidget(t.GP_WIDGET_SECTION, "status", children=[serial, duplicate]),
+        ],
+    )
+
+    widgets = _gphoto2.flatten_config(t, root)
+
+    assert list(widgets) == ["shutterspeed", "manualfocusdrive", "serialnumber"]
+    assert widgets["shutterspeed"] == _gphoto2.Widget(
+        "shutterspeed", "Shutterspeed", "radio", "1/60", choices=("1/60", "1/30")
+    )
+    assert widgets["manualfocusdrive"].kind == "range"
+    assert (
+        widgets["manualfocusdrive"].minimum,
+        widgets["manualfocusdrive"].maximum,
+    ) == (
+        -32767,
+        32767,
+    )
+    assert widgets["serialnumber"].read_only
+
+
+def test_fakes_fill_the_seam() -> None:
+    # Checked by mypy: the fakes must stay interchangeable with the real layer.
+    camera: _gphoto2.Session = FakeCamera()
+    library: _gphoto2.Library = FakeLibrary(FakeCamera())
+    assert camera.model and library.autodetect()

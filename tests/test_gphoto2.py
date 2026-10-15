@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from educelab.devices.app import discover
 from educelab.devices.cameras import _gphoto2, gphoto2
 from educelab.devices.cameras._gphoto2 import (
     GP_ERROR,
@@ -263,3 +264,37 @@ def test_close_error_still_leaves_the_camera_closed():
     assert not camera.is_open
     camera.open()
     assert camera.is_open
+
+
+def test_discover_lists_attached_cameras_without_opening_them(monkeypatch):
+    attached = [
+        FakeCamera(port="usb:020,006"),
+        FakeCamera("Canon EOS R5", "usb:020,009"),
+    ]
+    library = FakeLibrary(*attached)
+    monkeypatch.setattr(gphoto2, "_default_library", lambda: library)
+
+    assert GPhoto2Camera.discover() == [
+        DeviceInfo("gphoto2", "Nikon Z 7II", "usb:020,006"),
+        DeviceInfo("gphoto2", "Canon EOS R5", "usb:020,009"),
+    ]
+    assert library.open_attempts == 0
+
+
+def test_discover_failure_raises_device_error(monkeypatch):
+    library = FakeLibrary()
+
+    def autodetect():
+        raise _gphoto2.GPhoto2Error(GP_ERROR, "Unspecified error")
+
+    monkeypatch.setattr(library, "autodetect", autodetect)
+    monkeypatch.setattr(gphoto2, "_default_library", lambda: library)
+    with pytest.raises(DeviceError, match=r"\[-1\]"):
+        GPhoto2Camera.discover()
+
+
+def test_el_devices_discover_includes_gphoto2():
+    assert (
+        discover.Backend("gphoto2", "educelab.devices.cameras.gphoto2", "GPhoto2Camera")
+        in discover.BACKENDS
+    )

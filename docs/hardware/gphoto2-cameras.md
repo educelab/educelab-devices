@@ -192,7 +192,10 @@ leaving PC mode. **assumed**, from the prototype; whether the Z7 II needs it at 
 ## Focus drive
 
 `camera.focus` is a `FocusDrive` when the camera's config tree has a range-type
-`manualfocusdrive` widget (Nikon and Sony bodies), and `None` otherwise. Writing a
+`manualfocusdrive` widget (Nikon and Sony bodies), and `None` otherwise. The first access
+on each connection reads the config tree to find out, so it raises `NotConnected` while
+the camera is closed. The drive shares the camera's connection and lock: it opens and
+closes with the camera, and closing just the drive leaves the camera open. Writing a
 number to the widget drives the lens motor by that many steps, positive toward far.
 Canon bodies have a choice-type `manualfocusdrive` (`Near 1`–`3`, `Far 1`–`3`), which this
 driver doesn't support yet.

@@ -34,6 +34,7 @@ from educelab.devices.errors import (
     DeviceError,
     DeviceNotFound,
     FocusLimitReached,
+    NotConnected,
 )
 from fakes.gphoto2 import FOLDER, NIKON_WIDGETS, FakeCamera, FakeLibrary, jpeg
 
@@ -1024,3 +1025,86 @@ def test_drive_to_limit_failure_raises_and_loses_the_count(focus_waits):
         focus.drive_to_limit("far")
     camera.close()
     assert (focus.last_limit, focus.focus_steps) == (None, None)
+
+
+def without_focus_widget():
+    return [w for w in NIKON_WIDGETS if w.name != "manualfocusdrive"]
+
+
+def test_focus_is_none_without_a_manualfocusdrive_widget():
+    with opened(FakeCamera(widgets=without_focus_widget())) as camera:
+        assert camera.focus is None
+
+
+def test_focus_is_none_for_a_choice_type_manualfocusdrive():
+    canon = _gphoto2.Widget(
+        "manualfocusdrive",
+        "Drive Canon DSLR Manual focus",
+        "radio",
+        "None",
+        choices=("Near 3", "Near 2", "Near 1", "None", "Far 1", "Far 2", "Far 3"),
+        section="actions",
+    )
+    with opened(FakeCamera(widgets=[*without_focus_widget(), canon])) as camera:
+        assert camera.focus is None
+
+
+def test_focus_of_a_closed_camera_raises_not_connected():
+    camera = GPhoto2Camera("usb:020,007", library=FakeLibrary(FakeCamera()))
+    with pytest.raises(NotConnected):
+        _ = camera.focus
+
+
+def test_focus_is_checked_once_per_session():
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        focus = camera.focus
+        assert camera.focus is focus
+        assert attached.calls.count("config") == 1
+
+
+def test_closing_the_camera_closes_its_focus_drive(focus_waits):
+    attached = FakeCamera()
+    camera, focus = focus_of(attached)
+    focus.drive_to_limit("near")
+    camera.close()
+    assert not focus.is_open
+    assert focus.focus_steps is None
+    with pytest.raises(NotConnected):
+        focus.step(1)
+    with pytest.raises(NotConnected):
+        focus.open()
+
+    camera.open()
+    assert camera.focus is focus and focus.is_open
+    camera.close()
+
+
+def test_closing_the_focus_drive_leaves_the_camera_open(focus_waits):
+    attached = FakeCamera()
+    camera, focus = focus_of(attached)
+    focus.drive_to_limit("near")
+    focus.close()
+    assert camera.is_open and attached.is_open
+    assert camera.focus is focus and not focus.is_open
+    focus.open()
+    assert focus.focus_steps is None
+    assert camera.focus is focus
+    camera.close()
+
+
+def test_focus_drive_reports_the_camera_identity():
+    with opened(FakeCamera()) as camera:
+        assert camera.focus.info == camera.info
+
+
+def test_reopening_a_focus_drive_rechecks_the_camera(focus_waits):
+    attached = FakeCamera()
+    camera, focus = focus_of(attached)
+    camera.close()
+    attached.widgets.pop("manualfocusdrive")
+    camera.open()
+    with pytest.raises(DeviceError, match="no longer drive focus"):
+        focus.open()
+    assert camera.focus is None
+    camera.close()

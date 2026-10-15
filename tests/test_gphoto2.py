@@ -970,3 +970,57 @@ def test_other_focus_errors_raise_and_lose_the_count(focus_waits):
         focus.step(-100)
     camera.close()
     assert focus.focus_steps is None
+
+
+@pytest.mark.parametrize(
+    ("limit", "end", "moves"),
+    [("near", 0, [-32767, -32767]), ("far", 100000, [32767, 32767])],
+)
+def test_drive_to_limit_steps_until_the_end_stop(focus_waits, limit, end, moves):
+    attached = FakeCamera(focus_position=50000, focus_travel=100000)
+    camera, focus = focus_of(attached)
+    focus.drive_to_limit(limit)
+    camera.close()
+    assert attached.focus_position == end
+    assert attached.focus_moves == moves
+
+
+def test_drive_to_limit_resets_the_step_counter(focus_waits):
+    camera, focus = focus_of(FakeCamera())
+    focus.drive_to_limit("near")
+    assert (focus.last_limit, focus.focus_steps) == ("near", 0)
+    focus.step(400)
+    assert focus.focus_steps == 400
+    focus.drive_to_limit("far")
+    assert (focus.last_limit, focus.focus_steps) == ("far", 0)
+    camera.close()
+
+
+def test_drive_to_limit_at_the_limit_already(focus_waits):
+    attached = FakeCamera(focus_position=0)
+    camera, focus = focus_of(attached)
+    focus.drive_to_limit("near")
+    camera.close()
+    assert attached.focus_moves == [-32767]
+
+
+def test_drive_to_limit_without_an_end_stop_raises(focus_waits, monkeypatch):
+    monkeypatch.setattr(gphoto2, "FOCUS_LIMIT_MAX_STEPS", 100_000)
+    attached = FakeCamera(focus_position=500_000, focus_travel=1_000_000)
+    camera, focus = focus_of(attached)
+    with pytest.raises(DeviceError, match="no near limit"):
+        focus.drive_to_limit("near")
+    camera.close()
+    assert len(attached.focus_moves) == 4
+    assert focus.focus_steps is None
+
+
+def test_drive_to_limit_failure_raises_and_loses_the_count(focus_waits):
+    attached = FakeCamera()
+    camera, focus = focus_of(attached)
+    focus.drive_to_limit("near")
+    attached.fail_next("set_config", GP_ERROR)
+    with pytest.raises(DeviceError, match="focus"):
+        focus.drive_to_limit("far")
+    camera.close()
+    assert (focus.last_limit, focus.focus_steps) == (None, None)

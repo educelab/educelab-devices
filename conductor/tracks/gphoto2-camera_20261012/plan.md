@@ -102,8 +102,21 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
 - [x] Task 4.1: Write tests for `step()` chunking, settle waits, busy retry, `FocusLimitReached`, and the step counter; implement.
 - [x] Task 4.2: Write tests for `drive_to_limit()`; implement.
   - `_drive_to_limit()` landed with Task 4.1, since it shares `_move()`; these tests pin its chunking, counter reset, give-up limit, and failure handling.
-- [ ] Task 4.3: `cam.focus` is `None` when `manualfocusdrive` is missing or not range-type.
+- [x] Task 4.3: `cam.focus` is `None` when `manualfocusdrive` is missing or not range-type.
 - [ ] Task 4.4: Run the `FocusDrive` contract suite.
+
+### Deviations
+
+- `cam.focus` is a separate `GPhoto2FocusDrive` (not a second base class of the camera),
+  because whether a camera can drive focus is only known once it is open. It shares the
+  camera's connection and lock: it opens with the camera, closes (forgetting its count)
+  when the camera closes, and closing it leaves the camera open. The same object is
+  returned on every connection.
+- `cam.focus` raises `NotConnected` while the camera is closed, rather than returning
+  `None`, which would wrongly say the camera can't drive focus. The first access per
+  connection reads the config tree once.
+- After an end stop the driver drains events and waits 1 s before the next command, as
+  the a6300 code did.
 
 ### Verification
 

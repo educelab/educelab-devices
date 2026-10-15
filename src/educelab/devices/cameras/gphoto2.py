@@ -170,8 +170,10 @@ class GPhoto2Camera(FileCamera):
         """The lens's focus drive, or ``None`` if the camera can't drive focus.
 
         Available when the camera has a range-type ``manualfocusdrive`` widget
-        (Nikon, Sony). It shares this camera's connection: it is open while the
-        camera is, and forgets its step count when the camera closes.
+        (Nikon, Sony). It shares this camera's connection: it opens with the
+        camera, closes and forgets its step count when the camera closes, and
+        closing it leaves the camera open. The same object is returned on every
+        connection while the lens can drive focus.
 
         Raises:
             NotConnected: The camera isn't open, so whether it can drive focus
@@ -185,13 +187,13 @@ class GPhoto2Camera(FileCamera):
                 except GPhoto2Error as exc:
                     raise self._error(exc, "reading settings") from exc
                 self._focus_checked = True
-                if widget is not None and widget.kind == "range":
+                if widget is None or widget.kind != "range":
+                    self._focus = None
+                else:
                     if self._focus is None:
                         self._focus = GPhoto2FocusDrive(self)
                     self._focus._attach(widget)
-            return (
-                self._focus if self._focus is not None and self._focus.is_open else None
-            )
+            return self._focus
 
     @classmethod
     def discover(cls) -> list[DeviceInfo]:
@@ -513,6 +515,9 @@ class GPhoto2FocusDrive(FocusDrive):
     def _open(self) -> None:
         if not self._camera.is_open:
             raise NotConnected(f"{self!r}: open the camera first")
+        # Re-checks the widget if the camera was reopened since it was last read.
+        if self._camera.focus is not self:
+            raise DeviceError(f"{self!r}: the camera can no longer drive focus")
 
     def _close(self) -> None:
         pass

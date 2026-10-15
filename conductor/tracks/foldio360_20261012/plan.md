@@ -108,7 +108,11 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
 
 ### Verification
 
-- [ ] Docs reviewed by maintainer.
+- [x] Docs reviewed by maintainer.
+  - Approved 2026-10-15, after the docs review and CI on PR #2 passing all 14 jobs; everything in the phase is accepted.
+  - Decided (2026-10-15): `discover()` keeps the real 8 s BLE scan.
+  - Decided (2026-10-15): `el-devices foldio halo` takes a level from 0 to 1.
+  - Decided (2026-10-15): the bleak error wrapping and the `_LoopThread` fix are accepted.
 
 ## Phase 5: Hardware verification and archive
 

@@ -7,13 +7,13 @@
   "updated": "2026-10-15T00:00:00Z",
   "phases": {
     "total": 5,
-    "completed": 3
+    "completed": 4
   },
   "tasks": {
     "total": 16,
     "completed": 13
   },
-  "current_phase": 4,
+  "current_phase": 5,
   "current_task": "5.1",
   "commits": [
     "ffba81e: Move the Foldio360 BLE client into the stages package",
@@ -39,6 +39,7 @@
     "ac11216: Wrap bleak's connection errors in the Foldio360 transport",
     "088477d: Fold the Foldio360 client guide into the hardware doc and guide",
     "53f06cc: Add el-devices foldio and BLE discovery for the Foldio360",
-    "37f3eb4: Accept a copied TimeoutError as the cause on Python 3.11"
+    "37f3eb4: Accept a copied TimeoutError as the cause on Python 3.11",
+    "ce7d6ec: Record Phase 4 progress for the Foldio360 track"
   ]
 }

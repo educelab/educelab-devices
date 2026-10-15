@@ -75,7 +75,12 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
 
 ### Tasks
 
-- [ ] Task 3.1: Write tests for `foldio.halo` (`"halo"` channel, level mapping to 0–100, paced writes, ack draining); implement.
+- [x] Task 3.1: Write tests for `foldio.halo` (`"halo"` channel, level mapping to 0–100, paced writes, ack draining); implement.
+  - `Foldio360Halo` (in `stages/foldio360.py`) is created by the turntable and reached as `Foldio360.halo`. It shares the turntable's lock (so a halo command waits for a move, and works inside `run`'s `on_frame`) and its connection: `is_open`, `open()`, and `close()` delegate to the turntable, so opening or closing either opens or closes both. These are overrides in the driver; the `Device` base is unchanged.
+  - Levels go out as `round(level * 100)`; `level()` reads `get_bright`, so it reports the hardware, not the last value set.
+  - Ack handling: writes are paced at least 50 ms apart (`_BRIGHT_PACING_S`); if an ack still doesn't come within 0.5 s, the level is read back and accepted if it landed, else `DeviceTimeout`. The lost ack is counted as a stray and drained before the next command.
+  - Removed the turntable's public `get_brightness`/`set_brightness` and the `wait=False` fire-and-forget path; pacing replaces it for ramps.
+  - `docs/guide.md` §1.4 now says a driver may offer a role as a second object sharing the connection (the halo); `CONTEXT.md` is unchanged.
 - [ ] Task 3.2: Run the `Light` contract suite against the halo.
 
 ### Verification

@@ -19,7 +19,10 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
   - Deviation: non-int arguments to `rotate_by`, `move_to`, and `origin` raise `TypeError` rather than `ValueError`, matching the package's convention (and Ruff's TRY004).
   - Deviation: the extra is `bleak>=3.0.2` without the old `<4` cap, which `requirements.txt` called a guess; a cap in a library extra only blocks consumers.
   - The module lives at `educelab.devices.stages.foldio360` but isn't exported from `stages/__init__.py` until it is a `Stage` (Phase 2).
-- [ ] Task 1.2: Port `test_foldio360.py` and its scripted fake transport; get it green unchanged in behavior.
+- [x] Task 1.2: Port `test_foldio360.py` and its scripted fake transport; get it green unchanged in behavior.
+  - The fake lives in `tests/fakes/foldio360.py` as `FakeNusTransport`; tests are pytest functions in `tests/test_foldio360.py`.
+  - Not ported: tests for `run`, `ir_shutter`, and `set_signal` (not copied, see 1.1), and the `cli.py` argument tests (`parse_direction`, `bounded_int`, parse-without-connecting), which move with the CLI in Task 4.2. `test_fail_is_an_error_response` used `ir_shutter(2)`; it now scripts FAIL for a `rotate`.
+  - Added: `DeviceTimeout` from a real `NusTransport.read()`, a missing `bleak` naming the extra, importing the driver not importing `bleak`, and `stop()` sending both cancels.
 - [ ] Task 1.3: Copy `PROTOCOL.md` to `docs/hardware/foldio360.md` and restructure it to the hardware-doc outline without losing content or markers.
 
 ### Verification

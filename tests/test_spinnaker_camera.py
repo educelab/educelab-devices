@@ -1,5 +1,9 @@
 """`SpinnakerCamera`, tested against the fake PySpin in `fakes.pyspin`."""
 
+import time
+from datetime import UTC, datetime, timedelta
+
+import numpy as np
 import pytest
 
 from educelab.devices import DeviceInfo
@@ -10,8 +14,19 @@ from educelab.devices.errors import (
     DeviceBusy,
     DeviceError,
     DeviceNotFound,
+    DeviceTimeout,
 )
-from fakes.pyspin import CameraPtr, FakeCamera, FakePySpin, SpinnakerException
+from fakes.pyspin import (
+    IMAGE_DATA_INCOMPLETE,
+    IMAGE_MISSING_PACKETS,
+    IMAGE_MISSING_TRAILER,
+    CameraPtr,
+    FakeCamera,
+    FakeImage,
+    FakePySpin,
+    FrameSpec,
+    SpinnakerException,
+)
 
 MONO = "20000001"
 COLOR = "20000002"
@@ -337,3 +352,167 @@ def test_failed_pixel_format_change_still_resumes_acquisition(
     with pytest.raises(CommandRejected):
         camera.set_setting(PIXEL_FORMAT, "Mono16")
     assert fake.streaming
+
+
+# --- Capture ------------------------------------------------------------------
+
+
+def stale(fake, age=1.0):
+    """A frame already waiting in a buffer, exposed ``age`` seconds ago."""
+    return FrameSpec(timestamp_ns=fake.device_time_ns() - round(age * 1e9))
+
+
+def test_capture_returns_a_copy_of_the_pixels(camera, fake):
+    frame = camera.capture_frame()
+    assert frame.pixels.shape == (fake.height, fake.width)
+    assert frame.pixels.dtype == np.uint8
+    assert frame.pixel_format == "Mono8"
+    assert not (frame.pixels == FakeImage.RELEASED_FILL).all()
+
+
+def test_capture_timestamp_is_host_time(camera):
+    before = datetime.now(UTC)
+    frame = camera.capture_frame()
+    assert before - timedelta(seconds=0.05) <= frame.timestamp
+    assert frame.timestamp <= datetime.now(UTC) + timedelta(seconds=0.05)
+
+
+def test_capture_metadata(camera, fake):
+    metadata = camera.capture_frame().metadata
+    assert metadata[EXPOSURE_TIME] == pytest.approx(0.01)
+    assert metadata[GAIN] == 0.0
+    assert metadata["device_timestamp_ns"] > 0
+    assert metadata["frame_id"] == fake.frames_grabbed
+    assert metadata["retries"] == 0
+    assert metadata["stale_frames"] == 0
+    assert metadata["incomplete_frames"] == 0
+    assert metadata["missing_trailer"] is False
+
+
+def test_capture_rejects_frames_older_than_not_before(camera, fake):
+    fake.queue_frames(stale(fake), stale(fake, 0.5))
+    request = time.time()
+    frame = camera.capture_frame(not_before=request)
+    assert frame.timestamp.timestamp() >= request - 0.01
+    assert frame.metadata["stale_frames"] == 2
+    assert frame.metadata["retries"] == 2
+    assert fake.frames_grabbed == 3
+
+
+def test_not_before_accepts_a_datetime(camera, fake):
+    fake.queue_frames(stale(fake))
+    frame = camera.capture_frame(not_before=datetime.now(UTC))
+    assert frame.metadata["stale_frames"] == 1
+
+
+def test_without_not_before_the_newest_frame_is_taken(camera, fake):
+    fake.queue_frames(stale(fake))
+    assert camera.capture_frame().metadata["stale_frames"] == 0
+
+
+def test_incomplete_frames_are_rejected_even_when_first(camera, fake):
+    # pgs-scan #83: the check was skipped on the frame normally returned.
+    fake.queue_frames(
+        FrameSpec(status=IMAGE_DATA_INCOMPLETE), FrameSpec(status=IMAGE_MISSING_PACKETS)
+    )
+    frame = camera.capture_frame()
+    assert frame.metadata["incomplete_frames"] == 2
+    assert frame.metadata["frame_id"] == 3
+
+
+def test_missing_trailer_frames_are_accepted_and_flagged(camera, fake):
+    fake.queue_frames(FrameSpec(status=IMAGE_MISSING_TRAILER))
+    frame = camera.capture_frame()
+    assert frame.metadata["missing_trailer"] is True
+    assert frame.metadata["incomplete_frames"] == 0
+
+
+def test_every_grabbed_buffer_is_released(camera, fake):
+    # pgs-scan #83: discarded frames leaked their buffers.
+    for _ in range(3):
+        fake.queue_frames(stale(fake), FrameSpec(status=IMAGE_DATA_INCOMPLETE))
+        camera.capture_frame(not_before=time.time())
+    assert fake.frames_grabbed == 9
+    assert fake.held == []
+
+
+def test_many_captures_never_exhaust_the_buffer_pool(camera, fake):
+    for _ in range(fake.buffer_count * 3):
+        fake.queue_frames(stale(fake))
+        camera.capture_frame(not_before=time.time())
+    assert fake.held == []
+
+
+def test_retries_are_bounded(camera, fake):
+    # Every frame is older than a request in the future, so none will do.
+    with pytest.raises(DeviceError, match="no usable frame") as info:
+        camera.capture_frame(not_before=time.time() + 60)
+    assert fake.frames_grabbed == spinnaker.MAX_ATTEMPTS
+    assert fake.held == []
+    assert info.value.__context__ is None
+
+
+def test_offset_is_remeasured_when_a_round_of_retries_runs_out(camera, fake):
+    # The camera's counter jumped, so every frame looks 5 s old until the
+    # offset is measured again.
+    fake.device_epoch += 5.0
+    frame = camera.capture_frame(not_before=time.time())
+    assert frame.metadata["retries"] == spinnaker.RETRIES_BEFORE_REMEASURE
+    assert frame.metadata["timestamp_remeasured"] is True
+    assert fake.latch_calls == 2 * spinnaker.TIMESTAMP_SAMPLES
+    assert camera.timestamp_offset == pytest.approx(fake.device_epoch, abs=0.01)
+
+
+def test_no_frame_in_time_raises_device_timeout(camera, fake, monkeypatch):
+    def no_frame(self, timeout=0):
+        raise SpinnakerException("timed out", -1011)
+
+    monkeypatch.setattr(CameraPtr, "GetNextImage", no_frame)
+    with pytest.raises(DeviceTimeout) as info:
+        camera.capture_frame()
+    assert info.value.__context__ is None
+
+
+def test_an_expired_timeout_raises_device_timeout(camera, fake):
+    fake.queue_frames(stale(fake))
+    with pytest.raises(DeviceTimeout):
+        camera.capture_frame(not_before=time.time(), timeout=0)
+    assert fake.held == []
+
+
+def test_grab_timeout_covers_the_exposure(camera, fake, monkeypatch):
+    seen = []
+    original = CameraPtr.GetNextImage
+
+    def spy(self, timeout=0):
+        seen.append(timeout)
+        return original(self, timeout)
+
+    monkeypatch.setattr(CameraPtr, "GetNextImage", spy)
+    camera.set_setting("ExposureAuto", "Off")
+    camera.set_setting(EXPOSURE_TIME, 5.0)
+    camera.capture_frame()
+    assert seen[0] >= 5000
+
+
+def test_capture_in_each_pixel_format(pyspin):
+    with SpinnakerCamera(COLOR, pyspin=pyspin) as camera:
+        for fmt, shape, dtype in (
+            ("RGB8", (6, 8, 3), np.uint8),
+            ("Mono16", (6, 8), np.uint16),
+            ("BayerRG8", (6, 8), np.uint8),
+        ):
+            camera.set_setting(PIXEL_FORMAT, fmt)
+            frame = camera.capture_frame()
+            assert (frame.pixel_format, frame.pixels.shape) == (fmt, shape)
+            assert frame.pixels.dtype == dtype
+
+
+def test_close_after_captures_releases_the_system(pyspin, fake):
+    camera = SpinnakerCamera(MONO, pyspin=pyspin)
+    with camera:
+        fake.queue_frames(stale(fake))
+        camera.capture_frame(not_before=time.time())
+        with pytest.raises(DeviceError):
+            camera.capture_frame(not_before=time.time() + 60)
+    assert_released(pyspin)

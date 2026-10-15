@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterable, Mapping
 
 from educelab.devices.cameras._gphoto2 import (
     GP_ERROR_BAD_PARAMETERS,
+    GP_ERROR_CAMERA_ERROR,
     GP_ERROR_IO_USB_FIND,
     Event,
     FilePath,
@@ -97,6 +98,12 @@ class FakeCamera:
         widgets: The config tree, flattened. Defaults to `NIKON_WIDGETS`.
         suffixes: Files each capture produces, by extension.
         preview: Bytes `capture_preview()` returns. Defaults to a small JPEG.
+        focus_travel: Steps between the lens's near and far limits.
+        focus_position: Where the lens starts, in steps from near.
+
+    Writing ``manualfocusdrive`` moves the lens by that many steps, positive
+    toward far. A move that would pass a limit stops there and raises
+    ``-113``, as the a6300 did (docs/hardware/gphoto2-cameras.md#focus-drive).
     """
 
     def __init__(
@@ -107,6 +114,8 @@ class FakeCamera:
         widgets: Iterable[Widget] = NIKON_WIDGETS,
         suffixes: Iterable[str] = (".NEF",),
         preview: bytes | None = None,
+        focus_travel: int = 5000,
+        focus_position: int = 2500,
     ) -> None:
         self._model = model
         self.port = port
@@ -114,6 +123,9 @@ class FakeCamera:
         self.suffixes = tuple(suffixes)
         self.preview = jpeg() if preview is None else preview
         self.writes: list[dict[str, WidgetValue]] = []
+        self.focus_travel = focus_travel
+        self.focus_position = focus_position
+        self.focus_moves: list[float] = []
         self.storage: dict[FilePath, bytes] = {}
         self.events: deque[Event] = deque()
         self.is_open = False
@@ -176,7 +188,19 @@ class FakeCamera:
                 raise GPhoto2Error(GP_ERROR_BAD_PARAMETERS, "Bad parameters")
         self.writes.append(dict(values))
         for name, value in values.items():
-            self.widgets[name] = dataclasses.replace(self.widgets[name], value=value)
+            if name == "manualfocusdrive":
+                self._drive_focus(float(value))
+            else:
+                self.widgets[name] = dataclasses.replace(
+                    self.widgets[name], value=value
+                )
+
+    def _drive_focus(self, steps: float) -> None:
+        self.focus_moves.append(steps)
+        target = self.focus_position + int(steps)
+        self.focus_position = min(max(target, 0), self.focus_travel)
+        if self.focus_position != target:
+            raise GPhoto2Error(GP_ERROR_CAMERA_ERROR, "Unspecified camera error")
 
     @staticmethod
     def _accepts(widget: Widget, value: WidgetValue) -> bool:

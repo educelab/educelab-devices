@@ -17,6 +17,7 @@ import numpy.typing as npt
 
 from educelab.devices.cameras._gphoto2 import (
     GP_ERROR_CAMERA_BUSY,
+    GP_ERROR_CAMERA_ERROR,
     GP_ERROR_IO_USB_CLAIM,
     GP_ERROR_IO_USB_FIND,
     GP_ERROR_MODEL_NOT_FOUND,
@@ -37,18 +38,20 @@ from educelab.devices.cameras.base import (
     CameraFile,
     FileCamera,
 )
+from educelab.devices.cameras.focus import FocusDrive, FocusLimit
 from educelab.devices.device import DeviceInfo, Disconnected
 from educelab.devices.errors import (
     DeviceBusy,
     DeviceError,
     DeviceNotFound,
     DeviceTimeout,
+    FocusLimitReached,
     NotConnected,
     import_optional,
 )
 from educelab.devices.settings import Setting, SettingValue
 
-__all__ = ["GPhoto2Camera", "shutter_seconds"]
+__all__ = ["GPhoto2Camera", "GPhoto2FocusDrive", "focus_settle_s", "shutter_seconds"]
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +79,19 @@ KEEP_ALIVE_WAIT_S = 0.01
 # Pings that must fail in a row before listeners hear `Disconnected`, so one
 # hiccup doesn't count as a lost camera.
 KEEP_ALIVE_FAILURES = 3
+
+# Focus drive behaviour seen on a Sony a6300 in usb-dslr-capture-demo
+# (origin/ankan); unconfirmed on the Z7 II (docs/hardware/gphoto2-cameras.md#focus-drive).
+FOCUS_WIDGET = "manualfocusdrive"
+FOCUS_CHUNK_STEPS = 1000
+FOCUS_SETTLE_BASE_S = 0.1
+FOCUS_SETTLE_PER_STEP_S = 0.0005
+FOCUS_SETTLE_MAX_S = 3.0
+FOCUS_BUSY_ATTEMPTS = 15
+FOCUS_BUSY_WAIT_S = 0.5
+FOCUS_LIMIT_RECOVERY_S = 1.0
+# drive_to_limit() gives up after this many steps without reaching an end stop.
+FOCUS_LIMIT_MAX_STEPS = 1_000_000
 
 # Widgets that turn live view on, by camera family, and spellings of "off" for
 # continuous AF. From pgs-scan's spectral prototype
@@ -137,6 +153,8 @@ class GPhoto2Camera(FileCamera):
         self._capture_in_flight = threading.Event()
         self._keep_alive_stop = threading.Event()
         self._keep_alive_thread: threading.Thread | None = None
+        self._focus: GPhoto2FocusDrive | None = None
+        self._focus_checked = False
         self._live_view_tried = False
         # The widget that turned live view on, so close() can turn it off.
         self._live_view: str | None = None
@@ -146,6 +164,34 @@ class GPhoto2Camera(FileCamera):
         return DeviceInfo(
             backend="gphoto2", model=self._model or "unknown", address=self._port
         )
+
+    @property
+    def focus(self) -> "GPhoto2FocusDrive | None":
+        """The lens's focus drive, or ``None`` if the camera can't drive focus.
+
+        Available when the camera has a range-type ``manualfocusdrive`` widget
+        (Nikon, Sony). It shares this camera's connection: it is open while the
+        camera is, and forgets its step count when the camera closes.
+
+        Raises:
+            NotConnected: The camera isn't open, so whether it can drive focus
+                isn't known yet.
+        """
+        with self._lock:
+            session = self._require_session()
+            if not self._focus_checked:
+                try:
+                    widget = session.config().get(FOCUS_WIDGET)
+                except GPhoto2Error as exc:
+                    raise self._error(exc, "reading settings") from exc
+                self._focus_checked = True
+                if widget is not None and widget.kind == "range":
+                    if self._focus is None:
+                        self._focus = GPhoto2FocusDrive(self)
+                    self._focus._attach(widget)
+            return (
+                self._focus if self._focus is not None and self._focus.is_open else None
+            )
 
     @classmethod
     def discover(cls) -> list[DeviceInfo]:
@@ -248,6 +294,9 @@ class GPhoto2Camera(FileCamera):
         return found[0][1]
 
     def _close(self) -> None:
+        self._focus_checked = False
+        if self._focus is not None:
+            self._focus._detach()
         self._keep_alive_stop.set()
         thread, self._keep_alive_thread = self._keep_alive_thread, None
         # A listener may close the camera from the keep-alive thread itself.
@@ -424,6 +473,112 @@ class GPhoto2Camera(FileCamera):
         if self._session is None:
             raise NotConnected(f"{self!r} is not open; call open() first")
         return self._session
+
+
+class GPhoto2FocusDrive(FocusDrive):
+    """The focus drive of a `GPhoto2Camera`, reached through ``camera.focus``.
+
+    It shares the camera's connection and lock rather than opening its own:
+    `open()` succeeds only while the camera is open, `close()` leaves the
+    camera alone, and closing the camera closes this too. Moves larger than
+    `FOCUS_CHUNK_STEPS` go in chunks, each followed by a settle wait.
+    """
+
+    def __init__(self, camera: GPhoto2Camera) -> None:
+        super().__init__()
+        self._camera = camera
+        # One lock for both, so focus moves, captures, and keep-alive pings
+        # never interleave on the bus.
+        self._lock = camera._lock
+        self._max_chunk = FOCUS_CHUNK_STEPS
+
+    @property
+    def info(self) -> DeviceInfo:
+        return self._camera.info
+
+    def __repr__(self) -> str:
+        return f"<GPhoto2FocusDrive of {self._camera!r}>"
+
+    def _attach(self, widget: Widget) -> None:
+        """Mark the drive open for the camera's session, sized to ``widget``."""
+        limit = min(abs(widget.minimum or 0), abs(widget.maximum or 0))
+        self._max_chunk = int(limit) if limit >= 1 else FOCUS_CHUNK_STEPS
+        self._is_open = True
+
+    def _detach(self) -> None:
+        """The camera closed: close the drive and forget the count."""
+        self._is_open = False
+        self._reset_state()
+
+    def _open(self) -> None:
+        if not self._camera.is_open:
+            raise NotConnected(f"{self!r}: open the camera first")
+
+    def _close(self) -> None:
+        pass
+
+    def _step(self, steps: int) -> None:
+        chunk = min(FOCUS_CHUNK_STEPS, self._max_chunk)
+        sign = 1 if steps > 0 else -1
+        remaining = abs(steps)
+        while remaining:
+            move = min(chunk, remaining)
+            self._move(sign * move)
+            remaining -= move
+
+    def _drive_to_limit(self, limit: FocusLimit) -> None:
+        sign = 1 if limit == "far" else -1
+        moved = 0
+        while moved < FOCUS_LIMIT_MAX_STEPS:
+            try:
+                self._move(sign * self._max_chunk)
+            except FocusLimitReached:
+                return
+            moved += self._max_chunk
+        raise DeviceError(
+            f"{self!r}: no {limit} limit after {moved} steps; the lens may not "
+            "report its end stops"
+        )
+
+    def _move(self, steps: int) -> None:
+        """One write to the focus widget, retried while the camera is busy."""
+        session = self._camera._require_session()
+        for attempt in range(1, FOCUS_BUSY_ATTEMPTS + 1):
+            try:
+                session.set_config({FOCUS_WIDGET: float(steps)})
+                break
+            except GPhoto2Error as exc:
+                if exc.code == GP_ERROR_CAMERA_BUSY and attempt < FOCUS_BUSY_ATTEMPTS:
+                    logger.debug("%r busy; retrying", self)
+                    _wait(FOCUS_BUSY_WAIT_S)
+                    continue
+                if exc.code == GP_ERROR_CAMERA_ERROR:
+                    self._recover_from_end_stop(session)
+                    raise FocusLimitReached("far" if steps > 0 else "near") from exc
+                raise self._camera._error(
+                    exc, f"driving focus {steps:+d} steps"
+                ) from exc
+        _wait(focus_settle_s(steps))
+
+    def _recover_from_end_stop(self, session: Session) -> None:
+        # The camera queues events about the failed move; reading them and
+        # pausing before the next move is what kept the a6300 responsive.
+        try:
+            for stale in self._camera._drain(session):
+                self._camera._discarded(stale)
+        except DeviceError as exc:
+            logger.debug("%r could not drain events after an end stop: %s", self, exc)
+        _wait(FOCUS_LIMIT_RECOVERY_S)
+
+
+def focus_settle_s(steps: int) -> float:
+    """How long to let the lens settle after moving ``steps``, in seconds."""
+    seconds = FOCUS_SETTLE_BASE_S + FOCUS_SETTLE_PER_STEP_S * abs(steps)
+    return min(seconds, FOCUS_SETTLE_MAX_S)
+
+
+def _wait(seconds: float) -> None:
+    time.sleep(seconds)
 
 
 def shutter_seconds(text: str) -> float | None:

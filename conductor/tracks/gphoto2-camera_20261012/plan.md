@@ -99,7 +99,7 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
 
 ### Tasks
 
-- [ ] Task 4.1: Write tests for `step()` chunking, settle waits, busy retry, `FocusLimitReached`, and the step counter; implement.
+- [x] Task 4.1: Write tests for `step()` chunking, settle waits, busy retry, `FocusLimitReached`, and the step counter; implement.
 - [ ] Task 4.2: Write tests for `drive_to_limit()`; implement.
 - [ ] Task 4.3: `cam.focus` is `None` when `manualfocusdrive` is missing or not range-type.
 - [ ] Task 4.4: Run the `FocusDrive` contract suite.

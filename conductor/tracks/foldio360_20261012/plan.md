@@ -30,7 +30,10 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
 
 ### Verification
 
-- [~] Ported tests pass on all CI platforms. (Local: macOS on Python 3.11, 3.13, and 3.14, and 3.13 without `bleak`. Linux/Windows CI not yet run: nothing has been pushed.)
+- [x] Ported tests pass on all CI platforms.
+  - Approved 2026-10-15, after CI on draft PR #2 passed on every OS and Python version.
+  - Decided (2026-10-15): using the package's error types (`DeviceTimeout`, `DeviceNotFound`, `NotConnected`, `CommandRejected`) in place of the client's own is approved.
+  - Decided (2026-10-15): positions are whole degrees. Move targets are rounded to the nearest degree, and arrival is accepted within ±1°. Document this in the hardware doc, the driver docstrings, and the Stage behavior notes where callers would notice it.
 
 ## Phase 2: Stage adaptation
 

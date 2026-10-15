@@ -293,8 +293,12 @@ Each needs the Z7 II on the bench (Tasks 5.4–5.6):
 
 ## Manual check
 
-`el-devices dslr` detects the camera, lists its settings, captures to a directory, and
-steps the focus drive. The `hardware`-marked tests in `tests/test_gphoto2_hardware.py`
+`el-devices dslr` opens the camera (`--port`, or the only one attached), lists its
+settings and whether it has a focus drive, then runs whichever checks are asked for:
+`--exposure SECONDS` sets the nearest shutter speed, `--capture DIR` captures once and
+saves every file under the camera's names (refusing to overwrite), `--preview` grabs
+one live-view frame and prints its size, and `--focus-steps N` moves focus, reporting a
+limit if it hits one. Add `-v` (`el-devices -v dslr …`) to log libgphoto2's traffic. The `hardware`-marked tests in `tests/test_gphoto2_hardware.py`
 cover capture (RAW and RAW + JPEG), exposure, preview, and focus. Results from real
 hardware go here.
 

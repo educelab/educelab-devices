@@ -257,7 +257,11 @@ class LibGPhoto2:
 
     def autodetect(self) -> list[tuple[str, str]]:
         with _translated(self._gp):
-            return [(model, port) for model, port in self._gp.Camera.autodetect()]
+            # Iterating a CameraList is deprecated as of python-gphoto2 2.6.
+            found = self._gp.Camera.autodetect()
+            return [
+                (found.get_name(i), found.get_value(i)) for i in range(found.count())
+            ]
 
     def open(self, port: str) -> Session:
         gp = self._gp

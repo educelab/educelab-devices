@@ -37,6 +37,11 @@
     "f56602e: Drive gphoto2 lens focus in chunked, settled steps",
     "e439e1a: Test driving gphoto2 focus to its near and far limits",
     "14db510: Offer camera.focus only when the lens has a range-type focus drive",
-    "9aaa541: Run the FocusDrive contract suite against camera.focus"
+    "9aaa541: Run the FocusDrive contract suite against camera.focus",
+    "34b2c67: Record gphoto2 Phase 4 commits in the track metadata",
+    "773ea04: Record approval of gphoto2 Phase 4",
+    "f8f3e43: Fill out the gphoto2 hardware doc with the Z7 II, hazards, and unknowns",
+    "a4626fc: Add el-devices dslr to check a gphoto2 camera by hand",
+    "ce54072: Add gphoto2 hardware tests and stop iterating CameraList"
   ]
 }

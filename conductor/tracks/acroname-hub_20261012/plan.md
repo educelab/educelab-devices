@@ -15,11 +15,11 @@ A small driver: fake brainstem seam, driver, then docs, CLI, and hardware check.
 
 - [x] Task 1.1: Declare the `[acroname]` extra; lazy import; define the internal brainstem seam and a fake.
 - [x] Task 1.2: Write tests for discovery, port power, `power_cycle`, enumeration delay, and error mapping; implement.
-- [ ] Task 1.3: Run the `Hub` contract suite.
+- [x] Task 1.3: Run the `Hub` contract suite.
 
 ### Verification
 
-- [ ] Hub tests and contracts pass.
+- [x] Hub tests and contracts pass.
 
 ### Notes and deviations
 

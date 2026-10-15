@@ -7,6 +7,7 @@ import time
 import pytest
 
 import fakes.brainstem
+from contracts import HubContract
 from educelab.devices.device import DeviceInfo
 from educelab.devices.errors import (
     CommandRejected,
@@ -72,6 +73,16 @@ def unit(sdk):
 def hub(sdk):
     with AcronameHub(SERIAL, sdk=sdk) as hub:
         yield hub
+
+
+class TestAcronameHubContract(HubContract):
+    @pytest.fixture(autouse=True)
+    def fake_sdk(self, monkeypatch):
+        monkeypatch.setattr(acroname, "load_sdk", bus)
+
+    @pytest.fixture
+    def make_device(self):
+        return lambda: AcronameHub(SERIAL, sdk=bus())
 
 
 def test_discover_lists_hubs_by_serial_number(monkeypatch):

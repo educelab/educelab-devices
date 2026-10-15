@@ -43,7 +43,8 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
 ### Tasks
 
 - [x] Task 2.1: Write tests for single-file and multi-file (RAW + JPEG) captures, download retries, and the in-flight guard; implement `capture_files()`.
-- [ ] Task 2.2: Run the `FileCamera` contract suite.
+- [x] Task 2.2: Run the `FileCamera` contract suite.
+  - The `Device` and `FileCamera` rules pass. The inherited `Camera` rules need settings and live view, so they are strict xfails until Task 3.4 removes the marker.
 
 ### Deviations
 

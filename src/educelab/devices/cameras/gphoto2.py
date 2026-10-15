@@ -3,6 +3,7 @@
 Error codes, timing, and per-body quirks: docs/hardware/gphoto2-cameras.md.
 """
 
+import io
 import logging
 import re
 import sys
@@ -43,6 +44,7 @@ from educelab.devices.errors import (
     DeviceNotFound,
     DeviceTimeout,
     NotConnected,
+    import_optional,
 )
 from educelab.devices.settings import Setting, SettingValue
 
@@ -65,6 +67,13 @@ EVENT_POLL_S = 0.05
 DRAIN_LIMIT_S = 2.0
 DOWNLOAD_ATTEMPTS = 3
 DOWNLOAD_RETRY_DELAY_S = 1.0
+
+# Widgets that turn live view on, by camera family, and spellings of "off" for
+# continuous AF. From pgs-scan's spectral prototype
+# (docs/hardware/gphoto2-cameras.md#live-view).
+_VIEWFINDER_WIDGETS = ("viewfinder", "eosviewfinder", "d1a6")
+_CONTINUOUS_AF_WIDGETS = ("continuousaf", "continuous-af", "continuousautofocus")
+_OFF_SPELLINGS = frozenset({"off", "0", "disable", "disabled", "false", "no"})
 
 _DOC = "docs/hardware/gphoto2-cameras.md"
 
@@ -117,6 +126,9 @@ class GPhoto2Camera(FileCamera):
         # Set while the shutter is released or files are downloading, so the
         # keep-alive thread stays off the bus.
         self._capture_in_flight = threading.Event()
+        self._live_view_tried = False
+        # The widget that turned live view on, so close() can turn it off.
+        self._live_view: str | None = None
 
     @property
     def info(self) -> DeviceInfo:
@@ -184,8 +196,15 @@ class GPhoto2Camera(FileCamera):
 
     def _close(self) -> None:
         session, self._session = self._session, None
+        live_view, self._live_view = self._live_view, None
+        self._live_view_tried = False
         if session is None:
             return
+        if live_view is not None:
+            try:
+                session.set_config({live_view: 0})
+            except GPhoto2Error as exc:
+                logger.warning("%r could not turn live view off: %s", self, exc)
         try:
             session.close()
         except GPhoto2Error as exc:
@@ -240,7 +259,49 @@ class GPhoto2Camera(FileCamera):
             raise self._error(exc, f"setting {name} to {value!r}") from exc
 
     def _preview_frame(self) -> npt.NDArray[np.uint8]:
-        raise NotImplementedError("GPhoto2Camera live view is not implemented yet")
+        session = self._require_session()
+        if not self._live_view_tried:
+            self._live_view_tried = True
+            self._start_live_view(session)
+        try:
+            data = session.capture_preview()
+        except GPhoto2Error as exc:
+            raise self._error(exc, "grabbing a preview") from exc
+        image = import_optional("PIL.Image", extra="gphoto2")
+        try:
+            with image.open(io.BytesIO(data)) as decoded:
+                return np.asarray(decoded.convert("RGB"), dtype=np.uint8)
+        except (OSError, ValueError) as exc:
+            raise DeviceError(f"{self!r}: could not decode the preview: {exc}") from exc
+
+    def _start_live_view(self, session: Session) -> None:
+        """Turn live view on and continuous AF off, in one round trip.
+
+        Best effort: most bodies still return previews without this, so a
+        failure is logged rather than raised.
+        """
+        try:
+            widgets = session.config()
+        except GPhoto2Error as exc:
+            logger.warning("%r could not read settings for live view: %s", self, exc)
+            return
+        values: dict[str, WidgetValue] = {}
+        viewfinder = next((n for n in _VIEWFINDER_WIDGETS if n in widgets), None)
+        if viewfinder is not None:
+            values[viewfinder] = 1
+        af = next((widgets[n] for n in _CONTINUOUS_AF_WIDGETS if n in widgets), None)
+        if af is not None:
+            off = _off_value(af)
+            if off is not None and af.value != off:
+                values[af.name] = off
+        if not values:
+            return
+        try:
+            session.set_config(values)
+        except GPhoto2Error as exc:
+            logger.warning("%r could not turn live view on: %s", self, exc)
+            return
+        self._live_view = viewfinder
 
     def _capture_files(self) -> list[CameraFile]:
         session = self._require_session()
@@ -393,6 +454,15 @@ def _native_setting(widget: Widget) -> Setting | None:
     if widget.kind == "date":
         return Setting(name, int(value), read_only=read_only)
     return Setting(name, str(value), read_only=read_only)
+
+
+def _off_value(widget: Widget) -> WidgetValue | None:
+    """The value that turns a toggle or choice widget off, if it has one."""
+    if widget.kind == "toggle":
+        return 0
+    return next(
+        (c for c in widget.choices if c.strip().lower() in _OFF_SPELLINGS), None
+    )
 
 
 def _toggle_value(value: SettingValue) -> WidgetValue:

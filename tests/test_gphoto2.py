@@ -680,3 +680,79 @@ def test_close_without_preview_leaves_live_view_alone():
     with opened(attached):
         pass
     assert attached.writes == []
+
+
+@pytest.fixture
+def fast_keep_alive(monkeypatch):
+    monkeypatch.setattr(gphoto2, "KEEP_ALIVE_INTERVAL_S", 0.005)
+
+
+def wait_until(condition, timeout=5.0):
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "timed out"
+        time.sleep(0.001)
+
+
+def pings(attached):
+    return attached.calls.count("wait_for_event")
+
+
+def test_keep_alive_pings_an_idle_camera_until_close(fast_keep_alive):
+    attached = FakeCamera()
+    camera = opened(attached)
+    wait_until(lambda: pings(attached) >= 3)
+    thread = camera._keep_alive_thread
+    assert thread is not None and thread.daemon
+    camera.close()
+    assert not thread.is_alive()
+    after_close = pings(attached)
+    time.sleep(0.03)
+    assert pings(attached) == after_close
+
+
+def test_keep_alive_restarts_on_reopen(fast_keep_alive):
+    attached = FakeCamera()
+    camera = opened(attached)
+    camera.close()
+    camera.open()
+    before = pings(attached)
+    wait_until(lambda: pings(attached) > before)
+    camera.close()
+
+
+def test_keep_alive_pauses_during_capture(fast_keep_alive, fast_capture):
+    attached = FakeCamera()
+    camera = opened(attached)
+    wait_until(lambda: pings(attached) >= 1)
+    during = []
+
+    def hold_shutter():
+        start = pings(attached)
+        time.sleep(0.05)
+        during.append(pings(attached) - start)
+
+    attached.on_capture = hold_shutter
+    camera.capture_files()
+    camera.close()
+    assert during == [0]
+
+
+def test_keep_alive_failure_is_logged_and_pinging_continues(fast_keep_alive, caplog):
+    attached = FakeCamera()
+    attached.fail_next("wait_for_event", GP_ERROR)
+    with caplog.at_level(logging.WARNING, logger=gphoto2.__name__):
+        camera = opened(attached)
+        wait_until(lambda: pings(attached) >= 3)
+        camera.close()
+    assert "keep-alive" in caplog.text
+
+
+def test_keep_alive_reports_files_added_between_captures(fast_keep_alive, caplog):
+    attached = FakeCamera()
+    attached.events.append(Event("file_added", FilePath(FOLDER, "DSC_0000.JPG")))
+    with caplog.at_level(logging.WARNING, logger=gphoto2.__name__):
+        camera = opened(attached)
+        wait_until(lambda: not attached.events)
+        camera.close()
+    assert "DSC_0000.JPG" in caplog.text

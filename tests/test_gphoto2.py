@@ -472,8 +472,11 @@ def test_capture_in_flight_is_flagged_and_blocks_other_captures(fast_capture):
 
 
 class TestGPhoto2Contract(FileCameraContract):
+    """The Device, Camera, and FileCamera rules, with keep-alive pinging fast
+    so it runs alongside every call."""
+
     @pytest.fixture(autouse=True)
-    def attached(self, monkeypatch, fast_capture):
+    def attached(self, monkeypatch, fast_capture, fast_keep_alive):
         library = FakeLibrary(FakeCamera(suffixes=(".NEF", ".JPG")))
         monkeypatch.setattr(gphoto2, "_default_library", lambda: library)
         return library

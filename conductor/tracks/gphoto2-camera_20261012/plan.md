@@ -89,7 +89,11 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
 
 ### Verification
 
-- [ ] All tests and contracts pass.
+- [x] All tests and contracts pass.
+  - Approved 2026-10-15, after CI on PR #4 passed all 14 jobs.
+  - Decided (2026-10-15): pause live view around aperture reads and writes only if Phase 5 shows the Z7 II restricts aperture choices while live view is on (Task 5.6).
+  - Decided (2026-10-15): after 3 consecutive failed keep-alive pings, emit `Disconnected` to listeners, still logging each failure.
+  - Pending: how canonical settings behave while the camera is at a non-numeric value (`Bulb`, `Auto`). Left as is (absent, with the widget under its native name) until the maintainer decides.
 
 ## Phase 4: Focus drive
 
@@ -113,6 +117,7 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
 - [ ] Task 5.3: Write `@pytest.mark.hardware` tests (capture RAW and RAW + JPEG, set exposure, preview, focus step and limits).
 - [ ] Task 5.4: Run them on the Z7 II; confirm error codes and settle timing; record findings in the hardware doc.
 - [ ] Task 5.5: Measure how long a config read at `open()` takes on the Z7 II, and decide whether `open()` reads the serial number into `DeviceInfo.serial_number`.
+- [ ] Task 5.6: Check whether the Z7 II restricts aperture choices while live view is on; if it does, pause live view around aperture reads and writes.
 
 ### Verification
 

@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from contracts import StageContract
+from contracts import LightContract, StageContract
 from educelab.devices.errors import (
     CommandRejected,
     DeviceBusy,
@@ -294,6 +294,12 @@ def test_rotate_sends_no_trailing_cancel():
 
 
 # -- the halo ----------------------------------------------------------------------
+
+
+class TestFoldio360HaloContract(LightContract):
+    @pytest.fixture
+    def make_device(self):
+        return lambda: Foldio360(transport=FakeNusTransport()).halo
 
 
 def test_halo_is_a_light_with_one_mono_channel():

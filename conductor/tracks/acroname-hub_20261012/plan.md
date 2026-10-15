@@ -20,6 +20,9 @@ A small driver: fake brainstem seam, driver, then docs, CLI, and hardware check.
 ### Verification
 
 - [x] Hub tests and contracts pass.
+- [x] CI passes on every OS and Python version (draft PR #3).
+  - Approved 2026-10-15.
+  - Decided (2026-10-15): the enumeration delay only changes the running value. The driver never calls `system.save()` or `system.reset()`, because devices persist nothing. If the hardware check finds the delay doesn't take effect without a save, record that in the hardware doc and flag it; don't add a save step.
 
 ### Notes and deviations
 
@@ -29,8 +32,8 @@ A small driver: fake brainstem seam, driver, then docs, CLI, and hardware check.
   driver methods: `enumeration_delay() -> Setting` (seconds, step 0.1) and
   `set_enumeration_delay(seconds)`, which snaps to the nearest 100 ms. It sets
   the running hub only. `pgs-scan`'s `usb_hub3p_config.py` also called
-  `system.save()` and `system.reset()`; whether that's needed for the delay to
-  take effect is open (see the report to the maintainer).
+  `system.save()` and `system.reset()`; the driver doesn't (see the decision
+  above).
 - `AcronameHub()` with no serial number opens the only hub attached and refuses
   to guess between several (as `MishaLight` does). Serial number 0 is rejected
   because the SDK reads it as "any hub".

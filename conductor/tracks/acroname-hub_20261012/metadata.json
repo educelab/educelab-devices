@@ -17,6 +17,7 @@
   "current_task": "2.1",
   "commits": [
     "91afc5d: Add acroname extra, lazy brainstem loader, and fake BrainStem SDK",
-    "d0eeff0: Add AcronameHub driver for the USBHub3p"
+    "d0eeff0: Add AcronameHub driver for the USBHub3p",
+    "3657573: Run the Hub contract suite against AcronameHub"
   ]
 }

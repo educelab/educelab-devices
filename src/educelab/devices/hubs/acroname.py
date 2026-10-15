@@ -135,7 +135,7 @@ class AcronameHub(Hub):
     ) -> None:
         super().__init__()
         self._serial_number = (
-            None if serial_number is None else _parse_serial(serial_number)
+            None if serial_number is None else parse_serial_number(serial_number)
         )
         self._sdk = sdk
         self._stem: Any = None
@@ -321,7 +321,13 @@ def _enumeration_delay(seconds: float) -> Setting:
     )
 
 
-def _parse_serial(serial_number: int | str) -> int:
+def parse_serial_number(serial_number: int | str) -> int:
+    """A hub serial number from an int or a hex string, with or without ``0x``.
+
+    Raises:
+        TypeError: ``serial_number`` is neither an int nor a string.
+        ValueError: ``serial_number`` isn't a nonzero 32-bit hex number.
+    """
     if isinstance(serial_number, str):
         try:
             value = int(serial_number.strip(), 16)

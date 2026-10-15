@@ -21,11 +21,11 @@ As the `pgs-scan` developer, I want each Spinnaker camera behind the `FrameCamer
 
 - [ ] PySpin imported lazily; a missing PySpin raises an `ImportError` pointing to `docs/hardware/spinnaker.md` install steps.
 - [ ] `SpinnakerSystem` owns the PySpin `System` instance (shared, released when the last user closes), and `discover()` returns serial number and model per camera; enumeration/removal has no #90 bug.
-- [ ] `SpinnakerCamera(serial)` is a `Device` and `FrameCamera`; open configures continuous acquisition with newest-only buffering.
+- [ ] `SpinnakerCamera(serial)` is a `Device` and `FrameCamera`; open initializes the camera and starts acquiring in software-trigger mode, so frames are sent only when requested. (Changed 2026-10-15 from "continuous acquisition with newest-only buffering"; see the Phase 1 decisions in plan.md.)
 - [ ] Settings: canonical `exposure_time` (seconds), `gain`, `pixel_format`, with auto modes; ranges reported via `Setting` descriptors.
 - [ ] `capture_frame(not_before=ts, timeout=…)` rejects frames older than `ts` using a measured device-to-host timestamp offset, with bounded retries; **every** grabbed buffer is released (fixes #83); incomplete images are rejected on every frame; `Frame` metadata includes timestamp and retry count.
 - [ ] `preview_frame()` returns the newest frame.
-- [ ] Acquisition start/stop semantics are decided and documented (implicit on demand vs. explicit), recorded in the hardware doc.
+- [ ] Acquisition start/stop semantics are decided and documented, recorded in the hardware doc. (Decided 2026-10-15: acquiring from `open()` to `close()`, software-triggered per frame.)
 - [ ] Tests run against a fake PySpin module; `Camera`/`FrameCamera` contract suites pass.
 - [ ] `docs/hardware/spinnaker.md`: SDK install, Python 3.12 only, numpy<2 requirement, version coupling.
 - [ ] `el-devices spinnaker` subcommand: list cameras, capture N frames, capture-latency benchmark (like `pgs-scan` `utils/system_check.py`).

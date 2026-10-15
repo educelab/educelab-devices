@@ -19,7 +19,11 @@ Build a fake PySpin first, then the system/enumeration layer, then the per-camer
 
 ### Verification
 
-- [ ] System tests pass in CI. (Passed locally on 3.12 + numpy<2, 3.11 and 3.14 with numpy 2; CI not run, since the branch isn't pushed.)
+- [x] System tests pass in CI.
+  - Approved 2026-10-15, after CI on draft PR #5 passed on every OS and Python version, including the numpy<2 job.
+  - Decided (2026-10-15), acquisition (Task 2.3): `open()` initializes the camera and starts acquiring in software-trigger mode (`TriggerSource=Software`, `TriggerMode=On`, then `BeginAcquisition()`), so frames cross USB only when requested. `capture_frame()` and `preview_frame()` execute `TriggerSoftware`, then `GetNextImage()`. `close()` calls `EndAcquisition()`. The `not_before` check, the incomplete-image check, and releasing every buffer stay as safeguards. The trigger mode sits behind a small seam so a continuous mode can be added later. This replaces the spec's "continuous acquisition with newest-only buffering"; to be verified on the rig in Phase 3 (latency per capture, USB bandwidth with several cameras).
+  - Decided (2026-10-15), timestamp node: read `Timestamp`, falling back to `TimestampLatchValue`. Which one the rig cameras have is unknown until Phase 3.
+  - Decided (2026-10-15), `IMAGE_MISSING_TRAILER`: accept these frames as complete, as `pgs-scan` does, and count them in the `Frame` metadata. Assumed safe until Phase 3.
 
 ### Notes and deviations
 

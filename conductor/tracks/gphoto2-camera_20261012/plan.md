@@ -14,7 +14,7 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
 ### Tasks
 
 - [x] Task 1.1: Declare the `[gphoto2]` extra with the Windows marker; lazy import; logging bridge.
-- [ ] Task 1.2: Define the thin internal interface over gphoto2 calls the driver uses, and a fake implementing it for tests.
+- [x] Task 1.2: Define the thin internal interface over gphoto2 calls the driver uses, and a fake implementing it for tests.
 - [ ] Task 1.3: Write tests for open/close, `-53` → `DeviceBusy`, `-105` retries → `DeviceNotFound`; implement.
 - [ ] Task 1.4: Implement `discover()`.
 

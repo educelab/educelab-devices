@@ -2,9 +2,9 @@
   "id": "foldio360_20261012",
   "title": "Foldio360 Turntable",
   "type": "feature",
-  "status": "pending",
+  "status": "in_progress",
   "created": "2026-10-12T00:00:00Z",
-  "updated": "2026-10-12T00:00:00Z",
+  "updated": "2026-10-15T00:00:00Z",
   "phases": {
     "total": 5,
     "completed": 0
@@ -12,5 +12,7 @@
   "tasks": {
     "total": 15,
     "completed": 0
-  }
+  },
+  "current_phase": 1,
+  "current_task": "1.1"
 }

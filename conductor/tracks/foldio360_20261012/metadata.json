@@ -11,8 +11,13 @@
   },
   "tasks": {
     "total": 15,
-    "completed": 0
+    "completed": 3
   },
   "current_phase": 1,
-  "current_task": "1.1"
+  "current_task": "2.1",
+  "commits": [
+    "ffba81e: Move the Foldio360 BLE client into the stages package",
+    "bf71cdf: Port the Foldio360 offline tests to pytest",
+    "15660f3: Add the Foldio360 hardware doc from PROTOCOL.md"
+  ]
 }

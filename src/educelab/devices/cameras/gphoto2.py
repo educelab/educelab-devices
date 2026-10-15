@@ -4,6 +4,7 @@ Error codes, timing, and per-body quirks: docs/hardware/gphoto2-cameras.md.
 """
 
 import logging
+import threading
 import time
 from collections.abc import Mapping
 
@@ -16,6 +17,7 @@ from educelab.devices.cameras._gphoto2 import (
     GP_ERROR_IO_USB_FIND,
     GP_ERROR_MODEL_NOT_FOUND,
     GP_ERROR_TIMEOUT,
+    FilePath,
     GPhoto2Error,
     LibGPhoto2,
     Library,
@@ -28,6 +30,7 @@ from educelab.devices.errors import (
     DeviceError,
     DeviceNotFound,
     DeviceTimeout,
+    NotConnected,
 )
 from educelab.devices.settings import Setting, SettingValue
 
@@ -41,6 +44,15 @@ logger = logging.getLogger(__name__)
 OPEN_ATTEMPTS = 3
 OPEN_RETRY_DELAY_S = 0.5
 _STILL_ENUMERATING = frozenset({GP_ERROR_MODEL_NOT_FOUND, GP_ERROR_IO_USB_FIND})
+
+# Files after the first of a capture (the JPEG of RAW + JPEG) arrive as events.
+# Reading every pending event also keeps the camera's event buffer from filling,
+# which drops it out of PC mode. Values from pgs-scan's spectral prototype
+# (docs/hardware/gphoto2-cameras.md#capturing).
+EVENT_POLL_S = 0.05
+DRAIN_LIMIT_S = 2.0
+DOWNLOAD_ATTEMPTS = 3
+DOWNLOAD_RETRY_DELAY_S = 1.0
 
 USB_CLAIMED_HINT = (
     "Another process holds the camera's USB interface. On macOS this is "
@@ -72,6 +84,9 @@ class GPhoto2Camera(FileCamera):
         self._library = library
         self._session: Session | None = None
         self._model: str | None = None
+        # Set while the shutter is released or files are downloading, so the
+        # keep-alive thread stays off the bus.
+        self._capture_in_flight = threading.Event()
 
     @property
     def info(self) -> DeviceInfo:
@@ -169,7 +184,65 @@ class GPhoto2Camera(FileCamera):
         raise NotImplementedError("GPhoto2Camera live view is not implemented yet")
 
     def _capture_files(self) -> list[CameraFile]:
-        raise NotImplementedError("GPhoto2Camera capture is not implemented yet")
+        session = self._require_session()
+        self._capture_in_flight.set()
+        try:
+            for stale in self._drain(session):
+                logger.warning(
+                    "%r discarded %s, which arrived after its capture had returned",
+                    self,
+                    stale.name,
+                )
+            try:
+                first = session.capture()
+            except GPhoto2Error as exc:
+                raise self._error(exc, "capturing") from exc
+            paths = [first]
+            paths += [path for path in self._drain(session) if path != first]
+            return [CameraFile(p.name, self._download(session, p)) for p in paths]
+        finally:
+            self._capture_in_flight.clear()
+
+    def _drain(self, session: Session) -> list[FilePath]:
+        """Read events until the camera goes quiet, returning the files added."""
+        added: list[FilePath] = []
+        deadline = time.monotonic() + DRAIN_LIMIT_S
+        while True:
+            try:
+                event = session.wait_for_event(EVENT_POLL_S)
+            except GPhoto2Error as exc:
+                raise self._error(exc, "reading camera events") from exc
+            if event.kind == "timeout":
+                return added
+            logger.debug("%r event: %s", self, event)
+            path = event.path
+            if event.kind == "file_added" and path is not None and path not in added:
+                added.append(path)
+            if time.monotonic() >= deadline:
+                logger.warning(
+                    "%r was still sending events after %.1f s; stopped reading them",
+                    self,
+                    DRAIN_LIMIT_S,
+                )
+                return added
+
+    def _download(self, session: Session, path: FilePath) -> bytes:
+        for _ in range(DOWNLOAD_ATTEMPTS - 1):
+            try:
+                return session.download(path)
+            except GPhoto2Error as exc:
+                logger.debug("%r download of %s failed: %s", self, path.name, exc)
+                time.sleep(DOWNLOAD_RETRY_DELAY_S)
+        try:
+            return session.download(path)
+        except GPhoto2Error as exc:
+            doing = f"downloading {path.name} ({DOWNLOAD_ATTEMPTS} attempts)"
+            raise self._error(exc, doing) from exc
+
+    def _require_session(self) -> Session:
+        if self._session is None:
+            raise NotConnected(f"{self!r} is not open; call open() first")
+        return self._session
 
 
 def _default_library() -> Library:

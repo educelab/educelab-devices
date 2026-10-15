@@ -2,7 +2,7 @@
 
 import dataclasses
 from collections import deque
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 
 from educelab.devices.cameras._gphoto2 import (
     GP_ERROR_BAD_PARAMETERS,
@@ -24,7 +24,8 @@ class FakeCamera:
     first is what `capture()` returns; the rest arrive as ``file_added``
     events, as RAW + JPEG does on a Nikon.
 
-    Use `fail_next()` to make the next calls of a method raise.
+    Use `fail_next()` to make the next calls of a method raise, and set
+    ``on_capture`` to run code while the shutter is "open".
 
     Args:
         model: What libgphoto2 identifies the camera as.
@@ -53,6 +54,7 @@ class FakeCamera:
         self.is_open = False
         self.opens = 0
         self.calls: list[str] = []
+        self.on_capture: Callable[[], None] | None = None
         self._failures: dict[str, deque[int]] = {}
         self._shots = 0
 
@@ -77,6 +79,8 @@ class FakeCamera:
 
     def capture(self) -> FilePath:
         self._call("capture")
+        if self.on_capture is not None:
+            self.on_capture()
         self._shots += 1
         paths = [
             FilePath(FOLDER, f"DSC_{self._shots:04d}{suffix}")

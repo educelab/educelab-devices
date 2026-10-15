@@ -10,6 +10,7 @@ import subprocess
 import sys
 import threading
 import time
+import types
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from educelab.devices.errors import (
     CommandRejected,
     DeviceBusy,
     DeviceError,
+    DeviceNotFound,
     DeviceTimeout,
     NotConnected,
     PositionError,
@@ -885,3 +887,55 @@ def test_moves_during_a_run_are_refused():
 
     dev.run(24, on_frame)
     assert len(errors) == 1
+
+
+def fake_bleak(error: BaseException):
+    """A stand-in for the bleak module whose connections fail with ``error``."""
+
+    class Client:
+        def __init__(self, address, **kwargs):
+            self.address = address
+
+        async def connect(self):
+            raise error
+
+    return lambda: types.SimpleNamespace(BleakClient=Client)
+
+
+@pytest.mark.parametrize(
+    ("error", "expected"),
+    [
+        (RuntimeError("Bluetooth adapter not found"), DeviceNotFound),
+        (TimeoutError(), DeviceTimeout),
+    ],
+)
+def test_connection_failures_are_device_errors(monkeypatch, error, expected):
+    monkeypatch.setattr(f, "_bleak", fake_bleak(error))
+    dev = Foldio360("AA:BB")
+    with pytest.raises(expected) as caught:
+        dev.open()
+    assert caught.value.__cause__ is error
+    assert "AA:BB" in str(caught.value)
+    assert not dev.is_open
+
+
+def test_a_failed_write_means_the_link_is_gone():
+    t = connected_transport()
+
+    class Loop:
+        def call(self, coro, timeout=None):
+            coro.close()
+            raise OSError("link lost")
+
+    t._loop = Loop()
+    with pytest.raises(NotConnected):
+        t.send("get_status")
+
+
+def test_loop_thread_timeout_is_a_device_timeout():
+    loop = f._LoopThread()
+    try:
+        with pytest.raises(DeviceTimeout, match="no reply"):
+            loop.call(asyncio.sleep(1), timeout=0.05)
+    finally:
+        loop.stop()

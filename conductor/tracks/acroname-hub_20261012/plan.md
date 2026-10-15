@@ -39,28 +39,14 @@ A small driver: fake brainstem seam, driver, then docs, CLI, and hardware check.
   because the SDK reads it as "any hub".
 - The driver connects with `discoverAndConnect(Spec.USB, serial)`: concrete
   stem classes override `connect()` with a different signature.
-- For Task 2.1 (hardware doc), from reading brainstem 2.12.5 and running it on
-  macOS with no hub attached (2026-10-15):
-  - verified: `discoverAndConnect` with an absent serial returns 3 (not found);
-    calls on an unconnected stem return 25 (connection error); `disconnect()`
-    on an unconnected stem returns 0; `findAllModules(Spec.USB)` returns `[]`.
-  - from the SDK source: on Windows, `import brainstem` raises `OSError` when
-    the MSVC 2015 redistributable is missing (the driver turns it into an
-    `ImportError`); on Linux it raises `ImportError` unless one of its bundled
-    builds loads (Ubuntu 18.04–24.04 x86_64/aarch64, Debian 12 x86_64,
-    Debian 11.7 armv7l).
-  - assumed (SDK docstrings): 8 downstream ports, 0–7; `setPortEnable`/
-    `setPortDisable` switch power and data; port state bit 0 is VBUS enabled;
-    enumeration delay in 100 ms increments.
-  - unknown: the enumeration delay's maximum; whether it applies without
-    `system.save()` and a reset; whether missing udev rules show up as error 12
-    (permission) or as "not found".
+- What Phase 1 learned about the SDK and platforms is in
+  `docs/hardware/acroname-usbhub3p.md` (Task 2.1).
 
 ## Phase 2: Docs, CLI, hardware verification
 
 ### Tasks
 
-- [ ] Task 2.1: Write `docs/hardware/acroname-usbhub3p.md`.
+- [x] Task 2.1: Write `docs/hardware/acroname-usbhub3p.md`.
 - [ ] Task 2.2: Add the `el-devices hub` subcommand.
 - [ ] Task 2.3: Write and run `@pytest.mark.hardware` tests on a hub; record findings.
 

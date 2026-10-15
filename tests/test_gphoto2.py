@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from contracts import CameraContract, FileCameraContract
 from educelab.devices.app import discover
 from educelab.devices.cameras import _gphoto2, gphoto2
 from educelab.devices.cameras._gphoto2 import (
@@ -442,3 +443,28 @@ def test_capture_in_flight_is_flagged_and_blocks_other_captures(fast_capture):
     assert seen_in_flight == [True, True]
     assert not camera._capture_in_flight.is_set()
     camera.close()
+
+
+# Settings and live view arrive in Phase 3; until then the Camera rules that
+# need them must fail, and strict xfail flags the moment they start passing.
+NEEDS_SETTINGS_OR_LIVE_VIEW = {
+    name
+    for name in vars(CameraContract)
+    if name.startswith("test_") and name != "test_closed_camera_raises_not_connected"
+}
+
+
+class TestGPhoto2Contract(FileCameraContract):
+    @pytest.fixture(autouse=True)
+    def attached(self, monkeypatch, fast_capture, request):
+        if request.node.originalname in NEEDS_SETTINGS_OR_LIVE_VIEW:
+            request.applymarker(
+                pytest.mark.xfail(raises=NotImplementedError, strict=True)
+            )
+        library = FakeLibrary(FakeCamera(suffixes=(".NEF", ".JPG")))
+        monkeypatch.setattr(gphoto2, "_default_library", lambda: library)
+        return library
+
+    @pytest.fixture
+    def make_device(self, attached):
+        return lambda: GPhoto2Camera("usb:020,007", library=attached)

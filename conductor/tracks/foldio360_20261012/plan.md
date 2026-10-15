@@ -86,7 +86,10 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
 
 ### Verification
 
-- [x] Halo tests and contracts pass. (Locally: macOS on Python 3.11, 3.13, and 3.14; CI not yet run on this phase.)
+- [x] Halo tests and contracts pass.
+  - Approved 2026-10-15, after CI on PR #2 passed all 14 jobs.
+  - Decided (2026-10-15): change the halo lifecycle. `halo.open()` on a closed turntable opens it and remembers that it did; `halo.close()` then closes the turntable only in that case, and otherwise closes just the halo, whose calls raise `NotConnected` until it is reopened. Closing the turntable always makes the halo unusable. Tests, the Light contract wiring, the hardware doc, and guide §1 follow.
+  - Decided (2026-10-15): `CONTEXT.md` stays unchanged; "a device offers one or more roles" still holds.
 
 ## Phase 4: Docs and CLI
 

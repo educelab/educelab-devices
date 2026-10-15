@@ -25,7 +25,9 @@ class Backend:
 
 
 # Each driver track adds its backend here.
-BACKENDS: tuple[Backend, ...] = ()
+BACKENDS: tuple[Backend, ...] = (
+    Backend("foldio360", "educelab.devices.stages.foldio360", "Foldio360"),
+)
 
 
 def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:

@@ -216,16 +216,25 @@ def _is_foldio(device: Any, adv: Any, name: str = DEVICE_NAME) -> bool:
     return NUS_SERVICE in uuids or (adv.local_name or device.name) == name
 
 
+def _scan(scan_timeout: float) -> list[tuple[Any, Any]]:
+    """Every advertising BLE device and its advertisement, strongest first."""
+    scanner = _bleak().BleakScanner
+    try:
+        found = asyncio.run(scanner.discover(timeout=scan_timeout, return_adv=True))
+    except Exception as exc:
+        # bleak raises its own errors, e.g. when there is no adapter.
+        raise DeviceError(f"BLE scan failed: {exc or type(exc).__name__}") from exc
+    return sorted(found.values(), key=lambda p: -(p[1].rssi or -999))
+
+
 def scan_lines(scan_timeout: float = 8.0) -> list[str]:
     """Scan and describe every advertising BLE device, strongest first.
 
     Returns one line per device, with the turntable marked. An empty list means
     nothing advertised at all (see `EMPTY_SCAN_NOTE`).
     """
-    scanner = _bleak().BleakScanner
-    found = asyncio.run(scanner.discover(timeout=scan_timeout, return_adv=True))
     lines = []
-    for device, adv in sorted(found.values(), key=lambda p: -(p[1].rssi or -999)):
+    for device, adv in _scan(scan_timeout):
         name = adv.local_name or device.name or "-"
         mark = "  <-- Foldio360" if _is_foldio(device, adv) else ""
         # Some advertisers report no RSSI at all.
@@ -516,6 +525,23 @@ class Foldio360(Stage):
     @property
     def axes(self) -> tuple[Axis, ...]:
         return _AXES
+
+    @classmethod
+    def discover(cls, scan_timeout: float = 8.0) -> list[DeviceInfo]:
+        """Scan for advertising turntables, without connecting.
+
+        Takes the whole scan window. A turntable connected to another central
+        (e.g. the official app) doesn't advertise and isn't found.
+
+        Raises:
+            ImportError: bleak isn't installed.
+            DeviceError: The scan itself failed, e.g. no Bluetooth adapter.
+        """
+        return [
+            DeviceInfo(backend="foldio360", model="Foldio360", address=device.address)
+            for device, adv in _scan(scan_timeout)
+            if _is_foldio(device, adv)
+        ]
 
     def __repr__(self) -> str:
         address = getattr(self._transport, "address", None)

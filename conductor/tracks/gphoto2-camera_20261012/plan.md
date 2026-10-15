@@ -133,7 +133,8 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
 
 - [x] Task 5.1: Write `docs/hardware/gphoto2-cameras.md` (general gphoto2 behavior plus a Nikon Z7 II section).
   - Added Identity, Nikon Z7 II, Hazards, Unknowns, and Manual check sections to the doc built up in Phases 1–4. Corrected the capture section: under `capturetarget` = `Internal RAM` files never reach the card, so discarded files are lost. Task 5.4 fills in the Z7 II facts and the manual-check results.
-- [ ] Task 5.2: Add the `el-devices dslr` subcommand.
+- [x] Task 5.2: Add the `el-devices dslr` subcommand.
+  - Options: `--port`, `--exposure SECONDS`, `--capture DIR`, `--preview`, `--focus-steps N`. A missing SDK prints the install hint instead of a traceback.
 - [ ] Task 5.3: Write `@pytest.mark.hardware` tests (capture RAW and RAW + JPEG, set exposure, preview, focus step and limits).
 - [ ] Task 5.4: Run them on the Z7 II; confirm error codes and settle timing; record findings in the hardware doc.
 - [ ] Task 5.5: Measure how long a config read at `open()` takes on the Z7 II, and decide whether `open()` reads the serial number into `DeviceInfo.serial_number`.

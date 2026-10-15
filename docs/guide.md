@@ -196,7 +196,7 @@ code.
 | Role | Methods |
 |---|---|
 | `Camera` | `settings()`, `setting(name)`, `set_setting(name, value)`, `preview_frame()` |
-| `FrameCamera` | adds `capture_frame() -> Frame` |
+| `FrameCamera` | adds `capture_frame(not_before=None, timeout=None) -> Frame`; `not_before` rejects frames older than a time, for free-running cameras |
 | `FileCamera` | adds `capture_files() -> list[CameraFile]`; save with `CameraFile.save(dir, stem)`, which refuses to overwrite unless asked |
 | `FocusDrive` | `step(n)` (positive = toward far), `drive_to_limit("near" \| "far")`, `focus_steps`, `last_limit` |
 | `Light` | `channels`, `set_level(id, 0.0–1.0)`, `set_color(id, (r, g, b))`, `level(id)`, `color(id)`, `all_off()` |

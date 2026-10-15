@@ -50,7 +50,10 @@ class StubCamera(FrameCamera):
     def _preview_frame(self) -> npt.NDArray[np.uint8]:
         return np.zeros((4, 4), dtype=np.uint8)
 
-    def _capture_frame(self) -> Frame:
+    def _capture_frame(
+        self, not_before: datetime | None, timeout: float | None
+    ) -> Frame:
+        self.capture_args = (not_before, timeout)
         return Frame(np.zeros((4, 4), np.uint16), "Mono16", datetime.now(UTC))
 
 
@@ -129,6 +132,23 @@ def test_camera_methods_need_open_device():
 
 def test_capture_frame_returns_frame(camera):
     assert camera.capture_frame().pixels.shape == (4, 4)
+    assert camera.capture_args == (None, None)
+
+
+def test_capture_frame_passes_not_before_as_utc_datetime(camera):
+    camera.capture_frame(not_before=1_700_000_000.0, timeout=2.0)
+    assert camera.capture_args == (datetime.fromtimestamp(1_700_000_000, UTC), 2.0)
+
+
+def test_capture_frame_passes_aware_datetime_through(camera):
+    when = datetime(2026, 10, 15, tzinfo=UTC)
+    camera.capture_frame(not_before=when)
+    assert camera.capture_args == (when, None)
+
+
+def test_capture_frame_rejects_naive_not_before(camera):
+    with pytest.raises(ValueError, match="timezone-aware"):
+        camera.capture_frame(not_before=datetime(2026, 10, 15))
 
 
 def test_capture_files_returns_every_file():

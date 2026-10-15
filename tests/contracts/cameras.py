@@ -1,3 +1,5 @@
+from datetime import UTC, datetime
+
 import numpy as np
 import pytest
 
@@ -76,6 +78,10 @@ class FrameCameraContract(CameraContract):
         assert isinstance(frame.pixels, np.ndarray)
         assert frame.pixels.ndim in (2, 3)
         assert frame.timestamp.tzinfo is not None
+
+    def test_capture_frame_honors_not_before(self, device):
+        ready = datetime.now(UTC)
+        assert device.capture_frame(not_before=ready).timestamp >= ready
 
     def test_frame_pixel_format_matches_setting(self, device):
         settings = device.settings()

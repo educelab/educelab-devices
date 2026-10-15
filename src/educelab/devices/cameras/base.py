@@ -4,7 +4,7 @@ import os
 from abc import abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path, PurePath
 from typing import Any
 
@@ -171,12 +171,38 @@ class FrameCamera(Camera):
     """A camera that delivers decoded pixel arrays (e.g. machine-vision cameras)."""
 
     @synchronized
-    def capture_frame(self) -> Frame:
-        """Capture one frame with the current settings."""
-        return self._capture_frame()
+    def capture_frame(
+        self,
+        *,
+        not_before: datetime | float | None = None,
+        timeout: float | None = None,
+    ) -> Frame:
+        """Capture one frame with the current settings.
+
+        Free-running cameras may already hold a frame exposed before the call.
+        Pass ``not_before`` (e.g. the moment the scene was ready) to get a frame
+        whose ``timestamp`` is no earlier than that.
+
+        Args:
+            not_before: Earliest acceptable frame time: a timezone-aware
+                datetime, or seconds since the epoch.
+            timeout: Seconds to wait for a frame, or ``None`` for the camera's
+                default.
+
+        Raises:
+            DeviceTimeout: No acceptable frame arrived in time.
+        """
+        if isinstance(not_before, datetime):
+            if not_before.tzinfo is None:
+                raise ValueError("not_before must be timezone-aware")
+        elif not_before is not None:
+            not_before = datetime.fromtimestamp(not_before, UTC)
+        return self._capture_frame(not_before, timeout)
 
     @abstractmethod
-    def _capture_frame(self) -> Frame: ...
+    def _capture_frame(
+        self, not_before: datetime | None, timeout: float | None
+    ) -> Frame: ...
 
 
 class FileCamera(Camera):

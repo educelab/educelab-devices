@@ -24,7 +24,7 @@ from educelab.devices.cameras.base import (
 )
 from educelab.devices.cameras.focus import FocusDrive, FocusLimit
 from educelab.devices.device import DeviceInfo
-from educelab.devices.errors import FocusLimitReached
+from educelab.devices.errors import DeviceTimeout, FocusLimitReached
 
 __all__ = ["SimulatedCamera", "SimulatedFileCamera", "SimulatedFocusDrive"]
 
@@ -87,7 +87,17 @@ class SimulatedCamera(FrameCamera):
         image = self._render()[::_PREVIEW_STRIDE, ::_PREVIEW_STRIDE]
         return _quantize(image, np.uint8)
 
-    def _capture_frame(self) -> Frame:
+    def _capture_frame(
+        self, not_before: datetime | None, timeout: float | None
+    ) -> Frame:
+        # Frames are rendered on demand, so only a future not_before needs a wait.
+        if not_before is not None:
+            wait = (not_before - datetime.now(UTC)).total_seconds()
+            if timeout is not None and wait > timeout:
+                raise DeviceTimeout(
+                    f"no frame at or after {not_before} within {timeout} s"
+                )
+            time.sleep(max(wait, 0.0))
         exposure = float(self._store[EXPOSURE_TIME].value)
         time.sleep(exposure)
         pixel_format = str(self._store[PIXEL_FORMAT].value)

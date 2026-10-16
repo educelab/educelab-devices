@@ -166,6 +166,61 @@ cameras stream at once; the rig check measures that and the per-capture latency.
 `PixelFormat` is read-only while acquiring (assumed, standard GenICam behavior), so
 setting `pixel_format` ends acquisition, changes the format, and begins again.
 
+### Settings
+
+`open()` changes only what acquisition needs: `StreamBufferHandlingMode`,
+`AcquisitionMode`, `TriggerMode`, and `PixelFormat` if the current format is one the driver
+can't shape into arrays. It never changes exposure, gain, or the throughput limit, so
+those keep whatever the camera last had (the first rig run found gain at 48 dB). A
+consumer that needs known values sets them after opening.
+
+| Setting | Node | Notes |
+|---|---|---|
+| `exposure_time` | `ExposureTime` (µs) | Seconds. Read-only while `ExposureAuto` isn't `Off` |
+| `gain` | `Gain` (dB) | Read-only while `GainAuto` isn't `Off` |
+| `ExposureAuto`, `GainAuto` | same | `Off` or `Continuous`; `Once` is left out because it reverts to `Off` by itself |
+| `pixel_format` | `PixelFormat` | Mono8, Mono16, RGB8, 8/16-bit Bayer; pauses acquisition to change |
+| `throughput_limit` | `DeviceLinkThroughputLimit` | Spinnaker only. MB/s, see below |
+| `current_throughput` | `DeviceLinkCurrentThroughput` | Read-only, MB/s |
+| `resulting_frame_rate` | `AcquisitionResultingFrameRate` | Read-only, frames/s |
+
+Each is listed only if the camera has a readable node.
+
+**`throughput_limit`** caps the bandwidth the camera streams over USB, so several
+cameras can share one link (see USB topology under Timing). In SDK 4.4.0 the node is a
+`GenApi::IInteger` that "Limits the maximum bandwidth(in bps) of the data that will be
+streamed out by the device", in Spinnaker's `Camera.h`.
+
+- **Units:** the setting is in MB/s, where MB is 10^6 bytes, as in `el-devices
+  spinnaker`'s reports. The driver treats the node as **bytes** per second: the header
+  says "bps", but SFNC gives the unit as Bps, and a USB 3 camera's limits only make sense
+  in bytes. That is **assumed**. The hardware test
+  `test_throughput_limit_round_trips_and_is_restored` settles it by comparing
+  `resulting_frame_rate` with the limit divided by the frame size; bits would give an
+  eighth of that.
+- **Range and rounding:** `minimum`, `maximum`, and `step` come from the node's
+  `GetMin()`, `GetMax()`, and `GetInc()`. A written value goes to the nearest
+  `minimum + k * step` (half a step rounds to the even `k`, as Python's `round()` does),
+  clamped to the range. GenICam integer nodes refuse values off their increment, so the
+  driver rounds them itself. `setting.nearest()` gives the value that will be kept.
+- **Limit mode:** SDK 4.4.0 also has `DeviceLinkThroughputLimitMode` (Off/On), which
+  "Controls if the DeviceLinkThroughputLimit is active". On a camera that has it, the
+  setting reads `None` while the mode is Off, and writing a value turns the mode On
+  first. Whether the limit node is read-only until then is camera-dependent
+  (unverified). Turning the mode back off isn't exposed; to remove the cap, set the
+  maximum.
+- **While acquiring:** the driver writes the limit straight away if the node is
+  writable, and otherwise pauses acquisition around the write, as for `pixel_format`.
+  Whether any rig camera needs that is unverified.
+- **Does the Chameleon3 have it?** Unknown. The node is SFNC, and the 4.4.0 headers list
+  it, but older models may not implement it. If a camera lacks it, the setting isn't
+  listed, and `el-devices spinnaker --throughput-limit` fails naming the camera.
+
+A frame-rate setting (`AcquisitionFrameRateEnable` and `AcquisitionFrameRate` in the
+4.4.0 headers) is not exposed. The throughput limit covers the bandwidth problem without
+it. It would be worth adding if a rig camera lacks `DeviceLinkThroughputLimit`, after
+checking that camera's node names, since older models may use other names.
+
 ### Timestamps
 
 - `image.GetTimeStamp()` counts nanoseconds on the camera's own counter, which starts at
@@ -246,11 +301,10 @@ bit, and whether `Mono16` data is left-aligned decides how dark previews look).
   - **Per-camera budget,** sharing the link evenly: about 80 MB/s each, which at Mono8
     full resolution (5.0 MB) is about 16 frames/s, and about 8 frames/s at Mono16.
     Capture latency then grows to about two of those frame periods (~125 ms at Mono8).
-  - **Settings that would get there** (unverified on the Chameleon3; check the node
-    names in SpinView): cap the link with `DeviceLinkThroughputLimit` = 80000000
-    (bytes/s), or fix the frame rate with `AcquisitionFrameRateEnable(d)` on and
-    `AcquisitionFrameRate` = 16. The driver doesn't expose either yet, so set them in
-    SpinView (they last until the camera is power-cycled unless saved to a user set).
+  - **Settings that get there:** `throughput_limit` = 80 (MB/s) on each camera, e.g.
+    `el-devices spinnaker --throughput-limit 80`, or from `pgs-scan` per scan. That
+    assumes the Chameleon3 has `DeviceLinkThroughputLimit` (Settings, above); if it
+    doesn't, set a frame rate of about 16 in SpinView instead.
   - The alternatives are spreading the cameras across USB controllers, or capturing by
     software trigger, which moves data only on request: 5 frames × 5 MB at ~400 MB/s is
     about 63 ms per rig capture plus exposure. Software triggering was rejected for
@@ -340,9 +394,12 @@ OS, SDK version, and each camera's model, serial, and firmware.
       `utils/system_check.py`), then again at the rig's usual exposure. Record each
       camera's latency median and its incomplete and failed counts, plus the "all
       cameras per capture" median.
-   2. Throttled: in SpinView, set `DeviceLinkThroughputLimit` to about 80000000 bytes/s
-      (~80 MB/s) on every camera, close SpinView, and repeat both runs. Record the same
-      numbers and each camera's streaming frames/s.
+   2. Throttled: repeat both runs with `--throughput-limit 80` added, which caps every
+      camera at 80 MB/s. Record the same numbers, each camera's streaming frames/s, and
+      the "throughput limit" and "resulting frames/s" each camera reports. If the
+      command says a camera has no `DeviceLinkThroughputLimit`, set its frame rate to
+      about 16 in SpinView instead, close SpinView, rerun without the option, and note
+      that.
    3. Compare the throttled "all cameras per capture" median with the estimate for
       software triggering: about 63 ms (5 frames × 5 MB over ~400 MB/s) plus the
       exposure time. Record both in Last run for the maintainer's decision.
@@ -352,8 +409,8 @@ OS, SDK version, and each camera's model, serial, and firmware.
    compare with what the controller can carry. For one camera, open SpinView's stream
    statistics while `el-devices spinnaker --serial <serial> --frames 200` runs, and
    compare its frame rate and throughput with the command's estimate; that confirms or
-   corrects the frame-ID assumption under Timing. If step 4 dropped frames, lower
-   `DeviceLinkThroughputLimit` (or the frame rate) in SpinView, rerun step 4, and record
+   corrects the frame-ID assumption under Timing. If the throttled run in step 4 still
+   dropped frames, lower `--throughput-limit` (e.g. 70, then 60), rerun it, and record
    what worked.
 6. **Which moment the timestamp marks.** For one camera, run step 3 with `--exposure
    0.001` and again with `--exposure 0.5`. Latency minus frame age is roughly readout
@@ -362,8 +419,9 @@ OS, SDK version, and each camera's model, serial, and firmware.
    start of exposure.
 7. **Hardware tests.** For one camera of each model:
    `SPINNAKER_SERIAL=<serial> pytest -m hardware -s -v tests/test_spinnaker_hardware.py`.
-   `-s` shows the printed timestamp node, offset spread, frame age, and the stale and
-   incomplete counts over 300 captures.
+   `-s` shows the printed timestamp node, offset spread, frame age, the stale and
+   incomplete counts over 300 captures, and the throughput limit's range and the
+   resulting frame rate, which settles whether the limit is in bytes or bits.
 8. **Another program holding a camera.** Open the camera in SpinView, run
    `el-devices spinnaker --serial <serial> --frames 1`, and record the error. The driver
    expects `DeviceBusy` from error code `-1005`. Close SpinView.
@@ -371,7 +429,8 @@ OS, SDK version, and each camera's model, serial, and firmware.
    say how often, and whether those frames looked right. That settles whether accepting
    them is safe.
 
-Settle in this doc: the timestamp node per model, start or end of exposure, the frame-ID
+Settle in this doc: the throughput limit's unit and whether each model has it, the
+timestamp node per model, start or end of exposure, the frame-ID
 assumption, the `-1005` and `-1011` codes, how often missing trailers occur, and whether
 continuous acquisition fits the rig's USB bandwidth.
 

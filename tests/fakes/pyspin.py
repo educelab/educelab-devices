@@ -76,6 +76,7 @@ _ENUMS = {
     "ExposureMode": ("Timed", "TriggerWidth"),
     "AcquisitionMode": ("Continuous", "SingleFrame", "MultiFrame"),
     "TriggerMode": ("Off", "On"),
+    "DeviceLinkThroughputLimitMode": ("Off", "On"),
     "TriggerSelector": ("FrameStart", "AcquisitionStart", "FrameBurstStart"),
     "TriggerSource": ("Software", "Line0", "Line1", "Line2", "Line3"),
     "StreamBufferHandlingMode": (
@@ -262,13 +263,48 @@ class FloatNode(ValueNode):
 
 
 class IntegerNode(FloatNode):
-    def __init__(self, camera: "FakeCamera", name: str, value: int, **kw: Any):
+    """An integer node. Like GenICam, it refuses values off its increment."""
+
+    def __init__(
+        self, camera: "FakeCamera", name: str, value: int, inc: int = 1, **kw: Any
+    ):
         kw.setdefault("minimum", value)
         kw.setdefault("maximum", value)
         super().__init__(camera, name, value, **kw)
+        self.inc = inc
 
     def GetInc(self) -> int:
-        return 1
+        return self.inc
+
+    def _validate(self, value: Any) -> None:
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise SpinnakerException(
+                f"{self._name} takes an int, not {type(value).__name__}",
+                SPINNAKER_ERR_INVALID_PARAMETER,
+            )
+        super()._validate(value)
+        if (value - self.minimum) % self.inc:
+            raise SpinnakerException(
+                f"{self._name}: {value} is off the increment {self.inc}",
+                SPINNAKER_ERR_INVALID_PARAMETER,
+            )
+
+
+class ComputedNode(Node):
+    """A read-only node whose value the fake works out when read."""
+
+    def __init__(
+        self, camera: "FakeCamera", name: str, compute: Callable[[], Any], **kw: Any
+    ) -> None:
+        super().__init__(camera, name, access=RO, **kw)
+        self._compute = compute
+
+    def GetValue(self) -> Any:
+        self._check_read()
+        return self._compute()
+
+    def ToString(self) -> str:
+        return str(self.GetValue())
 
 
 @dataclass(frozen=True)
@@ -560,6 +596,11 @@ class FakeCamera:
         formats: ``PixelFormat`` entries, first one current. Defaults to the
             usual mono or color set.
         auto: Whether auto exposure and auto gain start on.
+        throughput: Whether the camera has ``DeviceLinkThroughputLimit``, with
+            ``DeviceLinkCurrentThroughput`` and ``AcquisitionResultingFrameRate``.
+        throughput_mode: Whether it also has ``DeviceLinkThroughputLimitMode``,
+            starting Off; the limit is read-only until the mode is On.
+        throughput_while_streaming: Whether the limit is writable while acquiring.
     """
 
     def __init__(
@@ -578,6 +619,9 @@ class FakeCamera:
         firmware: str = "1.0.0.0",
         formats: Iterable[str] | None = None,
         auto: bool = True,
+        throughput: bool = True,
+        throughput_mode: bool = False,
+        throughput_while_streaming: bool = True,
     ) -> None:
         self.serial = serial
         self.model = model
@@ -709,6 +753,64 @@ class FakeCamera:
             ),
         )
         self._timestamp = self.nodes[timestamp_node]
+        if throughput:
+            self._add_throughput_nodes(throughput_mode, throughput_while_streaming)
+
+    # Made-up figures, roughly a USB3 camera; nothing tests them against hardware.
+    MAX_FRAME_RATE = 35.0
+    THROUGHPUT_MIN = 10_000_000
+    THROUGHPUT_MAX = 500_000_000
+    THROUGHPUT_INC = 8_000
+
+    def _add_throughput_nodes(self, with_mode: bool, while_streaming: bool) -> None:
+        mode = EnumNode(
+            self,
+            "DeviceLinkThroughputLimitMode",
+            "Off",
+            _ENUMS["DeviceLinkThroughputLimitMode"],
+        )
+
+        def limit_access() -> int:
+            if with_mode and mode.symbolic != "On":
+                return RO
+            if self.streaming and not while_streaming:
+                return RO
+            return RW
+
+        limit = IntegerNode(
+            self,
+            "DeviceLinkThroughputLimit",
+            self.THROUGHPUT_MAX,
+            minimum=self.THROUGHPUT_MIN,
+            maximum=self.THROUGHPUT_MAX,
+            inc=self.THROUGHPUT_INC,
+            unit="Bps",
+            access=limit_access,
+        )
+        frame_bytes = self.width * self.height
+
+        def current() -> int:
+            if not self.streaming:
+                return 0
+            active = not with_mode or mode.symbolic == "On"
+            cap = limit._value if active else self.THROUGHPUT_MAX
+            return min(cap, round(self.MAX_FRAME_RATE * frame_bytes))
+
+        def frame_rate() -> float:
+            active = not with_mode or mode.symbolic == "On"
+            cap = limit._value if active else self.THROUGHPUT_MAX
+            return min(self.MAX_FRAME_RATE, cap / frame_bytes)
+
+        self.throughput_limit = limit
+        self.throughput_limit_mode = mode if with_mode else None
+        nodes = [
+            limit,
+            ComputedNode(self, "DeviceLinkCurrentThroughput", current),
+            ComputedNode(self, "AcquisitionResultingFrameRate", frame_rate),
+        ]
+        if with_mode:
+            nodes.append(mode)
+        self.nodes.update({node.GetName(): node for node in nodes})
 
     def device_time_ns(self) -> int:
         """The camera's timestamp counter now, in nanoseconds."""

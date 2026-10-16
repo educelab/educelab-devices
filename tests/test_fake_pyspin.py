@@ -227,6 +227,7 @@ _STAND_INS = {
     fake.StringNode: ("CStringPtr",),
     fake.BooleanNode: ("CBooleanPtr",),
     fake.CommandNode: ("CCommandPtr",),
+    fake.ComputedNode: ("CIntegerPtr", "CFloatPtr"),
 }
 
 
@@ -245,7 +246,7 @@ def test_fake_module_names_exist_in_pyspin(real):
 
 
 def test_fake_node_names_exist_in_pyspin(real):
-    camera = FakeCamera(color=True)
+    camera = FakeCamera(color=True, throughput_mode=True)
     for nodes, owner in (
         (camera.nodes, real.CameraPtr),
         (camera.tl_device_nodes, real.TransportLayerDevice),

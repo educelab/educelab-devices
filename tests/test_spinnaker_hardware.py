@@ -15,6 +15,7 @@ import pytest
 from educelab.devices.cameras import EXPOSURE_TIME, PIXEL_FORMAT
 from educelab.devices.cameras.spinnaker import (
     RETRIES_BEFORE_REMEASURE,
+    THROUGHPUT_LIMIT,
     SpinnakerCamera,
     SpinnakerSystem,
 )
@@ -161,6 +162,37 @@ def test_every_pixel_format_captures(restore):
             assert frame.pixels.dtype == np.uint16
         else:
             assert frame.pixels.dtype == np.uint8
+
+
+def test_throughput_limit_round_trips_and_is_restored(camera):
+    settings = camera.settings()
+    if THROUGHPUT_LIMIT not in settings:
+        pytest.skip("this camera has no DeviceLinkThroughputLimit")
+    before = settings[THROUGHPUT_LIMIT]
+    print(
+        f"throughput limit {before.value} MB/s, range {before.minimum}-"
+        f"{before.maximum}, step {before.step}"
+    )
+    target = before.nearest(80.0)
+    try:
+        camera.set_setting(THROUGHPUT_LIMIT, target)
+        assert camera.setting(THROUGHPUT_LIMIT).value == pytest.approx(target)
+        frame = camera.capture_frame(not_before=datetime.now(UTC), timeout=5.0)
+        rate = camera.settings().get("resulting_frame_rate")
+        if rate is not None and rate.value:
+            # Bytes per second gives ~target / frame size frames/s; bits would give
+            # an eighth of that. This settles the node's unit.
+            expected = target * 1e6 / frame.pixels.nbytes
+            print(
+                f"resulting {rate.value:.2f} frames/s; bytes would allow {expected:.2f}"
+            )
+            assert rate.value <= expected * 1.1
+            assert rate.value > expected / 4
+    finally:
+        # A limit mode switched on by the write stays on; the value is restored.
+        if before.value is not None:
+            camera.set_setting(THROUGHPUT_LIMIT, before.value)
+    assert camera.setting(THROUGHPUT_LIMIT).value == before.value
 
 
 def test_preview_is_small_and_eight_bit(camera):

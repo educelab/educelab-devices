@@ -4,6 +4,7 @@ import math
 import sys
 import time
 from datetime import UTC, datetime, timedelta
+from typing import ClassVar
 
 import numpy as np
 import pytest
@@ -12,7 +13,7 @@ from contracts import FrameCameraContract
 from educelab.devices import DeviceInfo
 from educelab.devices.app.cli import main
 from educelab.devices.cameras import EXPOSURE_TIME, GAIN, PIXEL_FORMAT, spinnaker
-from educelab.devices.cameras.spinnaker import SpinnakerCamera
+from educelab.devices.cameras.spinnaker import THROUGHPUT_LIMIT, SpinnakerCamera
 from educelab.devices.errors import (
     CommandRejected,
     DeviceBusy,
@@ -202,13 +203,16 @@ def test_repr_names_the_serial(pyspin):
 # --- Settings -----------------------------------------------------------------
 
 
-def test_settings_cover_exposure_gain_format_and_auto_modes(camera):
+def test_settings_cover_exposure_gain_format_auto_modes_and_throughput(camera):
     assert set(camera.settings()) == {
         EXPOSURE_TIME,
         "ExposureAuto",
         GAIN,
         "GainAuto",
         PIXEL_FORMAT,
+        THROUGHPUT_LIMIT,
+        "current_throughput",
+        "resulting_frame_rate",
     }
 
 
@@ -569,10 +573,12 @@ def test_preview_releases_its_buffer(camera, fake):
 
 class TestSpinnakerCameraContract(FrameCameraContract):
     auto = True
+    camera_options: ClassVar[dict[str, bool]] = {}
 
     @pytest.fixture(autouse=True)
     def pyspin(self, monkeypatch):
-        pyspin = FakePySpin([FakeCamera(MONO, color=True, auto=self.auto)])
+        camera = FakeCamera(MONO, color=True, auto=self.auto, **self.camera_options)
+        pyspin = FakePySpin([camera])
         # discover() is a classmethod, so it reaches the fake through the loader.
         monkeypatch.setattr(spinnaker, "load_pyspin", lambda: pyspin)
         return pyspin
@@ -594,6 +600,16 @@ class TestSpinnakerCameraContractManualExposure(TestSpinnakerCameraContract):
     auto = False
 
 
+class TestSpinnakerCameraContractThroughputMode(TestSpinnakerCameraContract):
+    """The same rules on a camera whose throughput limit has a mode and only takes
+    writes while stopped."""
+
+    camera_options: ClassVar[dict[str, bool]] = {
+        "throughput_mode": True,
+        "throughput_while_streaming": False,
+    }
+
+
 # --- el-devices discover ------------------------------------------------------
 
 
@@ -610,3 +626,83 @@ def test_el_devices_discover_without_pyspin_says_how_to_install(monkeypatch, cap
     monkeypatch.setitem(sys.modules, "PySpin", None)
     main(["discover"])
     assert "spinnaker: unavailable" in capsys.readouterr().out
+
+
+# --- Throughput limit ---------------------------------------------------------
+
+MB = 1_000_000
+
+
+def test_throughput_limit_is_in_megabytes_per_second(camera, fake):
+    limit = camera.setting(THROUGHPUT_LIMIT)
+    assert limit.value == fake.THROUGHPUT_MAX / MB
+    assert limit.minimum == fake.THROUGHPUT_MIN / MB
+    assert limit.maximum == fake.THROUGHPUT_MAX / MB
+    assert limit.step == fake.THROUGHPUT_INC / MB
+    assert limit.unit == "MB/s"
+    assert not limit.read_only
+
+
+def test_throughput_limit_is_written_in_bytes_per_second(camera, fake):
+    camera.set_setting(THROUGHPUT_LIMIT, 80)
+    assert fake.throughput_limit._value == 80 * MB
+    assert camera.setting(THROUGHPUT_LIMIT).value == 80.0
+
+
+def test_throughput_limit_snaps_to_the_nodes_increment(camera, fake):
+    # 80.0041 MB/s is 4100 B/s past 80 MB/s; the nearest step of 8000 B/s is up.
+    camera.set_setting(THROUGHPUT_LIMIT, 80.0041)
+    assert fake.throughput_limit._value == 80 * MB + 8_000
+    limit = camera.setting(THROUGHPUT_LIMIT)
+    assert limit.nearest(80.0041) == pytest.approx(limit.value)
+
+
+def test_throughput_limit_outside_its_range_raises(camera, fake):
+    with pytest.raises(ValueError):
+        camera.set_setting(THROUGHPUT_LIMIT, fake.THROUGHPUT_MAX / MB + 1)
+    with pytest.raises(ValueError):
+        camera.set_setting(THROUGHPUT_LIMIT, 1.0)
+
+
+def test_open_leaves_the_throughput_limit_alone(pyspin, fake):
+    fake.throughput_limit._value = 123 * MB
+    with SpinnakerCamera(MONO, pyspin=pyspin) as camera:
+        assert camera.setting(THROUGHPUT_LIMIT).value == 123.0
+    assert fake.throughput_limit._value == 123 * MB
+
+
+def test_throughput_limit_mode_off_reads_as_none_and_writing_turns_it_on():
+    pyspin = FakePySpin([FakeCamera(MONO, throughput_mode=True)])
+    fake = pyspin.system.cameras[0]
+    with SpinnakerCamera(MONO, pyspin=pyspin) as camera:
+        assert camera.setting(THROUGHPUT_LIMIT).value is None
+        camera.set_setting(THROUGHPUT_LIMIT, 80)
+        assert fake.throughput_limit_mode.symbolic == "On"
+        assert camera.setting(THROUGHPUT_LIMIT).value == 80.0
+
+
+def test_throughput_limit_pauses_acquisition_if_it_must():
+    pyspin = FakePySpin([FakeCamera(MONO, throughput_while_streaming=False)])
+    fake = pyspin.system.cameras[0]
+    with SpinnakerCamera(MONO, pyspin=pyspin) as camera:
+        camera.set_setting(THROUGHPUT_LIMIT, 80)
+        assert fake.throughput_limit._value == 80 * MB
+        assert fake.streaming
+        camera.capture_frame()
+
+
+def test_a_camera_without_a_throughput_limit_lists_none_of_it():
+    pyspin = FakePySpin([FakeCamera(MONO, throughput=False)])
+    with SpinnakerCamera(MONO, pyspin=pyspin) as camera:
+        names = set(camera.settings())
+    assert not names & {THROUGHPUT_LIMIT, "current_throughput", "resulting_frame_rate"}
+
+
+def test_current_throughput_and_frame_rate_are_read_only(camera, fake):
+    current = camera.setting("current_throughput")
+    rate = camera.setting("resulting_frame_rate")
+    assert (current.unit, rate.unit) == ("MB/s", "Hz")
+    assert current.read_only and rate.read_only
+    assert rate.value == pytest.approx(fake.MAX_FRAME_RATE)
+    with pytest.raises(ValueError, match="read-only"):
+        camera.set_setting("resulting_frame_rate", 10.0)

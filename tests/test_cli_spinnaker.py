@@ -139,3 +139,32 @@ def test_a_driver_bug_is_reported_per_camera_not_as_a_thread_traceback(
     assert f"{COLOR}: 2/2 captured" in captured.out
     assert pyspin.system.cameras[0].held == []
     assert pyspin.system.instances == 0
+
+
+def test_throughput_limit_caps_every_camera(pyspin, capsys):
+    assert main(["spinnaker", "--frames", "1", "--throughput-limit", "80"]) == 0
+    out = capsys.readouterr().out
+    assert out.count("throughput limit 80 MB/s") == 2
+    assert all(c.throughput_limit._value == 80_000_000 for c in pyspin.system.cameras)
+
+
+def test_without_throughput_limit_the_cameras_are_left_alone(pyspin, capsys):
+    main(["spinnaker", "--frames", "1"])
+    assert "throughput limit 500 MB/s" in capsys.readouterr().out
+    assert all(c.throughput_limit._value == 500_000_000 for c in pyspin.system.cameras)
+
+
+def test_throughput_limit_out_of_range_fails_cleanly(pyspin, capsys):
+    assert main(["spinnaker", "--frames", "1", "--throughput-limit", "1"]) == 1
+    captured = capsys.readouterr()
+    assert "below" in captured.err
+    assert "Traceback" not in captured.err
+    assert pyspin.system.instances == 0
+
+
+def test_throughput_limit_on_a_camera_without_one_fails(monkeypatch, capsys):
+    pyspin = FakePySpin([FakeCamera(MONO, throughput=False)])
+    monkeypatch.setattr(spinnaker, "load_pyspin", lambda: pyspin)
+    assert main(["spinnaker", "--throughput-limit", "80"]) == 1
+    assert "has no DeviceLinkThroughputLimit" in capsys.readouterr().err
+    assert pyspin.system.instances == 0

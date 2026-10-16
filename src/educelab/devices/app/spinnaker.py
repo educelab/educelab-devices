@@ -5,13 +5,14 @@ import statistics
 import sys
 import threading
 import time
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 # Imported where it's used, so other subcommands don't load the driver.
 if TYPE_CHECKING:
-    from educelab.devices.cameras import Frame
+    from educelab.devices.cameras import Frame, Setting
     from educelab.devices.cameras.spinnaker import SpinnakerCamera
 
 DEFAULT_FRAMES = 20
@@ -49,6 +50,13 @@ def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") 
         help="gain in dB, with auto gain off (default: leave it)",
     )
     parser.add_argument("--pixel-format", help="e.g. Mono8, Mono16, or RGB8")
+    parser.add_argument(
+        "--throughput-limit",
+        type=_positive,
+        metavar="MBPS",
+        help="cap each camera's USB bandwidth at this many MB/s (10^6 bytes), e.g. "
+        "80 for five cameras sharing one USB 3 link (default: leave it)",
+    )
     parser.add_argument(
         "--timeout",
         type=_positive,
@@ -120,6 +128,11 @@ def run(args: argparse.Namespace) -> int:
             if args.gain is not None:
                 camera.set_setting("GainAuto", "Off")
                 camera.set_setting(GAIN, args.gain)
+            if args.throughput_limit is not None:
+                problem = _set_throughput_limit(camera, args.throughput_limit)
+                if problem:
+                    print(f"el-devices: {problem}", file=sys.stderr)
+                    return 1
             _describe(camera)
         results = _benchmark(opened, args.frames, args.timeout)
     finally:
@@ -144,9 +157,40 @@ def _describe(camera: "SpinnakerCamera") -> None:
         f"{info.serial_number}: {info.model}, firmware {info.firmware_version}, "
         f"{settings[PIXEL_FORMAT].value}, exposure {exposure_text} "
         f"({settings['ExposureAuto'].value}), gain {gain} dB, "
+        f"{_throughput_text(settings)}, "
         f"timestamp node {camera.timestamp_node}, "
         f"offset {'none' if offset is None else f'{offset:.6f} s'}"
     )
+
+
+def _set_throughput_limit(camera: "SpinnakerCamera", mb_per_s: float) -> str | None:
+    """Set the camera's throughput limit; returns what went wrong, if anything."""
+    from educelab.devices.cameras.spinnaker import THROUGHPUT_LIMIT
+
+    serial = camera.info.serial_number
+    if THROUGHPUT_LIMIT not in camera.settings():
+        return f"{serial} has no DeviceLinkThroughputLimit, so it can't be capped"
+    try:
+        camera.set_setting(THROUGHPUT_LIMIT, mb_per_s)
+    except ValueError as exc:
+        return f"{serial}: {exc}"
+    return None
+
+
+def _throughput_text(settings: Mapping[str, "Setting"]) -> str:
+    from educelab.devices.cameras.spinnaker import THROUGHPUT_LIMIT
+
+    limit = settings.get(THROUGHPUT_LIMIT)
+    if limit is None:
+        text = "no throughput limit node"
+    elif limit.value is None:
+        text = "throughput limit off"
+    else:
+        text = f"throughput limit {limit.value:g} MB/s"
+    rate = settings.get("resulting_frame_rate")
+    if rate is not None and rate.value is not None:
+        text += f", resulting {rate.value:.1f} frames/s"
+    return text
 
 
 def _benchmark(

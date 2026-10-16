@@ -45,6 +45,7 @@ __all__ = [
     "PREVIEW_MAX_SIZE",
     "PYSPIN_INSTALL_HINT",
     "RETRIES_BEFORE_REMEASURE",
+    "THROUGHPUT_LIMIT",
     "TIMESTAMP_SAMPLES",
     "SpinnakerCamera",
     "SpinnakerSystem",
@@ -80,6 +81,12 @@ _PIXEL_FORMATS = frozenset(
 # "Once" isn't offered: it reverts to "Off" by itself, so it never reads back.
 _AUTO_MODES = ("Off", "Continuous")
 _US_PER_S = 1e6
+
+THROUGHPUT_LIMIT = "throughput_limit"
+"""Spinnaker-only setting: the cap on the camera's USB bandwidth, in MB/s."""
+# MB here is 10^6 bytes. DeviceLinkThroughputLimit counts bytes per second
+# (assumed from its SFNC unit, Bps; see the hardware doc).
+_BYTES_PER_MB = 1e6
 
 
 # The only SDK the driver's PySpin names have been checked against, and the first
@@ -514,6 +521,20 @@ class SpinnakerCamera(FrameCamera):
             self._enum_setting(
                 "PixelFormat", _PIXEL_FORMATS, name=PIXEL_FORMAT, writable=True
             ),
+            self._throughput_limit_setting(),
+            self._read_only_number(
+                "current_throughput",
+                "DeviceLinkCurrentThroughput",
+                "CIntegerPtr",
+                "MB/s",
+                _BYTES_PER_MB,
+            ),
+            self._read_only_number(
+                "resulting_frame_rate",
+                "AcquisitionResultingFrameRate",
+                "CFloatPtr",
+                "Hz",
+            ),
         )
         return {s.name: s for s in found if s is not None}
 
@@ -535,8 +556,71 @@ class SpinnakerCamera(FrameCamera):
         elif name == PIXEL_FORMAT:
             with self._acquisition_paused():
                 self._set_enum("PixelFormat", str(value), kind=CommandRejected)
+        elif name == THROUGHPUT_LIMIT:
+            self._set_throughput_limit(float(value))
         else:
             self._set_enum(name, str(value), kind=CommandRejected)
+
+    def _throughput_limit_setting(self) -> Setting | None:
+        node = self._node("DeviceLinkThroughputLimit", "CIntegerPtr")
+        if not self._pyspin.IsReadable(node):
+            return None
+        value, low, high, inc = self._call(
+            "read DeviceLinkThroughputLimit",
+            lambda: (node.GetValue(), node.GetMin(), node.GetMax(), node.GetInc()),
+        )
+        return Setting(
+            THROUGHPUT_LIMIT,
+            # None while a limit mode turns the limit off; writing turns it on.
+            value / _BYTES_PER_MB if self._throughput_limit_active() else None,
+            minimum=low / _BYTES_PER_MB,
+            maximum=_snap(high, low, high, inc) / _BYTES_PER_MB,
+            step=inc / _BYTES_PER_MB,
+            unit="MB/s",
+        )
+
+    def _throughput_limit_active(self) -> bool:
+        mode = self._node("DeviceLinkThroughputLimitMode", "CEnumerationPtr")
+        if not self._pyspin.IsReadable(mode):
+            return True
+        return self._enum_symbol("DeviceLinkThroughputLimitMode") == "On"
+
+    def _set_throughput_limit(self, mb_per_s: float) -> None:
+        if not self._throughput_limit_active():
+            self._set_enum("DeviceLinkThroughputLimitMode", "On", kind=CommandRejected)
+        node = self._node("DeviceLinkThroughputLimit", "CIntegerPtr")
+        low, high, inc = self._call(
+            "read the limits of DeviceLinkThroughputLimit",
+            lambda: (node.GetMin(), node.GetMax(), node.GetInc()),
+        )
+        native = _snap(mb_per_s * _BYTES_PER_MB, low, high, inc)
+
+        def write() -> None:
+            self._call(
+                f"set DeviceLinkThroughputLimit to {native} B/s",
+                lambda: node.SetValue(native),
+                kind=CommandRejected,
+            )
+
+        if self._pyspin.IsWritable(node):
+            write()
+            return
+        # Some cameras may only take it while stopped (unverified; hardware doc).
+        with self._acquisition_paused():
+            if not self._pyspin.IsWritable(node):
+                raise CommandRejected(
+                    f"{self!r} won't accept DeviceLinkThroughputLimit, even stopped"
+                )
+            write()
+
+    def _read_only_number(
+        self, name: str, node_name: str, cast: str, unit: str, scale: float = 1.0
+    ) -> Setting | None:
+        node = self._node(node_name, cast)
+        if not self._pyspin.IsReadable(node):
+            return None
+        value = self._call(f"read {node_name}", node.GetValue)
+        return Setting(name, float(value) / scale, unit=unit, read_only=True)
 
     def _float_setting(
         self, name: str, node_name: str, unit: str, scale: float = 1.0
@@ -810,3 +894,11 @@ def _require_version(pyspin: Any, system: Any) -> None:
     except pyspin.SpinnakerException as exc:
         logger.warning("could not release the Spinnaker system: %s", str(exc))
     raise ImportError(problem, name="PySpin")
+
+
+def _snap(value: float, low: int, high: int, inc: int) -> int:
+    """The nearest of ``low + k * inc`` within ``[low, high]``, as an int."""
+    inc = max(int(inc), 1)
+    top = low + (high - low) // inc * inc
+    k = round((value - low) / inc)
+    return int(min(max(low + k * inc, low), top))

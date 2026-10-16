@@ -1,3 +1,4 @@
+import functools
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -26,6 +27,12 @@ class TestSimulatedFileCamera(FileCameraContract):
     @pytest.fixture
     def make_device(self):
         return SimulatedFileCamera
+
+
+class TestSimulatedFileCameraWithoutValues(FileCameraContract):
+    @pytest.fixture
+    def make_device(self):
+        return functools.partial(SimulatedFileCamera, bulb=True, auto_iso=True)
 
 
 def mean_level(camera: SimulatedCamera) -> float:
@@ -97,3 +104,14 @@ def test_file_camera_produces_numbered_pgm_files():
 def test_file_camera_offers_iso_choices():
     with SimulatedFileCamera() as camera:
         assert 100 in camera.setting(ISO).choices
+
+
+def test_file_camera_at_bulb_and_auto_iso_reports_none_until_written():
+    with SimulatedFileCamera(bulb=True, auto_iso=True) as camera:
+        assert camera.setting(EXPOSURE_TIME).value is None
+        assert camera.setting(ISO).value is None
+        assert camera.capture_files()
+        camera.set_setting(EXPOSURE_TIME, 0.5)
+        camera.set_setting(ISO, 400)
+        assert camera.setting(EXPOSURE_TIME).value == 0.5
+        assert camera.setting(ISO).value == 400

@@ -235,6 +235,11 @@ Camera settings and a stage's `speed()` are `Setting`s. A `Setting` says what it
 A value is stored as the setting's own type, so an int written to a float setting such as
 `exposure_time` reads back as a float.
 
+A setting's `value` is `None` while the device is in a state the setting can't express as a
+value, such as a DSLR at Bulb (`exposure_time`) or Auto ISO (`iso`). The setting is still
+listed with what it accepts, and writing one of those values leaves that state. Code that
+reads `.value` must handle `None`.
+
 Code that searches for a value, like automatic exposure calibration, should use
 `setting.nearest(value)` to get one the camera will keep exactly. It picks the closest
 allowed value, breaking ties toward the lower one. `direction="down"` picks the largest
@@ -279,6 +284,8 @@ Every role has a simulated device in its subpackage: `SimulatedCamera`,
 devices: moves take time and can be stopped, captures take the exposure time, and focus
 drives hit limits. They pass the same contract tests (`tests/contracts/`) as the real
 drivers, so code that works against a simulation should work against the hardware.
+`SimulatedFileCamera(bulb=True, auto_iso=True)` starts with `exposure_time` and `iso`
+reading as `None`, like a DSLR at Bulb and Auto ISO.
 
 `el-devices simulate` runs each one through a few operations, which is a quick way to
 check an install.

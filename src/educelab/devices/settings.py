@@ -21,13 +21,17 @@ class Setting:
     doesn't enforce it, and the hardware rounds off-grid values itself. Use
     `nearest()` to get a value the hardware will keep exactly.
 
+    ``value`` is ``None`` while the device is in a state the setting can't
+    express, such as a DSLR's shutter at Bulb. The setting still says what can
+    be written, and writing a value leaves that state.
+
     A setting is a snapshot. What a setting accepts can depend on other
     settings (e.g. maximum exposure on frame rate), so read it again after
     changing anything else.
     """
 
     name: str
-    value: SettingValue
+    value: SettingValue | None
     minimum: float | None = None
     maximum: float | None = None
     step: float | None = None
@@ -59,9 +63,9 @@ class Setting:
             )
         converted = _as_kind(value, self.value)
         if converted is None:
+            kind = "float" if self.value is None else type(self.value).__name__
             raise TypeError(
-                f"setting {self.name!r} takes {type(self.value).__name__}, "
-                f"not {type(value).__name__}"
+                f"setting {self.name!r} takes {kind}, not {type(value).__name__}"
             )
         value = converted
         if isinstance(value, bool | str):
@@ -102,6 +106,8 @@ class Setting:
             allowed = sorted(
                 float(c) for c in self.choices if not isinstance(c, bool | str)
             )
+            if not allowed:
+                raise TypeError(f"setting {self.name!r} has no numeric choices")
             return _pick(allowed, value, direction)
         low, high = self.minimum, self.maximum
         if self.step:
@@ -133,8 +139,13 @@ def _pick(allowed: list[float], value: float, direction: Rounding) -> float:
     return min(tied)
 
 
-def _as_kind(value: SettingValue, current: SettingValue) -> SettingValue | None:
-    """``value`` converted to the type of ``current``, or None if it can't be."""
+def _as_kind(value: SettingValue, current: SettingValue | None) -> SettingValue | None:
+    """``value`` converted to the type of ``current``, or None if it can't be.
+
+    With no current value to go by, only numbers are accepted, as floats.
+    """
+    if current is None:
+        current = 0.0
     if isinstance(current, bool) or isinstance(value, bool):
         return value if isinstance(current, bool) and isinstance(value, bool) else None
     if isinstance(current, str):

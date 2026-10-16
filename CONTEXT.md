@@ -26,7 +26,7 @@ A decoded pixel array captured by a camera, with its capture metadata.
 _Avoid_: Image (ambiguous with camera file)
 
 **Setting**:
-A named, adjustable device parameter (e.g. a camera's exposure time or a stage's speed) with a type, a range or set of choices, and a current value. Canonical camera settings (e.g. `exposure_time`) mean the same thing on every camera; all others use the camera's native name.
+A named, adjustable device parameter (e.g. a camera's exposure time or a stage's speed) with a range or set of choices and a current value, whose type it takes on. Canonical camera settings (e.g. `exposure_time`) mean the same thing on every camera; all others use the camera's native name.
 
 **Focus drive**:
 A role offered by some cameras that moves the lens focus in signed, relative steps toward near or far. A focus drive can detect its physical limits but cannot report an absolute position.

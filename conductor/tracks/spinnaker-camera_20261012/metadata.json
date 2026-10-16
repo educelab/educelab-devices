@@ -11,10 +11,10 @@
   },
   "tasks": {
     "total": 12,
-    "completed": 8
+    "completed": 11
   },
   "current_phase": 3,
-  "current_task": "3.1",
+  "current_task": "3.4",
   "commits": [
     "a7b36f7: Add a fake PySpin module for Spinnaker driver tests",
     "67bd9f2: Import PySpin lazily with an install hint",
@@ -28,6 +28,10 @@
     "4b4ad14: Record Spinnaker timestamps and capture checks in the hardware doc",
     "c470c90: Add Spinnaker preview frames and run the camera contracts",
     "b4a5a3c: Record Spinnaker Phase 2 progress",
-    "7e35133: Implement FrameCamera's not_before hook for Spinnaker"
+    "7e35133: Implement FrameCamera's not_before hook for Spinnaker",
+    "a5f79f8: Record approval of Spinnaker Phase 2",
+    "e2786ce: Add el-devices spinnaker",
+    "d5670fb: Add Spinnaker hardware tests",
+    "ff6dcfc: Finish the Spinnaker hardware doc with the rig check steps"
   ]
 }

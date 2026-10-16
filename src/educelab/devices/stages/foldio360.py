@@ -454,7 +454,7 @@ class Foldio360(Stage):
     """The Foldio360 turntable, as a stage with one wrapping rotary axis.
 
     The axis is ``"theta"``, in degrees, counted clockwise by the turntable's
-    own position counter. That counter has no hardware reference: it re-zeros
+    own position counter; positive moves and ``jog(axis, +1)`` turn clockwise. That counter has no hardware reference: it re-zeros
     wherever the platter sits at power-on, so the stage can't home (ADR 0003).
 
     Positions are whole degrees. Targets are rounded to the nearest degree,
@@ -466,6 +466,8 @@ class Foldio360(Stage):
     revolution are made as several rotations of at most 360°.
 
     The LED ring is a separate `Light`, `halo`, on the same connection.
+
+    `stop()` only cancels motion; it never changes the halo.
 
     Beyond the stage role, it offers the firmware's capture sequence (`run`)
     and IR shutter (`ir_shutter`, `set_signal`). These are unverified with

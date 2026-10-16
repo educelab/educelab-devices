@@ -123,6 +123,9 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
   - Connects to `FOLDIO360_ADDRESS` if set, else scans. Skips cleanly without `bleak`, when a scan finds no turntable, or when the given address doesn't connect (all three checked locally: 18 skipped). Measurements print with `-s`, for the hardware doc.
 - [ ] Task 5.2: Run them and `el-devices foldio` on the turntable; verify cancel-during-move behavior and record it in the hardware doc.
   - Blocked on hardware (2026-10-15): the turntable isn't available. The maintainer runs the steps in the Phase 5 report when it is.
+  - First findings (maintainer, 2026-10-16): the wire value `CW` turns the platter clockwise. Recorded in the hardware doc's rotate table; the driver docstring and `el-devices foldio rotate --help` now say so. It doesn't settle which way `run` turns (`run` takes no direction), so that question stays open.
+  - The maintainer expects `stop()` to leave the halo alone. Checked: no stop path (idle, mid-move, jog, or `el-devices foldio stop`) sends `set_bright`, and nothing on record says the firmware's `cancel` touches the halo. Pinned with offline tests (idle, mid-move, jog, CLI) and a hardware test, `test_stop_leaves_the_halo_alone`, which checks the firmware side. Stated in the hardware doc, the `Foldio360` docstring, and the `stop` help.
+  - Still open: the full hardware test log.
 - [ ] Task 5.3: With the maintainer, add a README pointer to `educelab-devices` in `~/source/foldio360` and archive it.
 
 ### Verification

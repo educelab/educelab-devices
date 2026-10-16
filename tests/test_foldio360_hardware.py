@@ -173,6 +173,17 @@ def test_jog_then_stop(stage):
     assert distance(first, start) >= 5.0
 
 
+def test_stop_leaves_the_halo_alone(stage, halo):
+    """The driver never sends set_bright on stop; this checks the firmware's cancels."""
+    halo.set_level("halo", 0.25)
+    stage.stop()
+    assert halo.level("halo") == pytest.approx(0.25)
+    stage.jog(THETA, 1)
+    time.sleep(1.0)
+    stage.stop()
+    assert halo.level("halo") == pytest.approx(0.25)
+
+
 def test_run_steps_and_stops_early(stage):
     """Records which way run() turns (an open question)."""
     positions: list[float] = []

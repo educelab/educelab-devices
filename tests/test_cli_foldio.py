@@ -59,10 +59,13 @@ def test_halo_sets_and_reads_back(turntable, capsys):
     assert "halo at 25%" in capsys.readouterr().out
 
 
-def test_stop_sends_both_cancels(turntable, capsys):
+def test_stop_sends_both_cancels_and_leaves_the_halo(turntable, capsys):
+    turntable.brightness = 40
     assert main(["foldio", "stop"]) == 0
     assert turntable.sent[-3:] == ["cancel(0)", "cancel(1)", "get_position"]
+    assert not [c for c in turntable.sent if str(c).startswith("set_bright")]
     assert "stopped at 100°" in capsys.readouterr().out
+    assert turntable.brightness == 40
 
 
 def test_address_and_scan_timeout_reach_the_driver(monkeypatch):

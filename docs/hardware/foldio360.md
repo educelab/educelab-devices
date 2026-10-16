@@ -134,7 +134,7 @@ official app and the original standalone client, not through `educelab-devices`.
 
 | Arg | Type | Observed values | Meaning |
 |---|---|---|---|
-| `dir` | literal | `CW`, `CCW` | Direction. **The app's *Left* button emits `CW`, *Right* emits `CCW`.** |
+| `dir` | literal | `CW`, `CCW` | Direction. `CW` turns the platter clockwise and `CCW` counter-clockwise (verified on hardware 2026-10-16; unit and firmware to be recorded with the Task 5.2 run). **The app's *Left* button emits `CW`, *Right* emits `CCW`.** |
 | `deg` | int | 1, 5, 10, 25, 30, 45, 60, 90, 380, and 0 (jog only) | Degrees to travel |
 | `speed` | int | 1, 2, 3 | See [Timing](#timing) |
 | `mode` | int | 0, 1 | `1` = travel a fixed angle and stop. `0` = run until cancelled (`deg` is then also 0) |
@@ -550,7 +550,10 @@ How `Foldio360` maps the protocol onto the `Stage` role:
   `cancel(1)` without waiting; the move then waits until the link has been quiet for
   300 ms, discarding whatever OKs the cancel produced (one or two: whether a cancelled
   `rotate` still sends its own OK is **unknown**, see [cancel](#cancel)), re-reads the
-  counter, and raises `PositionError`.
+  counter, and raises `PositionError`. `stop()` only cancels motion: it never sends
+  `set_bright`, so the halo stays at its level. Whether the firmware's own `cancel`
+  changes the halo is not recorded anywhere; `test_stop_leaves_the_halo_alone` checks it
+  on hardware.
 - **Stray replies.** Acks nobody waits for (a cancel sent during another command, a
   reply that arrived after its timeout) are counted.
   The next command first waits for the link to go quiet and discards them, and a query
@@ -644,7 +647,7 @@ Minimal working capture, for reference: enable notifications → `set_bright(60)
 | `ir_shutter` arguments other than 0 | `2` is rejected; 1 and 3 untried |
 | What `mode` ≥ 2 actually does | Accepted with `OK` ([Response grammar](#response-grammar)) but its effect is unobserved |
 | `speed > 3`, `deg > 380` | `speed` 4 is rejected ([Response grammar](#response-grammar)); higher speeds and `deg > 380` untried |
-| Which direction does `run` turn? | Not in the captures — watch the platter during a `run` |
+| Which direction does `run` turn? | Not in the captures, and not settled by `CW` being clockwise, since `run` takes no direction. Watch the platter during a `run`, or read the step signs `test_run_steps_and_stops_early` prints |
 | Does any `frames` outside 24/36/48 work? | Twelve values tried, all wedge ([run / continue / ir_shutter](#run--continue--ir_shutter)); the set matches the app's presets exactly, so probably not |
 | Acknowledged writes (0x12) on RX | Untested; the characteristic advertises support |
 | Is the ~500 ms settle after the CCCD write required? | Enable notifications and send `get_status` immediately |

@@ -112,6 +112,14 @@ hub.connected_speed(port) -> PortSpeed | None   # what the attached device
   - Written; not yet run on hardware. Dry-run on the fake SDK (real `brainstem`
     blocked) with the test port starting off, powered at USB3, USB2, and DATA_OFF:
     all 15 pass, only the test port is switched, and its state is restored.
+  - Run on 2026-10-16 on port 7: empty, 12 passed and 3 skipped; with a USB 3
+    device, 13 passed and 2 failed. After a power cycle, the device never reported
+    a connected speed within 15 s, at USB2 or at USB3. By hand, a USB 2 limit
+    applied without a cycle. The root cause isn't visible in the log, and the
+    driver's calls match the plan. Reworked the device tests: they check that a
+    device is connected first, test limits without a cycle, test USB 3 restore
+    without a cycle and reconnection after a power cycle separately (30 s), and
+    print the raw port state on failure. Re-run pending.
 
 ### Verification
 

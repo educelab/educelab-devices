@@ -8,7 +8,8 @@ are restored after each test. The enumeration delay test changes the hub-wide
 delay briefly and restores it.
 
 Set ``ACRONAME_USB3_DEVICE=1`` when a spare USB 3 device is plugged into the test
-port, to check the speed it connects at under each limit.
+port, to check the speed it connects at under each limit. Run with ``-s`` to see
+how long the device took to reconnect each time.
 """
 
 import os
@@ -24,6 +25,8 @@ pytestmark = pytest.mark.hardware
 
 # Loose: re-enumeration time depends on the device and host (see the hardware doc).
 RECONNECT_TIMEOUT_S = 15.0
+# After a power cycle the device also has to boot.
+POWER_CYCLE_RECONNECT_TIMEOUT_S = 30.0
 
 
 def make_hub() -> AcronameHub:
@@ -65,9 +68,16 @@ def port(hub):
 
 
 @pytest.fixture
-def usb3_device(port):
+def usb3_device(hub, port):
+    """The test port, with a USB 3 device connected at USB 3 on it."""
     if os.environ.get("ACRONAME_USB3_DEVICE") != "1":
         pytest.skip("set ACRONAME_USB3_DEVICE=1 with a USB 3 device on the test port")
+    # The port fixture may just have powered the port or restored its data lines.
+    speed, waited = wait_for_connected_speed(hub, port, PortSpeed.USB3)
+    assert speed is PortSpeed.USB3, (
+        f"no USB 3 device connected on port {port} after {waited:.1f} s; is one "
+        f"plugged in? {describe(hub, port)}"
+    )
     return port
 
 
@@ -81,13 +91,32 @@ def reopened_speed(hub, port):
         hub.open()
 
 
-def wait_for_connected_speed(hub, port, expected):
-    deadline = time.monotonic() + RECONNECT_TIMEOUT_S
+def wait_for_connected_speed(hub, port, expected, timeout=RECONNECT_TIMEOUT_S):
+    """Poll until the port's connected speed is ``expected``.
+
+    Returns the last speed read and the seconds waited.
+    """
+    start = time.monotonic()
     while (speed := hub.connected_speed(port)) != expected:
-        if time.monotonic() > deadline:
-            return speed
+        if time.monotonic() - start > timeout:
+            break
         time.sleep(0.25)
-    return speed
+    waited = time.monotonic() - start
+    print(f"port {port}: {speed} after {waited:.1f} s (wanted {expected})")
+    return speed, waited
+
+
+def describe(hub, port):
+    """The port's raw state, for failure messages: read-only SDK getters."""
+    state = hub._usb.getPortState(port)
+    current = hub._usb.getPortCurrent(port)
+    names = {0: "VBUS", 1: "USB2 data", 3: "USB3 data", 11: "at USB2", 12: "at USB3"}
+    names[23] = "attached"
+    bits = [names.get(b, str(b)) for b in range(32) if state.value >> b & 1]
+    return (
+        f"Port state 0x{state.value:08X} {bits} (error {state.error}), "
+        f"current {current.value} uA (error {current.error})."
+    )
 
 
 def test_identifies_as_a_usbhub3p(hub):
@@ -147,19 +176,44 @@ def test_speed_limit_survives_power_off_and_on(hub, port, speed):
     assert reopened_speed(hub, port) is speed
 
 
-@pytest.mark.parametrize(
-    ("speed", "connected"),
-    [
-        (PortSpeed.USB2, PortSpeed.USB2),
-        (PortSpeed.DATA_OFF, None),
-        (PortSpeed.USB3, PortSpeed.USB3),
-    ],
-)
-def test_usb3_device_connects_at_the_limit(hub, usb3_device, speed, connected):
+def test_usb2_limit_applies_without_a_power_cycle(hub, usb3_device):
+    port = usb3_device
+    hub.set_port_speed(port, PortSpeed.USB2)
+    speed, waited = wait_for_connected_speed(hub, port, PortSpeed.USB2)
+    assert speed is PortSpeed.USB2, f"after {waited:.1f} s. {describe(hub, port)}"
+
+
+def test_data_off_disconnects_the_device(hub, usb3_device):
+    port = usb3_device
+    hub.set_port_speed(port, PortSpeed.DATA_OFF)
+    speed, waited = wait_for_connected_speed(hub, port, None)
+    assert speed is None, f"after {waited:.1f} s. {describe(hub, port)}"
+
+
+def test_restoring_usb3_without_a_power_cycle(hub, usb3_device):
+    # Whether the hub or device renegotiates up without a reset is unknown; a
+    # failure here is a finding for the hardware doc, not necessarily a bug.
+    port = usb3_device
+    hub.set_port_speed(port, PortSpeed.USB2)
+    wait_for_connected_speed(hub, port, PortSpeed.USB2)
+    hub.set_port_speed(port, PortSpeed.USB3)
+    speed, waited = wait_for_connected_speed(hub, port, PortSpeed.USB3)
+    assert speed is PortSpeed.USB3, f"after {waited:.1f} s. {describe(hub, port)}"
+
+
+@pytest.mark.parametrize("speed", [PortSpeed.USB3, PortSpeed.USB2])
+def test_device_reconnects_after_a_power_cycle(hub, usb3_device, speed):
     port = usb3_device
     hub.set_port_speed(port, speed)
+    wait_for_connected_speed(hub, port, speed)
     hub.power_cycle(port)
-    assert wait_for_connected_speed(hub, port, connected) == connected
+    connected, waited = wait_for_connected_speed(
+        hub, port, speed, timeout=POWER_CYCLE_RECONNECT_TIMEOUT_S
+    )
+    assert connected is speed, (
+        f"not reconnected at {speed} {waited:.1f} s after the power cycle. "
+        f"{describe(hub, port)}"
+    )
 
 
 def test_enumeration_delay_reads_back(hub):

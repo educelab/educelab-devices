@@ -9,8 +9,9 @@ together). Driver: `educelab.devices.cameras.spinnaker`.
 
 ## Identity
 
-- **Models:** Blackfly S USB3 bodies on the `pgs-scan` rigs (assumed; exact models to be
-  recorded during the rig check).
+- **Models:** the first rig checked has five Chameleon3 CM3-U3-50S5M (mono, USB3),
+  firmware 1.12.3.00, serials 20305113, 20298452, 20305122, 20305114, 20298479 (verified
+  2026-10-16). Other `pgs-scan` rigs may have Blackfly S bodies (assumed).
 - **On the host:** cameras are enumerated by the SDK, not by a serial port or path. Each
   camera reports `DeviceSerialNumber`, `DeviceModelName`, and `DeviceVendorName` on its
   transport-layer node map (`cam.TLDevice`), which can be read **without** initializing
@@ -19,26 +20,108 @@ together). Driver: `educelab.devices.cameras.spinnaker`.
 
 ## Installing PySpin
 
-PySpin is not on PyPI, so `educelab-devices` has no extra for it.
+PySpin is not on PyPI, so `educelab-devices` has no extra for it. You need three things
+from the same Spinnaker release: the SDK, its system dependencies, and its PySpin wheel.
 
-1. **Python 3.12.** As of Spinnaker SDK 4.4.0, PySpin ships wheels for CPython 3.10 and
-   3.12 only, and this package requires 3.11+, so 3.12 is the only overlap.
-2. **numpy<2.** PySpin 4.4.0 is built against numpy 1.x. Install `numpy<2` in the
-   environment before PySpin. The rest of `educelab-devices` works with numpy 1.26.
-3. **Install the Spinnaker SDK** for your OS from Teledyne Vision Solutions (free
-   account required). On Linux, the SDK installer also offers to add your user to the
-   camera group and raise the USB-FS memory limit; accept both for USB3 cameras
-   (assumed, from the vendor's install notes).
-4. **Install the PySpin wheel from the same release.** The Python bindings are a separate
-   download ("Spinnaker Python") per OS and Python version. Its version must match the
-   installed SDK exactly; a mismatched pair can fail at import or at runtime.
+### Versions
+
+- **Spinnaker SDK 4.4.0 or newer.** `SpinnakerSystem.open()` (and so every camera and
+  `discover()`) raises `ImportError` naming the installed and required versions if the
+  SDK is older (`MIN_SPINNAKER_VERSION`, read from `System.GetLibraryVersion()`). 4.4.0
+  is the only release the driver's PySpin names were checked against (4.4.0.246,
+  verified 2026-10-16), and the first with Python 3.12 wheels for macOS and Windows
+  (release notes, 4.4.0.246: "Added PySpin 3.12 support for macOS and Windows").
+- **Python 3.12.** PySpin ships cp310 and cp312 wheels, and this package requires 3.11
+  or newer, so 3.12 is the only overlap.
+- **numpy 2.** The 4.4.0.246 cp312 wheel declares `Requires-Dist: numpy >=2.0` (verified
+  in the macOS arm64 wheel's metadata, 2026-10-16; assumed the same for the Linux and
+  Windows cp312 wheels). PySpin gained numpy 2 support in 4.2.0.46; 4.3.0.189 moved the
+  cp310 wheel back to numpy 1.x, which doesn't affect 3.12. Don't pin `numpy<2` in a
+  PySpin environment.
+- **The wheel's version must match the SDK's exactly** (Teledyne's PySpin install guide:
+  on Linux, "the wheel version must match the installed Debian package version").
+
+Why not older SDKs: supporting them would need fallbacks the driver doesn't have.
+
+| SDK | What would break |
+|---|---|
+| before 4.4.0 on macOS or Windows | No Python 3.12 wheel |
+| before 4.2.0.46 | No numpy 2 support |
+| before 3.0.0.118 | Enums lacked the `SPINNAKER_` prefix ("Updated Spinnaker C++ enums with SPINNAKER prefix", 3.0.0.118), so the image status was `IMAGE_MISSING_TRAILER` (as `pgs-scan` `dev` still uses). This is assumed to be when the status names changed; the notes don't name the image status enum |
+| unknown | `Image_GetImageStatusDescription()` (used by `pgs-scan` `dev`) is gone; 4.4.0 has `Image.GetImageStatusDescription()` and no SWIG-flattened `Class_method` functions at all. Which release changed this isn't in the release notes |
+
+### macOS (Apple Silicon)
+
+Spinnaker 4.x supports Apple Silicon only; Intel Macs need 3.2 (release notes,
+4.1.0.172). 4.4.0 deprecates macOS 13.2 and older. Install the dependencies with
+Homebrew first:
+
+```bash
+brew install pkgconf ffmpeg@6 libomp libusb
+```
+
+- **ffmpeg must be 6.x.** The SDK's `libSpinVideo` links
+  `/opt/homebrew/opt/ffmpeg@6/lib/libavcodec.60.dylib` and its siblings by absolute path,
+  and `libSpinnaker` links `/opt/homebrew/opt/libomp/lib/libomp.dylib` and
+  `/opt/homebrew/lib/libusb-1.0.0.dylib` (verified with `otool -L`, SDK 4.4.0.246,
+  2026-10-16). So `ffmpeg@6` needs no `brew link`, can sit alongside a newer `ffmpeg`,
+  and Homebrew must be at its default `/opt/homebrew` prefix.
+- **pkgconf** (Homebrew's `pkg-config`) is reported as needed by the maintainer. PySpin
+  4.4.0.246 imported on a Mac without it, so it may only be needed by the SDK installer
+  or for building the C++ examples (unverified).
+
+Then install the SDK package and the wheel:
 
 ```bash
 python3.12 -m venv .venv
-.venv/bin/pip install "numpy<2" "educelab-devices @ git+https://github.com/educelab/educelab-devices"
-.venv/bin/pip install ./spinnaker_python-4.4.0.*-cp312-cp312-*.whl
-.venv/bin/python -c "import PySpin; print(PySpin.System.GetInstance().GetLibraryVersion())"
+.venv/bin/pip install "educelab-devices @ git+https://github.com/educelab/educelab-devices"
+.venv/bin/pip install ./spinnaker_python-4.4.0.*-cp312-cp312-macosx_*_arm64.whl
+.venv/bin/python -c "import PySpin; v = PySpin.System.GetInstance().GetLibraryVersion(); print(v.major, v.minor, v.type, v.build)"
 ```
+
+### Linux (Ubuntu), unverified on lab hardware
+
+From Teledyne's guides (sources below); 4.4.0 deprecates Ubuntu 18.04 and older:
+
+1. Dependencies (Ubuntu 22.04, from the Bumblebee X guide for SDK 4.1+):
+   ```bash
+   sudo apt-get install libavcodec58 libavformat58 libswscale5 libswresample3 \
+     libavutil56 libusb-1.0-0 libpcre2-16-0 libdouble-conversion3 libxcb-xinput0 \
+     libxcb-xinerama0 qtbase5-dev qtchooser qt5-qmake qtbase5-dev-tools
+   ```
+   The ffmpeg library versions (`libavcodec58` and so on) are Ubuntu 22.04's; other
+   releases ship different numbers.
+2. Run `sudo sh install_spinnaker.sh` from the extracted SDK. It installs the Debian
+   packages and asks whether to:
+   - add a udev rule (`/etc/udev/rules.d/40-flir-spinnaker.rules`) that puts FLIR USB
+     devices in the `flirimaging` group, and add your user to that group. Without it,
+     only root can open the cameras;
+   - raise the USB-FS memory limit to 1000 MB. Teledyne: the default "is set to only
+     allow streaming up to a total of 2MB over USB3", far below one camera. Since 2.0.0.109 the installer
+     can set this persistently. To set it by hand until the next reboot:
+     `sudo sh -c 'echo 1000 > /sys/module/usbcore/parameters/usbfs_memory_mb'`.
+   Log out and back in (or reboot) for the group change.
+3. Install the cp312 Linux wheel from the same release with `pip`.
+
+Kernel 6.8.0-40 and later broke large USB3 Vision transfers until a fix in 4.2.0.21
+(release notes), another reason to stay on 4.4.0 or newer.
+
+### Windows, unverified on lab hardware
+
+Run the SDK installer as administrator (3.1.0.79 fixed a failure when not run as
+administrator), choosing the USB3 camera drivers. 4.4.0 deprecates 32-bit Windows and
+Windows 10 and older, so use 64-bit Windows 11. Then install the
+`cp312-cp312-win_amd64` wheel with `pip`. Teledyne's PySpin install guide predates the
+3.12 wheel (its example uses Python 3.10). Other camera vendors recommend turning off USB
+selective suspend in Power Options when USB3 cameras stop streaming after a while; that
+advice is not from Teledyne.
+
+### Sources
+
+- Spinnaker SDK release notes: https://www.teledynevisionsolutions.com/support/support-center/technical-guidance/iis/spinnaker-sdk-release-notes/
+- Installing PySpin: https://www.teledynevisionsolutions.com/support/support-center/technical-guidance/iis/installing-pyspin-for-the-spinnaker-sdk/
+- Getting Started with the Bumblebee X (Ubuntu 22.04 dependencies): https://www.teledynevisionsolutions.com/support/support-center/application-note/iis/getting-started-with-the-bumblebee-x/
+- Using Spinnaker on ARM and Embedded Systems (flirimaging group, USB-FS memory): https://www.teledynevisionsolutions.com/support/support-center/application-note/iis/using-spinnaker-on-arm-and-embedded-systems/
 
 Without PySpin, `educelab.devices.cameras.spinnaker` still imports; the first call that
 needs the SDK raises an `ImportError` that links here.
@@ -95,13 +178,17 @@ setting `pixel_format` ends acquisition, changes the format, and begins again.
   stale frames in a capture, and on `measure_timestamp_offset()`.
 - The latched value is in a node named `Timestamp` on newer cameras and
   `TimestampLatchValue` on older ones. The driver reads `Timestamp` and falls back to
-  `TimestampLatchValue`. **Unknown** which one the rig cameras have; `pgs-scan` `dev`
-  reads `Timestamp`. `el-devices spinnaker` prints it (`timestamp_node`).
+  `TimestampLatchValue`. `el-devices spinnaker` prints which (`timestamp_node`). The
+  Chameleon3 CM3-U3-50S5M has `Timestamp` (verified on unit 20305113, firmware
+  1.12.3.00, 2026-10-16); other models unknown.
 - **Unknown:** whether the image timestamp marks the start or the end of exposure. If
   it is the start, `not_before` rejects any frame whose exposure began before the
   request, which is what a rig wants after moving a stage or changing a light. If it is
   the end, a frame exposed partly before the request passes, and rig code should add the
-  exposure time to `not_before`. Manual check step 6 settles it.
+  exposure time to `not_before`. Manual check step 6 settles it. The first rig run is
+  suggestive but not conclusive: on the CM3-U3-50S5M at 10 ms exposure, a frame arrived
+  about 31 ms after its timestamp (latency minus frame age), roughly one sensor readout
+  at its ~35 fps, which fits a timestamp at the end of exposure better than at the start.
 
 ### Capturing a frame
 
@@ -110,7 +197,8 @@ is an aware `datetime`) first waits until `not_before` if it is in the future, o
 `DeviceTimeout` at once if it is further away than the timeout. Then it takes the next
 frame and checks it:
 
-1. **Incomplete** (`IsIncomplete()`): dropped, except status `IMAGE_MISSING_TRAILER`,
+1. **Incomplete** (`IsIncomplete()`): dropped, except status
+   `SPINNAKER_IMAGE_STATUS_MISSING_TRAILER` (`IMAGE_MISSING_TRAILER` before 3.0),
    which is accepted as complete and flagged as `missing_trailer` in the frame's metadata,
    as `pgs-scan` `dev` does (**assumed** harmless until the rig check looks at those
    frames).
@@ -123,6 +211,14 @@ every 5 stale frames (`RETRIES_BEFORE_REMEASURE`, `pgs-scan`'s limit) it re-meas
 offset. The metadata reports `retries`, `stale_frames`, `incomplete_frames`, and
 `timestamp_remeasured`. `Frame.timestamp` is the offset-corrected image timestamp; see
 Timestamps for which moment that is.
+
+**Expect one stale frame per capture.** With newest-only buffering, the frame being
+exposed or read out when `not_before` is set carries an earlier timestamp, so it is
+dropped and the next one taken: a capture costs about two frame periods. On the
+CM3-U3-50S5M at ~35.7 frames/s (28 ms per frame), back-to-back captures took a median
+55.9 ms, and 49 of 50 dropped exactly one stale frame; the one that didn't was the
+first (verified 2026-10-16). Fewer frames per second, e.g. to share USB bandwidth,
+makes each capture proportionally slower.
 
 `preview_frame()` takes the newest frame the same way (no `not_before`), shifts 16-bit
 pixels right by 8, and subsamples so the longest side is at most 1280 pixels. That
@@ -139,11 +235,32 @@ bit, and whether `Mono16` data is left-aligned decides how dark previews look).
   over USB whether or not anyone captures. `el-devices spinnaker` estimates it from frame
   IDs and device timestamps (frames per second times frame size). That assumes
   `GetFrameID()` counts every frame the camera sent, including the ones newest-only
-  buffering discarded (**unknown**; the rig check compares it with SpinView).
-- **Error codes** (assumed, from memory of the Spinnaker headers; the rig check confirms
-  them):
-  `-1011` is a timeout, mapped to `DeviceTimeout`; `-1005` from `Init()` is access
-  denied, mapped to `DeviceBusy` (another process, e.g. SpinView, holds the camera).
+  buffering discarded. The first rig run supports it: one CM3-U3-50S5M reported ~35.7
+  frames/s and ~179 MB/s at Mono8 2448×2048 (5.0 MB per frame), which matches the
+  model's ~35 fps maximum. SpinView's stream statistics would confirm it (step 5).
+- **USB topology on the first rig** (verified 2026-10-16): all five cameras go through
+  one Acroname USBHub3p, so they share one upstream USB 3 link of 5 Gbit/s, about
+  400 MB/s usable (assumed, the usual figure for USB 3.0). Five cameras at ~179 MB/s
+  need ~900 MB/s, more than twice that, and the multi-camera run hit incomplete frames
+  (see Last run).
+  - **Per-camera budget,** sharing the link evenly: about 80 MB/s each, which at Mono8
+    full resolution (5.0 MB) is about 16 frames/s, and about 8 frames/s at Mono16.
+    Capture latency then grows to about two of those frame periods (~125 ms at Mono8).
+  - **Settings that would get there** (unverified on the Chameleon3; check the node
+    names in SpinView): cap the link with `DeviceLinkThroughputLimit` = 80000000
+    (bytes/s), or fix the frame rate with `AcquisitionFrameRateEnable(d)` on and
+    `AcquisitionFrameRate` = 16. The driver doesn't expose either yet, so set them in
+    SpinView (they last until the camera is power-cycled unless saved to a user set).
+  - The alternatives are spreading the cameras across USB controllers, or capturing by
+    software trigger, which moves data only on request: 5 frames × 5 MB at ~400 MB/s is
+    about 63 ms per rig capture plus exposure. Software triggering was rejected for
+    single-camera speed (decision 2026-10-15); it may win on a shared link.
+  - The Acroname hub track is adding per-port USB 2 and USB 3 limits. They don't help
+    here: forcing a port to USB 2 caps a camera far below 80 MB/s.
+- **Error codes:** the driver maps `SPINNAKER_ERR_TIMEOUT` (`-1011`) to `DeviceTimeout`
+  and `SPINNAKER_ERR_ACCESS_DENIED` (`-1005`) from `Init()` to `DeviceBusy`. The names and
+  values are verified in PySpin 4.4.0.246; that another process holding a camera (e.g.
+  SpinView) makes `Init()` fail with `-1005` is still assumed (step 8).
 
 ## State and recovery
 
@@ -202,7 +319,7 @@ would hold the cameras). Record the results in **Last run** below, with the date
 OS, SDK version, and each camera's model, serial, and firmware.
 
 1. **Install.** In a checkout of this repo: `python3.12 -m venv .venv`,
-   `.venv/bin/pip install -e . --group dev "numpy<2"`, then the PySpin wheel matching the
+   `.venv/bin/pip install -e . --group dev`, then the PySpin wheel matching the
    installed SDK (Installing PySpin above). Note which USB controller or hub each camera
    is on.
 2. **Find the cameras.** `el-devices discover` and `el-devices spinnaker --frames 0`
@@ -248,4 +365,30 @@ continuous acquisition fits the rig's USB bandwidth.
 
 ### Last run
 
-Not run on hardware yet.
+**2026-10-16**, macOS (Apple Silicon), Spinnaker SDK 4.4.0.246, PySpin 4.4.0.246 on
+Python 3.12. Five Chameleon3 CM3-U3-50S5M, firmware 1.12.3.00, all on one Acroname
+USBHub3p (one upstream USB 3 link).
+
+- **Step 2:** all five listed with serial and model.
+- **Step 3, measured,** one camera (20305113), 50 captures, Mono8, 10 ms exposure:
+  - timestamp node `Timestamp`; offset 1792171556.358970 s, which puts the camera's
+    counter near zero earlier that day, consistent with a counter that starts at
+    power-on;
+  - gain read 47.99 dB. The command doesn't change gain unless `--gain` is passed and
+    `open()` never changes settings, so this was the camera's previous state (assumed
+    left by another program). Pass `--gain` on rig runs to get comparable results;
+  - latency median 55.9 ms (mean 55.6, min 36.6, max 57.6); frame age median 25.0 ms
+    (min 6.8, max 26.2);
+  - 49 stale frames dropped in 50 captures, 0 incomplete, 0 missing trailers. That is
+    one per capture, as expected (Capturing a frame): latency of about two frame
+    periods at 28 ms each;
+  - streaming ~35.7 frames/s, ~178.8 MB/s.
+- **Step 4, blocked by a driver bug:** every capture thread failed with
+  `AttributeError: module 'PySpin' has no attribute 'IMAGE_MISSING_TRAILER'` (165
+  tracebacks logged). The driver used the pre-3.0 status name, which PySpin 4.4.0
+  calls `SPINNAKER_IMAGE_STATUS_MISSING_TRAILER`. The code was only reached with all
+  five cameras streaming, so incomplete frames appeared only then, as expected when
+  ~900 MB/s shares a ~400 MB/s link. Fixed: the driver uses 4.4.0's names, a test
+  compares the fake with real PySpin, and `el-devices spinnaker` reports any exception
+  in a capture thread as that camera's failure. Rerun step 4.
+- Steps 5–9: not run yet.

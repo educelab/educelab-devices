@@ -37,7 +37,9 @@ jobs:
       - run: pip install -e . --group dev
       - run: pytest
 
-  # PySpin (Spinnaker SDK 4.4.0) requires numpy<2 and has no 3.11 wheel.
+  # Keeps core code working on numpy 1.x. PySpin 4.4.0's cp312 wheel requires
+  # numpy>=2, so no supported Spinnaker SDK needs this; it stays until the
+  # maintainer decides whether to drop numpy 1 support.
   numpy1:
     runs-on: ubuntu-latest
     steps:

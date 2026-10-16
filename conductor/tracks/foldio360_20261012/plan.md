@@ -41,7 +41,7 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
 
 - [x] Task 2.1: Write tests for the `"theta"` axis, `move_to` shortest path, literal `move_by`, default timeouts, and arrival verification; implement on the `Stage` hooks.
   - `Foldio360` is now the `Stage` itself (exported from `educelab.devices.stages`); the old client methods (`rotate`, `rotate_by`, `get_status`, `get_position`, `get_device_position`, `cancel`, the origin API) are gone, so Task 2.4's origin removal landed here. `get_brightness`/`set_brightness` stay as public, locked methods until the halo replaces them in Phase 3.
-  - `timeout=None` is detected by overriding the base's private `_timeout()` to return `inf`, which the hooks turn into the per-leg watchdog. No change to the `Stage` ABC.
+  - `timeout=None` is detected by overriding the base's private `_timeout()` to return a sentinel (-1, which no caller can pass), which the hooks turn into the per-leg watchdog. No change to the `Stage` ABC. (Until 2026-10-16 the sentinel was `inf`; main's guide now promises that `math.inf` waits indefinitely, so after the rebase onto main the sentinel moved and `inf` means no limit.)
   - Turns over 360° are split into legs of at most 360° (rotations over 380° are untried), each verified on arrival.
   - Speeds are `1 / slope` deg/s for levels 1–3 (≈7.30, 9.71, 14.68).
   - The fake transport now emulates the firmware (position counter, held moves, cancel behavior) instead of only replaying scripts; scripted replies still override it.

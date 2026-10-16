@@ -6,6 +6,7 @@ documented in docs/hardware/foldio360.md.
 
 import ast
 import asyncio
+import math
 import subprocess
 import sys
 import threading
@@ -996,3 +997,19 @@ def test_stopping_a_jog_leaves_the_halo_alone():
     dev.jog("theta", 1)
     dev.stop()
     assert dev.halo.level("halo") == pytest.approx(0.4)
+
+
+def test_infinite_timeout_waits_past_the_watchdog(monkeypatch):
+    """The guide's math.inf means "wait indefinitely", not "use the default"."""
+    monkeypatch.setattr(f, "watchdog_seconds", lambda degrees, speed: 0.05)
+    dev, t = table(hold_moves=True)
+    with pytest.raises(DeviceTimeout):
+        dev.move_to({"theta": 90.0})  # the default: the (shrunk) watchdog
+    t.move_started.clear()
+    thread, outcome = in_thread(dev.move_to, {"theta": 90.0}, timeout=math.inf)
+    assert t.move_started.wait(timeout=2)
+    time.sleep(0.2)
+    assert thread.is_alive(), "an infinite timeout must not use the watchdog"
+    t.finish_move()
+    thread.join(timeout=2)
+    assert outcome == [None]

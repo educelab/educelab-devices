@@ -70,7 +70,8 @@ closed one. A closed device can be opened again.
 ## 3. Blocking and timeouts
 
 Long operations take a `timeout` in seconds. `None` means the device's default (for
-stages, `Stage.move_timeout`). A device that doesn't finish in time raises
+stages, `Stage.move_timeout`; for frame cameras, `FrameCamera.capture_timeout`). Pass
+`math.inf` to wait indefinitely. A device that doesn't finish in time raises
 `DeviceTimeout`, which is also a `TimeoutError`.
 
 Pass your own timeout when you know something the default doesn't, e.g. a heavy load
@@ -196,7 +197,7 @@ code.
 | Role | Methods |
 |---|---|
 | `Camera` | `settings()`, `setting(name)`, `set_setting(name, value)`, `preview_frame()` |
-| `FrameCamera` | adds `capture_frame() -> Frame` |
+| `FrameCamera` | adds `capture_frame(not_before=None, timeout=None) -> Frame`; `not_before` (an aware `datetime`) rejects frames with an earlier `timestamp`, for free-running cameras. Which moment a camera timestamps varies; its hardware doc says |
 | `FileCamera` | adds `capture_files() -> list[CameraFile]`; save with `CameraFile.save(dir, stem)`, which refuses to overwrite unless asked |
 | `FocusDrive` | `step(n)` (positive = toward far), `drive_to_limit("near" \| "far")`, `focus_steps`, `last_limit` |
 | `Light` | `channels`, `set_level(id, 0.0–1.0)`, `set_color(id, (r, g, b))`, `level(id)`, `color(id)`, `all_off()` |

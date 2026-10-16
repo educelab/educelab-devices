@@ -57,7 +57,9 @@ class Frame:
         pixels: Image data, shaped ``(height, width)`` or
             ``(height, width, channels)``.
         pixel_format: Layout of ``pixels``, e.g. ``"Mono8"`` or ``"RGB8"``.
-        timestamp: When the frame was captured (timezone-aware).
+        timestamp: The time the camera reports for the frame, as a
+            timezone-aware host time. Which moment that is (exposure start,
+            end, readout) depends on the camera; see its hardware doc.
         metadata: Capture metadata such as the exposure time used.
     """
 
@@ -170,13 +172,49 @@ class Camera(Device):
 class FrameCamera(Camera):
     """A camera that delivers decoded pixel arrays (e.g. machine-vision cameras)."""
 
+    capture_timeout: float = 30.0
+    """Default limit, in seconds, for `capture_frame()` to return a frame."""
+
     @synchronized
-    def capture_frame(self) -> Frame:
-        """Capture one frame with the current settings."""
-        return self._capture_frame()
+    def capture_frame(
+        self,
+        *,
+        not_before: datetime | None = None,
+        timeout: float | None = None,
+    ) -> Frame:
+        """Capture one frame with the current settings.
+
+        Free-running cameras may already hold a frame exposed before the call.
+        Pass ``not_before`` (e.g. the moment the scene was ready) to get a frame
+        whose ``timestamp`` is no earlier than that. Cameras differ in which
+        moment they timestamp, so add a margin if that matters.
+
+        Args:
+            not_before: Earliest acceptable frame time, as a timezone-aware
+                datetime such as ``datetime.now(UTC)``.
+            timeout: Seconds to wait from the call, including any wait for
+                ``not_before``, or ``None`` for `capture_timeout`. Pass
+                ``math.inf`` to wait indefinitely.
+
+        Raises:
+            DeviceTimeout: No acceptable frame arrived in time.
+        """
+        if timeout is None:
+            timeout = self.capture_timeout
+        elif not timeout > 0:
+            raise ValueError(f"timeout must be positive, not {timeout}")
+        if not_before is not None:
+            if not isinstance(not_before, datetime):
+                raise TypeError(
+                    "not_before must be a timezone-aware datetime, not "
+                    f"{type(not_before).__name__}; use datetime.now(UTC)"
+                )
+            if not_before.tzinfo is None:
+                raise ValueError("not_before must be timezone-aware")
+        return self._capture_frame(not_before, timeout)
 
     @abstractmethod
-    def _capture_frame(self) -> Frame: ...
+    def _capture_frame(self, not_before: datetime | None, timeout: float) -> Frame: ...
 
 
 class FileCamera(Camera):

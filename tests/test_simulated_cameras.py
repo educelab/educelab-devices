@@ -1,5 +1,6 @@
 import functools
 import time
+from datetime import UTC, datetime, timedelta
 
 import numpy as np
 import pytest
@@ -13,6 +14,7 @@ from educelab.devices.cameras import (
     SimulatedCamera,
     SimulatedFileCamera,
 )
+from educelab.devices.errors import DeviceTimeout
 
 
 class TestSimulatedCamera(FrameCameraContract):
@@ -68,6 +70,19 @@ def test_capture_takes_the_exposure_time():
         start = time.monotonic()
         camera.capture_frame()
         assert time.monotonic() - start >= 0.1
+
+
+def test_capture_waits_for_a_future_not_before():
+    with SimulatedCamera() as camera:
+        ready = datetime.now(UTC) + timedelta(seconds=0.1)
+        assert camera.capture_frame(not_before=ready).timestamp >= ready
+
+
+def test_capture_times_out_when_exposure_exceeds_timeout():
+    with SimulatedCamera() as camera:
+        camera.set_setting(EXPOSURE_TIME, 1.0)
+        with pytest.raises(DeviceTimeout):
+            camera.capture_frame(timeout=0.1)
 
 
 def test_frame_metadata_records_settings():

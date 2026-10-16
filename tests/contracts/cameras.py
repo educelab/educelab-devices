@@ -1,9 +1,11 @@
+from datetime import UTC, datetime, timedelta
+
 import numpy as np
 import pytest
 
 from contracts.device import DeviceContract
 from educelab.devices.cameras import CANONICAL_UNITS, PIXEL_FORMAT, CameraFile, Frame
-from educelab.devices.errors import NotConnected
+from educelab.devices.errors import DeviceTimeout, NotConnected
 
 
 class CameraContract(DeviceContract):
@@ -77,6 +79,20 @@ class FrameCameraContract(CameraContract):
         assert isinstance(frame.pixels, np.ndarray)
         assert frame.pixels.ndim in (2, 3)
         assert frame.timestamp.tzinfo is not None
+
+    def test_capture_frame_honors_not_before(self, device):
+        ready = datetime.now(UTC)
+        assert device.capture_frame(not_before=ready).timestamp >= ready
+
+    def test_capture_frame_times_out_waiting_for_not_before(self, device):
+        later = datetime.now(UTC) + timedelta(seconds=10)
+        with pytest.raises(DeviceTimeout):
+            device.capture_frame(not_before=later, timeout=0.1)
+
+    @pytest.mark.parametrize("timeout", [0.0, -1.0])
+    def test_capture_frame_rejects_non_positive_timeout(self, device, timeout):
+        with pytest.raises(ValueError, match="timeout"):
+            device.capture_frame(timeout=timeout)
 
     def test_frame_pixel_format_matches_setting(self, device):
         settings = device.settings()

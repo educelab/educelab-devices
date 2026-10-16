@@ -32,6 +32,9 @@
     "a5f79f8: Record approval of Spinnaker Phase 2",
     "e2786ce: Add el-devices spinnaker",
     "d5670fb: Add Spinnaker hardware tests",
-    "ff6dcfc: Finish the Spinnaker hardware doc with the rig check steps"
+    "ff6dcfc: Finish the Spinnaker hardware doc with the rig check steps",
+    "7122413: Record Spinnaker Phase 3 progress",
+    "51ba634: Use PySpin 4.4.0's names and require Spinnaker 4.4.0",
+    "c5cc92e: Record the first Spinnaker rig run and fix the install docs"
   ]
 }

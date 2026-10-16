@@ -102,7 +102,7 @@ hub.connected_speed(port) -> PortSpeed | None   # what the attached device
   and implement `PortSpeed`, `set_port_speed`, `port_speed`, `connected_speed`, and the
   `power_on()` interaction.
 - [x] Task 3.2: Add `el-devices hub speed` and the speed columns in `status`.
-- [ ] Task 3.3: Document port speed in `docs/hardware/acroname-usbhub3p.md` (API,
+- [x] Task 3.3: Document port speed in `docs/hardware/acroname-usbhub3p.md` (API,
   state bits, unknowns).
 - [ ] Task 3.4: Hardware tests on `ACRONAME_TEST_PORT` only, restoring its power and
   speed afterwards: the limit reads back and survives `power_off()`/`power_on()`,

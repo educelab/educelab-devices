@@ -1,4 +1,4 @@
-"""``el-devices hub``: list Acroname hubs, show port power, and power-cycle a port."""
+"""``el-devices hub``: list Acroname hubs, show and switch port power and speed."""
 
 import argparse
 import functools
@@ -8,13 +8,14 @@ from typing import TYPE_CHECKING
 
 # Imported where it's used, so other subcommands don't load the driver.
 if TYPE_CHECKING:
-    from educelab.devices.hubs.acroname import AcronameHub
+    from educelab.devices.hubs.acroname import AcronameHub, PortSpeed
 
 
 def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
     parser = subparsers.add_parser(
         "hub",
-        help="list Acroname USB hubs, show port power, or power-cycle a port",
+        help="list Acroname USB hubs, show port power and speed, power-cycle a "
+        "port, or limit its speed",
         description="Check an Acroname USBHub3p. Without an action, shows the "
         "status of the one hub attached.",
     )
@@ -24,7 +25,7 @@ def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") 
     actions.add_parser("list", help="list attached hubs").set_defaults(func=_list)
 
     status = actions.add_parser(
-        "status", help="show a hub's identity and the power state of every port"
+        "status", help="show a hub's identity and every port's power and speed"
     )
     _add_serial_number(status)
     status.set_defaults(func=_status)
@@ -39,6 +40,28 @@ def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") 
         help="seconds to leave the port off (default: the driver's, 1 s)",
     )
     cycle.set_defaults(func=_cycle)
+
+    speed = actions.add_parser(
+        "speed",
+        help="show or limit one port's USB speed",
+        description="Show a port's speed limit and the speed its device connected "
+        "at, or set the limit. A device already attached may keep its connection "
+        "until it reconnects; add --cycle to power-cycle the port afterwards.",
+    )
+    _add_serial_number(speed)
+    speed.add_argument("port", type=int, help="port number, from 0")
+    speed.add_argument(
+        "speed",
+        nargs="?",
+        type=_speed,
+        help="usb3 (default), usb2, or data-off (power only); omit to show",
+    )
+    speed.add_argument(
+        "--cycle",
+        action="store_true",
+        help="power-cycle the port after setting, so its device reconnects",
+    )
+    speed.set_defaults(func=_port_speed)
 
 
 def _add_serial_number(parser: argparse.ArgumentParser) -> None:
@@ -73,6 +96,18 @@ def _needs_sdk(
             return 1
 
     return wrapper
+
+
+def _speed(text: str) -> "PortSpeed":
+    from educelab.devices.hubs.acroname import PortSpeed
+
+    try:
+        return PortSpeed(text.lower())
+    except ValueError:
+        choices = ", ".join(s.value for s in PortSpeed)
+        raise argparse.ArgumentTypeError(
+            f"not a port speed: {text!r} (choose from {choices})"
+        ) from None
 
 
 @_needs_sdk
@@ -111,6 +146,28 @@ def _cycle(args: argparse.Namespace) -> int:
     return 0
 
 
+@_needs_sdk
+def _port_speed(args: argparse.Namespace) -> int:
+    from educelab.devices.hubs.acroname import AcronameHub
+
+    if args.cycle and args.speed is None:
+        print("el-devices: --cycle needs a speed to set", file=sys.stderr)
+        return 2
+    with AcronameHub(args.serial_number) as hub:
+        try:
+            if args.speed is not None:
+                hub.set_port_speed(args.port, args.speed)
+                print(f"Limited port {args.port} to {args.speed}.")
+                if args.cycle:
+                    hub.power_cycle(args.port)
+                    print(f"Power-cycled port {args.port}.")
+            print(f"  {_port_line(hub, args.port)}")
+        except KeyError as exc:
+            print(f"el-devices: {exc.args[0]}", file=sys.stderr)
+            return 1
+    return 0
+
+
 def _print_status(hub: "AcronameHub") -> None:
     info = hub.info
     delay = hub.enumeration_delay().value
@@ -119,4 +176,10 @@ def _print_status(hub: "AcronameHub") -> None:
         f"{info.firmware_version}, enumeration delay {delay:g} s"
     )
     for port in hub.ports:
-        print(f"  port {port}: {'on' if hub.is_powered(port) else 'off'}")
+        print(f"  {_port_line(hub, port)}")
+
+
+def _port_line(hub: "AcronameHub", port: int) -> str:
+    power = "on" if hub.is_powered(port) else "off"
+    connected = hub.connected_speed(port) or "nothing"
+    return f"port {port}: {power}, limit {hub.port_speed(port)}, connected {connected}"

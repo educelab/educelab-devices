@@ -99,3 +99,52 @@ def test_missing_sdk_names_the_extra(monkeypatch, capsys):
     monkeypatch.setitem(sys.modules, "brainstem", None)
     assert main(["hub", "list"]) == 1
     assert "educelab-devices[acroname]" in capsys.readouterr().err
+
+
+def test_status_shows_each_ports_limit_and_connection(sdk, capsys):
+    sdk.units[0].devices[1] = "usb3"
+    sdk.units[0].port_state[2] = fakes.brainstem.VBUS_ENABLED
+    assert main(["hub", "status"]) == 0
+    out = capsys.readouterr().out
+    assert "port 1: on, limit usb3, connected usb3" in out
+    assert "port 2: on, limit data-off, connected nothing" in out
+
+
+def test_speed_shows_one_port(sdk, capsys):
+    sdk.units[0].devices[4] = "usb3"
+    assert main(["hub", "speed", "4"]) == 0
+    assert "port 4: on, limit usb3, connected usb3" in capsys.readouterr().out
+    assert not any(c[0].startswith("set") for c in sdk.units[0].calls)
+
+
+def test_speed_sets_the_limit(sdk, capsys):
+    unit = sdk.units[0]
+    unit.devices[4] = "usb3"
+    assert main(["hub", "speed", "4", "USB2"]) == 0
+    assert "port 4: on, limit usb2, connected usb2" in capsys.readouterr().out
+    assert not any(c[0].startswith(("setPort", "setPower")) for c in unit.calls)
+
+
+def test_speed_with_cycle_power_cycles_and_keeps_the_limit(sdk, capsys):
+    unit = sdk.units[0]
+    assert main(["hub", "speed", "4", "data-off", "--cycle"]) == 0
+    assert ("setPortDisable", (4,)) in unit.calls
+    assert unit.port_state[4] == fakes.brainstem.VBUS_ENABLED
+    assert "limit data-off" in capsys.readouterr().out
+
+
+def test_unknown_speed_is_a_usage_error(sdk, capsys):
+    with pytest.raises(SystemExit) as info:
+        main(["hub", "speed", "4", "usb4"])
+    assert info.value.code == 2
+    assert "data-off" in capsys.readouterr().err
+
+
+def test_speed_unknown_port_fails(sdk, capsys):
+    assert main(["hub", "speed", "9", "usb2"]) == 1
+    assert "no port 9" in capsys.readouterr().err
+
+
+def test_cycle_without_a_speed_is_refused(sdk, capsys):
+    assert main(["hub", "speed", "4", "--cycle"]) == 2
+    assert not any(c[0].startswith("set") for c in sdk.units[0].calls)

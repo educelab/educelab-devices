@@ -19,7 +19,7 @@ Everything marked **verified** was observed directly; everything marked **assume
 |---|---|
 | Vendor | Orangemonkie |
 | Model | Foldio360 |
-| Firmware seen | `V1.0.2_1712M02669` (one unit) |
+| Firmware seen | `V1.0.2_1712M02669` (one unit: the captures, the original client, and the driver's hardware run on 2026-10-16) |
 | Reading the version | `get_status` replies with the firmware string ([Command reference](#command-reference)) |
 
 **Advertisement** (verified live against firmware `V1.0.2_1712M02669`, not from the
@@ -37,6 +37,14 @@ Scanning by service UUID and by name are therefore both sufficient on their own.
 
 The BLE address is unchanged across a power cycle (verified), so a cached address survives
 even though the device's state does not ([State and recovery](#state-and-recovery)).
+
+**What "address" means depends on the host.** On macOS, CoreBluetooth hides MAC addresses
+and gives each peripheral a UUID instead, e.g. `E8A05472-C1C6-BF86-D37F-32C827F0F04A` for
+the lab's unit (verified 2026-10-16). That UUID is what `Foldio360(address=...)`,
+`el-devices foldio --address`, and `FOLDIO360_ADDRESS` take on macOS, and it is per host:
+another Mac sees a different UUID for the same turntable, so an address can't be shared
+between machines. On Linux and Windows, bleak uses the MAC address (**assumed**; not tried
+with this turntable).
 
 ## Transport
 
@@ -124,9 +132,11 @@ forty other plausible names (`home`, `get_state`, `get_speed`, `info`, `version`
 …) all answer `FAIL`.
 
 The driver offers `run`, `ir_shutter`, and `set_signal` as Foldio360-only methods, outside
-the `Stage` role (see [Driver behavior](#driver-behavior)). Nothing uses them yet, and they
-are **unverified in our use**: the facts in their sections below were verified with the
-official app and the original standalone client, not through `educelab-devices`.
+the `Stage` role (see [Driver behavior](#driver-behavior)). Nothing uses them yet. Through
+`educelab-devices`, the 2026-10-16 hardware run covered only the first frames of a `run`
+and `ir_shutter` without a signal; the rest of their sections was verified with the
+official app and the original standalone client, and `set_signal` is **unverified in our
+use**.
 
 ### rotate
 
@@ -134,7 +144,7 @@ official app and the original standalone client, not through `educelab-devices`.
 
 | Arg | Type | Observed values | Meaning |
 |---|---|---|---|
-| `dir` | literal | `CW`, `CCW` | Direction. `CW` turns the platter clockwise and `CCW` counter-clockwise (verified on hardware 2026-10-16; unit and firmware to be recorded with the Task 5.2 run). **The app's *Left* button emits `CW`, *Right* emits `CCW`.** |
+| `dir` | literal | `CW`, `CCW` | Direction. `CW` turns the platter clockwise and `CCW` counter-clockwise (verified 2026-10-16, firmware `V1.0.2_1712M02669`, the lab's unit). **The app's *Left* button emits `CW`, *Right* emits `CCW`.** |
 | `deg` | int | 1, 5, 10, 25, 30, 45, 60, 90, 380, and 0 (jog only) | Degrees to travel |
 | `speed` | int | 1, 2, 3 | See [Timing](#timing) |
 | `mode` | int | 0, 1 | `1` = travel a fixed angle and stop. `0` = run until cancelled (`deg` is then also 0) |
@@ -169,10 +179,11 @@ documents for brightness, so it is not unique to brightness. Back-to-back comman
 cancelled (`cancel(1)` after a fixed-angle move, `cancel(0)` after a jog). Safe to send when
 nothing is moving — the device still replies `OK`. Idempotent in practice.
 
-Whether `cancel(1)` stops a fixed-angle `rotate` that is still in progress is **unknown**:
-every `cancel` in the captures follows either a jog or a move that had already reported
-`OK`. Settle it by sending `cancel(1)` partway through a long `rotate` and reading
-`get_position` afterwards.
+**`cancel(1)` stops a fixed-angle `rotate` in progress — verified** (2026-10-16, firmware `V1.0.2_1712M02669`, the lab's unit). A
+180° `rotate` at speed 1, cancelled 3.0 s in, stopped at 21°, and the counter still read
+the same two seconds later. The captures couldn't show this: every `cancel` in them follows
+a jog or a move that had already reported `OK`. Whether the cancelled `rotate` also sends
+its own `OK`, besides the cancel's, is still **unknown**; the driver handles either.
 
 ### set_bright
 
@@ -185,9 +196,11 @@ are lost. **Pace to ~50 ms** if you need per-value confirmation.
 
 ### run / continue / ir_shutter
 
-**Unverified in our use:** `Foldio360.run()` and `Foldio360.ir_shutter()` have not been run
-against hardware. The markers below describe the protocol, as observed with the app and
-the original client.
+**`run` turns clockwise — verified** (2026-10-16, firmware `V1.0.2_1712M02669`, the lab's unit). Through `Foldio360.run()`, the
+first frames of `run(24)` at speed 3 stepped the counter +15° each, and the counter counts
+up clockwise. The same run checked that `ir_shutter(0)` without a `set_signal` answers
+`FAIL`. The rest of this section was observed with the app and the original client, not
+yet through the driver.
 
 `run(frames, speed)`, `continue`, and `ir_shutter(0)` make up the 360° capture sequence,
 and the only stateful part of the protocol. `run` does **not** free-run: the turntable
@@ -219,6 +232,7 @@ all shutter timing.
 - Frame indices are returned as **bare decimal ASCII**, not `OK`.
 - `0` is the terminator, so indices are 1-based and `0` is never a valid frame.
 - Step timing tracks the same rate model as `rotate` ([Timing](#timing)).
+- Steps turn clockwise (verified 2026-10-16, see above).
 
 With an IR-triggered camera the app inserts a shutter command per frame, which the device
 acknowledges by **echoing the same frame index**:
@@ -252,7 +266,8 @@ images by any means it likes.
 
 ### set_signal (partially decoded)
 
-**Unverified in our use:** `Foldio360.set_signal()` has not been run against hardware.
+**Unverified in our use:** `Foldio360.set_signal()` has not been run against hardware;
+the lab has no captured blob for its cameras yet.
 
 Sent when a camera model is chosen in the app. The only non-ASCII command, and the only
 one that exceeds the MTU.
@@ -439,6 +454,27 @@ Use the model as a **watchdog**, not as a substitute for the notification — e.
 error if `2 × predicted + 1 s` elapses with no `OK`. The driver does exactly that
 (`watchdog_seconds`).
 
+**Through the driver, 2026-10-16** (2026-10-16, firmware `V1.0.2_1712M02669`, the lab's unit), each time a whole `move_by` call:
+
+| Move | Measured | Model | Difference |
+|---|---|---|---|
+| 90° at speed 1 | 12.707 s | 12.467 s | +0.240 s |
+| 90° at speed 2 | 9.701 s | 9.413 s | +0.288 s |
+| 90° at speed 3 | 6.573 s | 6.271 s | +0.302 s |
+| 380° at speed 3, as legs of 360° and 20° | 26.70 s | 26.17 s (two intercepts) | +0.53 s |
+| `move_to` 20° the short way, speed 1 | 3.06 s | 2.88 s | +0.18 s |
+
+Every call ran 0.18–0.30 s per rotation over the model. A `move_by` call is more than the
+rotation: it reads the counter before the move and again to check arrival, each a round
+trip plus the 30 ms digits-only settle, and those two reads account for roughly this much
+(**assumed**: the reads weren't timed on their own). So the model still describes the motion,
+and speeds 2 and 3 now each have a 90° sample through the driver, matching their assumed
+fits within that overhead. A 2 s jog at speed 1 covered 15°, as in the earlier probe.
+
+The watchdog needs no change for this. It only times the wait for the rotation's `OK`, not
+the counter reads around it, and `2 × predicted + 1 s` leaves seconds of margin (13.5 s for
+90° at speed 3, which took 6.6 s in total).
+
 Other timings the driver relies on:
 
 | What | Value | Source |
@@ -449,7 +485,7 @@ Other timings the driver relies on:
 | Brightness write pacing for reliable acks | ~50 ms | [set_bright](#set_bright) |
 | Scan window when no address is given | 8 s | Opening by scan took ~9.5 s, by address ~1.8 s ([Connecting](#connecting)) |
 | `get_position` round trip | ~180 ms | Measured with the original client; why `position()` is cached during a move |
-| Default limit for a rotation | `2 × predicted + 1 s`, per leg | The watchdog above; loose because speeds 2 and 3 are assumed |
+| Default limit for a rotation | `2 × predicted + 1 s`, per leg | The watchdog above; loose because speeds 2 and 3 rest on single-angle fits |
 | Quiet time before stray replies count as drained | 300 ms | Replies arrive within ~200 ms |
 | Wait for a brightness ack before reading the level back | 500 ms | Well past the ~200 ms reply time |
 
@@ -576,8 +612,8 @@ How `Foldio360` maps the protocol onto the `Stage` role:
   `PositionError`. A front end offering a frame count should offer `KNOWN_GOOD_FRAMES` and
   let free entry reach the rest. A frame count outside 24/36/48 is passed through; its wedge surfaces as
   `DeviceTimeout` after a single `cancel(1)`. Moving or jogging from inside `on_frame`
-  raises `DeviceBusy`. **Unverified in our use**, as are `ir_shutter()` and
-  `set_signal()`.
+  raises `DeviceBusy`. The 2026-10-16 run covered its first frames only (they step
+  clockwise); a full sequence, and `set_signal()`, haven't been run through the driver.
 - **Errors.** Arguments are checked before anything is sent, because `FAIL` doesn't say
   which argument was wrong. `CommandRejected` means the device answered `FAIL`;
   `UnexpectedResponse` (a `DeviceError`) means a reply that makes no sense for the
@@ -592,8 +628,8 @@ How `Foldio360` maps the protocol onto the `Stage` role:
   the transport: `read()` returns whole replies. `tests/fakes/foldio360.py` emulates the
   firmware for offline tests.
 - **Speed.** `speed()` lists the firmware's three speeds as deg/s, the reciprocal of each
-  speed's timing slope: about 7.30, 9.71, and 14.68 deg/s. Speeds 2 and 3 are
-  **assumed**, like their timing fits.
+  speed's timing slope: about 7.30, 9.71, and 14.68 deg/s. Speeds 2 and 3 rest on
+  single-angle fits, which the 2026-10-16 run matched at 90° ([Timing](#timing)).
 
 ## Notes for a client
 
@@ -642,23 +678,25 @@ Minimal working capture, for reference: enable notifications → `set_bright(60)
 
 | Question | How to settle it |
 |---|---|
-| Does `cancel(1)` stop a fixed-angle `rotate` in progress? | Cancel partway through a long `rotate`, then read `get_position` |
+| Does a cancelled `rotate` send its own `OK` as well as the cancel's? | `cancel(1)` does stop it ([cancel](#cancel)); log the notifications around a cancel at `DEBUG` |
 | `set_signal` framing beyond the Canon match | Step the app's camera picker, diff the blobs |
 | `rotate(dir,0,speed,1)` behavior | Send it — the app never will |
 | `ir_shutter` arguments other than 0 | `2` is rejected; 1 and 3 untried |
 | What `mode` ≥ 2 actually does | Accepted with `OK` ([Response grammar](#response-grammar)) but its effect is unobserved |
 | `speed > 3`, `deg > 380` | `speed` 4 is rejected ([Response grammar](#response-grammar)); higher speeds and `deg > 380` untried |
-| Which direction does `run` turn? | Not in the captures, and not settled by `CW` being clockwise, since `run` takes no direction. Watch the platter during a `run`, or read the step signs `test_run_steps_and_stops_early` prints |
 | Does any `frames` outside 24/36/48 work? | Twelve values tried, all wedge ([run / continue / ir_shutter](#run--continue--ir_shutter)); the set matches the app's presets exactly, so probably not |
 | Acknowledged writes (0x12) on RX | Untested; the characteristic advertises support |
 | Is the ~500 ms settle after the CCCD write required? | Enable notifications and send `get_status` immediately |
+
+Settled on 2026-10-16: `cancel(1)` stops a `rotate` in progress ([cancel](#cancel)), and
+`run` turns clockwise ([run / continue / ir_shutter](#run--continue--ir_shutter)).
 
 ## Manual check
 
 `el-devices foldio` checks a turntable by hand. Close the official app first.
 
 ```bash
-el-devices foldio scan                       # list advertisers; find the address
+el-devices foldio scan                       # list advertisers; find the address (a UUID on macOS)
 el-devices foldio --address XX:XX status     # firmware, position, halo level
 el-devices foldio --address XX:XX rotate CW 90 -s 3
 el-devices foldio --address XX:XX goto 0     # the counter's zero, not a fixed place
@@ -674,7 +712,18 @@ Speeds are the firmware's 1–3. Ctrl-C during a move stops the turntable before
 `el-devices discover` scans too, and lists turntables found by name or service UUID. A
 turntable connected to another host doesn't advertise, so it isn't listed.
 
-Not yet run against hardware with the `educelab-devices` driver.
+**Last run: 2026-10-16**, on the lab's unit (firmware `V1.0.2_1712M02669`, macOS address
+`E8A05472-C1C6-BF86-D37F-32C827F0F04A`), macOS, Python 3.13.15:
+
+- `pytest -m hardware tests/test_foldio360_hardware.py -s`: all 18 tests passed in
+  101.7 s. Measurements are under [Timing](#timing), [cancel](#cancel), and
+  [run / continue / ir_shutter](#run--continue--ir_shutter).
+- The halo read back 1.0, 0.5, 0.25, and 0.0 exactly, and a 21-step ramp paced at 50 ms
+  landed its last level.
+- `CW` turned the platter clockwise.
+- Nothing surprising beyond the ~0.27 s per-move overhead under [Timing](#timing).
+- `test_stop_leaves_the_halo_alone` was added after this run and hasn't run on hardware
+  yet.
 
 ## Capture provenance
 

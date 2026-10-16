@@ -121,11 +121,17 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
 - [x] Task 5.1: Write `@pytest.mark.hardware` tests (connect, status, move_to, move_by, stop mid-move, halo levels).
   - `tests/test_foldio360_hardware.py` (`pytestmark = pytest.mark.hardware`): identity and firmware; whole-degree position; `move_to` arrival and short way (timed); `move_by` there and back, and literal past a full turn (timed, at speed 3); each speed's 90° time against the timing model (settles whether speeds 2 and 3 hold); `stop()` from another thread mid-move, checking the platter stays put afterwards (settles the open `cancel(1)` question); jog then stop; `run(24)` for three frames, printing step signs (settles which way `run` turns); `ir_shutter` without a signal answering FAIL; halo levels reading back, and a fast ramp landing its last level.
   - Connects to `FOLDIO360_ADDRESS` if set, else scans. Skips cleanly without `bleak`, when a scan finds no turntable, or when the given address doesn't connect (all three checked locally: 18 skipped). Measurements print with `-s`, for the hardware doc.
-- [ ] Task 5.2: Run them and `el-devices foldio` on the turntable; verify cancel-during-move behavior and record it in the hardware doc.
+- [x] Task 5.2: Run them and `el-devices foldio` on the turntable; verify cancel-during-move behavior and record it in the hardware doc.
   - Blocked on hardware (2026-10-15): the turntable isn't available. The maintainer runs the steps in the Phase 5 report when it is.
   - First findings (maintainer, 2026-10-16): the wire value `CW` turns the platter clockwise. Recorded in the hardware doc's rotate table; the driver docstring and `el-devices foldio rotate --help` now say so. It doesn't settle which way `run` turns (`run` takes no direction), so that question stays open.
   - The maintainer expects `stop()` to leave the halo alone. Checked: no stop path (idle, mid-move, jog, or `el-devices foldio stop`) sends `set_bright`, and nothing on record says the firmware's `cancel` touches the halo. Pinned with offline tests (idle, mid-move, jog, CLI) and a hardware test, `test_stop_leaves_the_halo_alone`, which checks the firmware side. Stated in the hardware doc, the `Foldio360` docstring, and the `stop` help.
-  - Still open: the full hardware test log.
+  - Hardware run (maintainer, 2026-10-16; log at `/Users/seth/hw-logs/foldio.log`): all 18 hardware tests passed in 101.7 s on macOS, Python 3.13.15, firmware `V1.0.2_1712M02669`. Recorded in the hardware doc:
+    - On macOS the address is a per-host CoreBluetooth UUID (`E8A05472-C1C6-BF86-D37F-32C827F0F04A`), not a MAC; documented in Identity and in the `--address`, `FOLDIO360_ADDRESS`, and `Foldio360(address=)` help.
+    - `cancel(1)` stops a `rotate` in progress (21° of 180° after 3.0 s, still two seconds later). Open question settled; whether the cancelled `rotate` sends its own OK stays open.
+    - `run(24)` steps +15° each, so `run` turns clockwise. Open question settled.
+    - 90° at speeds 1/2/3 measured 12.707/9.701/6.573 s against 12.467/9.413/6.271 s predicted, 0.24–0.30 s over. Recommendation: keep the model and the timeouts. The excess matches the two counter reads around each `move_by` call (start position and arrival check), which the hardware test's timer includes and the watchdog doesn't time. The watchdog leaves seconds of margin either way. `move_to` 20° took 3.06 s, `move_by` 380° at speed 3 took 26.70 s, and a 2 s jog at speed 1 covered 15°.
+    - Halo levels 1.0/0.5/0.25/0.0 read back; the paced 21-step ramp landed its last level.
+  - Follow-up for the maintainer: `test_stop_leaves_the_halo_alone` was added after this run. Re-run it with `FOLDIO360_ADDRESS=<uuid> .venv/bin/pytest -m hardware tests/test_foldio360_hardware.py -k halo_alone -s`.
 - [ ] Task 5.3: With the maintainer, add a README pointer to `educelab-devices` in `~/source/foldio360` and archive it.
 
 ### Verification

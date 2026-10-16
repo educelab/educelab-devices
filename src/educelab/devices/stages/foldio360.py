@@ -482,7 +482,9 @@ class Foldio360(Stage):
     relies on.
 
     Args:
-        address: BLE address, or ``None`` to scan for the turntable.
+        address: BLE address, or ``None`` to scan for the turntable. On macOS
+            this is the CoreBluetooth UUID a scan reports, which differs from
+            host to host.
         name: Advertised name to match when scanning.
         scan_timeout: Seconds to scan for.
         connect_timeout: Seconds to wait for a connection, or ``None`` for

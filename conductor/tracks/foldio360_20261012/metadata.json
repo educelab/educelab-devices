@@ -4,17 +4,17 @@
   "type": "feature",
   "status": "in_progress",
   "created": "2026-10-12T00:00:00Z",
-  "updated": "2026-10-15T00:00:00Z",
+  "updated": "2026-10-16T00:00:00Z",
   "phases": {
     "total": 5,
     "completed": 4
   },
   "tasks": {
     "total": 16,
-    "completed": 14
+    "completed": 15
   },
   "current_phase": 5,
-  "current_task": "5.2",
+  "current_task": "5.3",
   "commits": [
     "ffba81e: Move the Foldio360 BLE client into the stages package",
     "bf71cdf: Port the Foldio360 offline tests to pytest",

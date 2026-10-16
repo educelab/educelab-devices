@@ -65,7 +65,7 @@ Build a fake PySpin first, then the system/enumeration layer, then the per-camer
 
 - [ ] Task 3.1: Write `docs/hardware/spinnaker.md`.
 - [x] Task 3.2: Add the `el-devices spinnaker` subcommand with the benchmark.
-- [ ] Task 3.3: Write `@pytest.mark.hardware` tests.
+- [x] Task 3.3: Write `@pytest.mark.hardware` tests.
 - [ ] Task 3.4: Run them on a multi-camera `pgs-scan` rig (Python 3.12); record findings.
 
 ### Verification

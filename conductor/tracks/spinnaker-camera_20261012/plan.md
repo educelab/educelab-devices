@@ -63,7 +63,7 @@ Build a fake PySpin first, then the system/enumeration layer, then the per-camer
 
 ### Tasks
 
-- [ ] Task 3.1: Write `docs/hardware/spinnaker.md`.
+- [x] Task 3.1: Write `docs/hardware/spinnaker.md`.
 - [x] Task 3.2: Add the `el-devices spinnaker` subcommand with the benchmark.
 - [x] Task 3.3: Write `@pytest.mark.hardware` tests.
 - [ ] Task 3.4: Run them on a multi-camera `pgs-scan` rig (Python 3.12); record findings.
@@ -71,6 +71,13 @@ Build a fake PySpin first, then the system/enumeration layer, then the per-camer
 ### Verification
 
 - [ ] Maintainer confirms capture timing and reliability on a rig.
+
+### Notes and deviations
+
+- Tasks ran in the order 3.2, 3.3, 3.1, so the hardware doc's rig steps could cite the finished command and tests.
+- `el-devices spinnaker` opens every selected camera at once, so they all stream as on a rig, and captures from all of them together in threads, with `not_before` set to each request. It reports latency, frame age, drops, missing trailers, and an estimated streaming frame rate and MB/s. The estimate comes from frame IDs and device timestamps, and assumes frame IDs count frames that newest-only buffering discarded. `--exposure`, `--gain` and `--pixel-format` set up a run, matching what `pgs-scan`'s `system_check.py` used.
+- `SpinnakerCamera.timestamp_node` (read-only) was added, so the command and the hardware tests can report which node a model uses.
+- The hardware doc's Manual check section holds the exact rig steps, including latency, USB bandwidth, and a test of whether the timestamp marks the start or the end of exposure. Task 3.4 (the rig run) has not been done.
 
 ## Final Verification
 

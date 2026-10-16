@@ -63,6 +63,11 @@ def test_applies_exposure_and_pixel_format(pyspin, capsys):
     assert "Mono16, exposure 2 ms (Off)" in out
 
 
+def test_applies_gain(pyspin, capsys):
+    assert main(["spinnaker", "--serial", MONO, "--frames", "1", "--gain", "10"]) == 0
+    assert "gain 10.0 dB" in capsys.readouterr().out
+
+
 def test_failed_captures_fail_the_command(pyspin, capsys):
     pyspin.system.cameras[0].buffer_count = 0  # every grab times out
     assert main(["spinnaker", "--serial", MONO, "--frames", "2"]) == 1

@@ -43,6 +43,11 @@ def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") 
         type=_positive,
         help="exposure time in seconds, with auto exposure off (default: leave it)",
     )
+    parser.add_argument(
+        "--gain",
+        type=float,
+        help="gain in dB, with auto gain off (default: leave it)",
+    )
     parser.add_argument("--pixel-format", help="e.g. Mono8, Mono16, or RGB8")
     parser.add_argument(
         "--timeout",
@@ -84,7 +89,7 @@ class _Results:
 
 
 def run(args: argparse.Namespace) -> int:
-    from educelab.devices.cameras import EXPOSURE_TIME, PIXEL_FORMAT
+    from educelab.devices.cameras import EXPOSURE_TIME, GAIN, PIXEL_FORMAT
     from educelab.devices.cameras.spinnaker import SpinnakerCamera, SpinnakerSystem
 
     try:
@@ -112,6 +117,9 @@ def run(args: argparse.Namespace) -> int:
             if args.exposure:
                 camera.set_setting("ExposureAuto", "Off")
                 camera.set_setting(EXPOSURE_TIME, args.exposure)
+            if args.gain is not None:
+                camera.set_setting("GainAuto", "Off")
+                camera.set_setting(GAIN, args.gain)
             _describe(camera)
         results = _benchmark(opened, args.frames, args.timeout)
     finally:

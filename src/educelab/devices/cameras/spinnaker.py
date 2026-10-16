@@ -362,6 +362,13 @@ class SpinnakerCamera(FrameCamera):
         return SpinnakerSystem().discover()
 
     @property
+    def timestamp_node(self) -> str | None:
+        """The node holding the latched timestamp: ``"Timestamp"`` or the older
+        ``"TimestampLatchValue"``. ``None`` before open, or if the camera has neither.
+        """
+        return self._timestamp_node
+
+    @property
     def timestamp_offset(self) -> float | None:
         """Host clock minus the camera's timestamp counter, in seconds.
 

@@ -960,3 +960,39 @@ def test_scan_lines_lists_every_advertiser_strongest_first(monkeypatch):
     assert [line.split()[0] for line in lines] == ["AA:03", "AA:01", "AA:02", "AA:04"]
     assert lines[1].endswith("<-- Foldio360")
     assert "   - dBm  -" in lines[3]
+
+
+# -- stop leaves the halo alone ----------------------------------------------------
+
+
+def test_stop_when_idle_leaves_the_halo_alone():
+    dev, t = table()
+    dev.halo.open()
+    dev.halo.set_level("halo", 0.4)
+    sent = len(t.sent)
+    dev.stop()
+    assert not [c for c in t.sent[sent:] if str(c).startswith("set_bright")]
+    assert dev.halo.level("halo") == pytest.approx(0.4)
+
+
+def test_stop_mid_move_leaves_the_halo_alone():
+    dev, t = table(hold_moves=True)
+    dev.halo.open()
+    dev.halo.set_level("halo", 0.4)
+    sent = len(t.sent)
+    thread, outcome = in_thread(dev.move_to, {"theta": 90.0})
+    assert t.move_started.wait(timeout=2)
+    dev.stop()
+    thread.join(timeout=2)
+    assert isinstance(outcome[0], PositionError)
+    assert not [c for c in t.sent[sent:] if str(c).startswith("set_bright")]
+    assert dev.halo.level("halo") == pytest.approx(0.4)
+
+
+def test_stopping_a_jog_leaves_the_halo_alone():
+    dev, _ = table()
+    dev.halo.open()
+    dev.halo.set_level("halo", 0.4)
+    dev.jog("theta", 1)
+    dev.stop()
+    assert dev.halo.level("halo") == pytest.approx(0.4)

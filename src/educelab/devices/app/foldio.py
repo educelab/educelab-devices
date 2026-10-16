@@ -63,7 +63,7 @@ def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") 
         help="turn by an angle",
         description="Turn by an angle, literally: 720 turns twice.",
     )
-    rotate.add_argument("direction", type=parse_direction, help="CW or CCW")
+    rotate.add_argument("direction", type=parse_direction, help="CW (clockwise) or CCW")
     rotate.add_argument("degrees", type=bounded_int(1, label="degrees"))
     rotate.set_defaults(func=_rotate)
 
@@ -82,7 +82,8 @@ def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") 
     halo.set_defaults(func=_halo)
 
     actions.add_parser(
-        "stop", help="stop any motion, including another program's jog"
+        "stop",
+        help="stop any motion, including another program's jog; the halo stays as it is",
     ).set_defaults(func=_stop)
 
 

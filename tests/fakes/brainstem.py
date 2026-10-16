@@ -124,6 +124,7 @@ class _Hub:
                 for name, (bits, on) in switches.items()
             },
             getPortState=self._get_port_state,
+            getPortCurrent=self._get_port_current,
             getEnumerationDelay=self._get_enumeration_delay,
             setEnumerationDelay=self._set_enumeration_delay,
         )
@@ -188,6 +189,12 @@ class _Hub:
         if code := self._port("getPortState", channel):
             return FakeResult(code)
         return FakeResult(NO_ERROR, self._connected.state(channel))
+
+    def _get_port_current(self, channel: int) -> FakeResult:
+        if code := self._port("getPortCurrent", channel):
+            return FakeResult(code)
+        attached = self._connected.state(channel) & DEVICE_ATTACHED
+        return FakeResult(NO_ERROR, 100_000 if attached else 0)
 
     def _get_enumeration_delay(self) -> FakeResult:
         if code := self._call("getEnumerationDelay"):

@@ -63,9 +63,9 @@ class Setting:
             )
         converted = _as_kind(value, self.value)
         if converted is None:
+            kind = "float" if self.value is None else type(self.value).__name__
             raise TypeError(
-                f"setting {self.name!r} takes {type(self.value).__name__}, "
-                f"not {type(value).__name__}"
+                f"setting {self.name!r} takes {kind}, not {type(value).__name__}"
             )
         value = converted
         if isinstance(value, bool | str):
@@ -106,6 +106,8 @@ class Setting:
             allowed = sorted(
                 float(c) for c in self.choices if not isinstance(c, bool | str)
             )
+            if not allowed:
+                raise TypeError(f"setting {self.name!r} has no numeric choices")
             return _pick(allowed, value, direction)
         low, high = self.minimum, self.maximum
         if self.step:

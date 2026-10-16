@@ -244,3 +244,14 @@ def test_setting_without_a_value_or_choices_takes_numbers_as_floats():
     assert isinstance(unknown.validate(2), float)
     with pytest.raises(TypeError):
         unknown.validate("Bulb")
+
+
+def test_setting_without_a_value_names_the_type_it_takes():
+    unknown = Setting(EXPOSURE_TIME, None, 0.0, 10.0, unit="s")
+    with pytest.raises(TypeError, match="takes float, not str"):
+        unknown.validate("Bulb")
+
+
+def test_nearest_needs_numeric_choices_when_there_is_no_value():
+    with pytest.raises(TypeError):
+        Setting("mode", None, choices=("a", "b")).nearest(1.0)

@@ -36,6 +36,8 @@ T = TypeVar("T", bound=np.unsignedinteger[Any])
 _REFERENCE_EXPOSURE_S = 0.01
 _NOISE_SIGMA = 0.01
 _PREVIEW_STRIDE = 4
+# A real shutter at Bulb stays open while the button is held. Simulate a short hold.
+_BULB_EXPOSURE_S = _REFERENCE_EXPOSURE_S
 
 
 class SimulatedCamera(FrameCamera):
@@ -95,7 +97,7 @@ class SimulatedCamera(FrameCamera):
         self._frame_count += 1
         metadata: dict[str, Any] = {
             EXPOSURE_TIME: exposure,
-            GAIN: self._store[GAIN].value,
+            GAIN: _number(self._store[GAIN]),
             "frame_number": self._frame_count,
         }
         return Frame(
@@ -121,13 +123,26 @@ class SimulatedFileCamera(FileCamera):
     Files are named ``SIM_0001.pgm``, ``SIM_0002.pgm``, and so on. Each
     capture takes ``exposure_time`` seconds.
 
+    It can start like a DSLR at Bulb or Auto ISO, where ``exposure_time`` or
+    ``iso`` reads as ``None`` until a value is written.
+
     Args:
         width: Image width in pixels.
         height: Image height in pixels.
         seed: Seed for the noise, for repeatable images.
+        bulb: Start with the shutter at Bulb.
+        auto_iso: Start at Auto ISO, which renders as ISO 100.
     """
 
-    def __init__(self, width: int = 640, height: int = 480, seed: int = 0) -> None:
+    def __init__(
+        self,
+        width: int = 640,
+        height: int = 480,
+        seed: int = 0,
+        *,
+        bulb: bool = False,
+        auto_iso: bool = False,
+    ) -> None:
         super().__init__()
         self._width = width
         self._height = height
@@ -136,8 +151,14 @@ class SimulatedFileCamera(FileCamera):
         self._store = {
             s.name: s
             for s in (
-                Setting(EXPOSURE_TIME, 0.01, 1 / 8000, 30.0, unit="s"),
-                Setting(ISO, 100, choices=(100, 200, 400, 800, 1600, 3200)),
+                Setting(
+                    EXPOSURE_TIME, None if bulb else 0.01, 1 / 8000, 30.0, unit="s"
+                ),
+                Setting(
+                    ISO,
+                    None if auto_iso else 100,
+                    choices=(100, 200, 400, 800, 1600, 3200),
+                ),
                 Setting("image_format", "PGM", read_only=True),
             )
         }
@@ -164,7 +185,7 @@ class SimulatedFileCamera(FileCamera):
         return _quantize(image, np.uint8)
 
     def _capture_files(self) -> list[CameraFile]:
-        time.sleep(_number(self._store[EXPOSURE_TIME]))
+        time.sleep(self._exposure())
         pixels = _quantize(self._render(), np.uint8)
         self._file_count += 1
         header = f"P5\n{self._width} {self._height}\n255\n".encode("ascii")
@@ -174,18 +195,23 @@ class SimulatedFileCamera(FileCamera):
 
     def _render(self) -> npt.NDArray[np.float64]:
         # ISO 100 is the 0 dB reference, like gain on a frame camera.
-        gain_db = 20 * np.log10(_number(self._store[ISO]) / 100)
+        iso = self._store[ISO]
+        gain_db = 0.0 if iso.value is None else 20 * np.log10(_number(iso) / 100)
         return _render(
             self._width,
             self._height,
-            _number(self._store[EXPOSURE_TIME]),
+            self._exposure(),
             float(gain_db),
             self._rng,
         )
 
+    def _exposure(self) -> float:
+        setting = self._store[EXPOSURE_TIME]
+        return _BULB_EXPOSURE_S if setting.value is None else _number(setting)
+
 
 def _number(setting: Setting) -> float:
-    # Simulated settings always hold a number; None only comes from hardware.
+    # Callers handle the None states (Bulb, Auto ISO) before getting here.
     assert isinstance(setting.value, int | float), setting
     return float(setting.value)
 

@@ -283,6 +283,8 @@ Every role has a simulated device in its subpackage: `SimulatedCamera`,
 devices: moves take time and can be stopped, captures take the exposure time, and focus
 drives hit limits. They pass the same contract tests (`tests/contracts/`) as the real
 drivers, so code that works against a simulation should work against the hardware.
+`SimulatedFileCamera(bulb=True, auto_iso=True)` starts with `exposure_time` and `iso`
+reading as `None`, like a DSLR at Bulb and Auto ISO.
 
 `el-devices simulate` runs each one through a few operations, which is a quick way to
 check an install.

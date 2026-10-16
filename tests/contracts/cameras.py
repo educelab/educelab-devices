@@ -21,7 +21,7 @@ class CameraContract(DeviceContract):
 
     def test_writing_current_values_succeeds(self, device):
         for name, setting in device.settings().items():
-            if not setting.read_only:
+            if not setting.read_only and setting.value is not None:
                 device.set_setting(name, setting.value)
                 assert device.setting(name).value == setting.value
 
@@ -32,11 +32,12 @@ class CameraContract(DeviceContract):
             for choice in setting.choices:
                 device.set_setting(name, choice)
                 assert device.setting(name).value == choice
-            device.set_setting(name, setting.value)
+            if setting.value is not None:
+                device.set_setting(name, setting.value)
 
     def test_nearest_values_are_accepted(self, device):
         for name, setting in device.settings().items():
-            if setting.read_only or isinstance(setting.value, bool | str):
+            if setting.read_only or isinstance(setting.value, bool | str | None):
                 continue
             for direction in ("nearest", "down", "up"):
                 value = setting.nearest(setting.value, direction)

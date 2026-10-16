@@ -1,6 +1,6 @@
 """Spinnaker tests against real cameras: ``pytest -m hardware tests/test_spinnaker_hardware.py``.
 
-Needs PySpin (Python 3.12, numpy<2). Uses the camera named by ``SPINNAKER_SERIAL``,
+Needs PySpin (Python 3.12). Uses the camera named by ``SPINNAKER_SERIAL``,
 or the first one attached; the multi-camera tests use every attached camera. Settings
 changed by a test are put back afterwards.
 """

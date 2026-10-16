@@ -36,8 +36,8 @@ from the same Spinnaker release: the SDK, its system dependencies, and its PySpi
 - **numpy 2.** The 4.4.0.246 cp312 wheel declares `Requires-Dist: numpy >=2.0` (verified
   in the macOS arm64 wheel's metadata, 2026-10-16; assumed the same for the Linux and
   Windows cp312 wheels). PySpin gained numpy 2 support in 4.2.0.46; 4.3.0.189 moved the
-  cp310 wheel back to numpy 1.x, which doesn't affect 3.12. Don't pin `numpy<2` in a
-  PySpin environment.
+  cp310 wheel back to numpy 1.x, which doesn't affect 3.12. `educelab-devices` itself
+  requires numpy 2 or newer.
 - **The wheel's version must match the SDK's exactly** (Teledyne's PySpin install guide:
   on Linux, "the wheel version must match the installed Debian package version").
 
@@ -254,7 +254,9 @@ bit, and whether `Mono16` data is left-aligned decides how dark previews look).
   - The alternatives are spreading the cameras across USB controllers, or capturing by
     software trigger, which moves data only on request: 5 frames × 5 MB at ~400 MB/s is
     about 63 ms per rig capture plus exposure. Software triggering was rejected for
-    single-camera speed (decision 2026-10-15); it may win on a shared link.
+    single-camera speed (decision 2026-10-15); it may win on a shared link. The driver
+    stays free-running, and the choice stays open until step 4 measures throttled
+    free-running latency (decided 2026-10-16).
   - The Acroname hub track is adding per-port USB 2 and USB 3 limits. They don't help
     here: forcing a port to USB 2 caps a camera far below 80 MB/s.
 - **Error codes:** the driver maps `SPINNAKER_ERR_TIMEOUT` (`-1011`) to `DeviceTimeout`
@@ -330,12 +332,22 @@ OS, SDK version, and each camera's model, serial, and firmware.
    `--pixel-format RGB8` on color models. Record firmware, the timestamp node, the
    latency and frame-age medians, the dropped counts, and the streaming frame rate and
    MB/s.
-4. **All cameras together, as `pgs-scan` captures.** `el-devices spinnaker --frames 100
-   --pixel-format Mono16 --gain 10 --exposure <the shortest exposure the rig uses>`
-   (the settings of `pgs-scan`'s `utils/system_check.py`), then again at the rig's usual
-   exposure. Compare each camera's latency with step 3. Rising latency,
-   incomplete frames, or failed captures with every camera streaming mean the USB link
-   is saturated.
+4. **All cameras together: the measurement that decides free-running versus software
+   triggering** (open since 2026-10-16; see USB topology under Timing). Always pass
+   `--gain`, so a gain left on a camera doesn't skew the comparison.
+   1. Unthrottled: `el-devices spinnaker --frames 100 --pixel-format Mono16 --gain 10
+      --exposure <the shortest exposure the rig uses>` (the settings of `pgs-scan`'s
+      `utils/system_check.py`), then again at the rig's usual exposure. Record each
+      camera's latency median and its incomplete and failed counts, plus the "all
+      cameras per capture" median.
+   2. Throttled: in SpinView, set `DeviceLinkThroughputLimit` to about 80000000 bytes/s
+      (~80 MB/s) on every camera, close SpinView, and repeat both runs. Record the same
+      numbers and each camera's streaming frames/s.
+   3. Compare the throttled "all cameras per capture" median with the estimate for
+      software triggering: about 63 ms (5 frames × 5 MB over ~400 MB/s) plus the
+      exposure time. Record both in Last run for the maintainer's decision.
+   Rising latency, incomplete frames, or failed captures with every camera streaming
+   mean the USB link is saturated.
 5. **USB bandwidth.** Add up the per-camera MB/s from step 4 per USB controller, and
    compare with what the controller can carry. For one camera, open SpinView's stream
    statistics while `el-devices spinnaker --serial <serial> --frames 200` runs, and

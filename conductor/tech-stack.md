@@ -10,7 +10,7 @@
 
 | Dependency | Scope | Notes |
 |------------|-------|-------|
-| numpy | core | Frames and preview images. `>=1.26`. Still kept working on numpy 1.x (CI checks this) until the maintainer decides whether to drop it; PySpin 4.4.0's cp312 wheel requires numpy>=2 |
+| numpy | core | Frames and preview images. `>=2`, which PySpin 4.4.0's cp312 wheel also requires |
 | gphoto2, Pillow | `[gphoto2]` | gphoto2 has no Windows support; declared with `sys_platform != "win32"` |
 | bleak | `[foldio360]` | BLE |
 | pyserial | `[serial]` | MISHA, XLC, X-Carve |

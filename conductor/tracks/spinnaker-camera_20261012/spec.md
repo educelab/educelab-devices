@@ -27,7 +27,7 @@ As the `pgs-scan` developer, I want each Spinnaker camera behind the `FrameCamer
 - [ ] `preview_frame()` returns the newest frame.
 - [ ] Acquisition start/stop semantics are decided and documented (implicit on demand vs. explicit), recorded in the hardware doc. (Decided 2026-10-15: continuous from `open()` to `close()`, because it is fastest.)
 - [ ] Tests run against a fake PySpin module; `Camera`/`FrameCamera` contract suites pass.
-- [ ] `docs/hardware/spinnaker.md`: SDK install, Python 3.12 only, numpy<2 requirement, version coupling.
+- [ ] `docs/hardware/spinnaker.md`: SDK install, Python 3.12 only, numpy requirement, version coupling. (Changed 2026-10-16: PySpin 4.4.0's cp312 wheel requires numpy>=2, not numpy<2.)
 - [ ] `el-devices spinnaker` subcommand: list cameras, capture N frames, capture-latency benchmark (like `pgs-scan` `utils/system_check.py`).
 
 ## Dependencies

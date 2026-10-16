@@ -71,6 +71,9 @@ Build a fake PySpin first, then the system/enumeration layer, then the per-camer
 ### Verification
 
 - [ ] Maintainer confirms capture timing and reliability on a rig.
+  - Decided (2026-10-16): keep continuous free-running acquisition. Whether software triggering is faster on a shared USB link stays open until rig step 4 measures it: rerun with `--gain`, then with `DeviceLinkThroughputLimit` at ~80 MB/s per camera, and compare the per-capture latency with the ~63 ms + exposure estimate for triggering.
+  - Decided (2026-10-16): drop numpy 1. numpy's floor is now `>=2`, and the CI `numpy1` job was removed. PySpin 4.4.0's cp312 wheel requires numpy>=2 anyway.
+  - Not decided: whether the driver exposes a frame-rate or throughput-limit setting. Not built.
 
 ### Notes and deviations
 

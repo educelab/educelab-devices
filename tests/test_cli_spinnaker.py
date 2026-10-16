@@ -1,12 +1,19 @@
 """``el-devices spinnaker``, against the fake PySpin."""
 
 import sys
+import threading
 
 import pytest
 
 from educelab.devices.app.cli import main
 from educelab.devices.cameras import spinnaker
-from fakes.pyspin import IMAGE_MISSING_TRAILER, FakeCamera, FakePySpin, FrameSpec
+from fakes.pyspin import (
+    SPINNAKER_IMAGE_STATUS_DATA_INCOMPLETE,
+    SPINNAKER_IMAGE_STATUS_MISSING_TRAILER,
+    FakeCamera,
+    FakePySpin,
+    FrameSpec,
+)
 
 MONO = "20000001"
 COLOR = "20000002"
@@ -49,7 +56,8 @@ def test_reports_dropped_frames(pyspin, capsys):
     fake = pyspin.system.cameras[0]
     old = fake.device_time_ns() - 10**9
     fake.queue_frames(
-        FrameSpec(timestamp_ns=old), FrameSpec(status=IMAGE_MISSING_TRAILER)
+        FrameSpec(timestamp_ns=old),
+        FrameSpec(status=SPINNAKER_IMAGE_STATUS_MISSING_TRAILER),
     )
     main(["spinnaker", "--serial", MONO, "--frames", "2"])
     out = capsys.readouterr().out
@@ -91,3 +99,43 @@ def test_without_pyspin_points_to_the_install_docs(monkeypatch, capsys):
 def test_rejects_bad_arguments(bad):
     with pytest.raises(SystemExit):
         main(["spinnaker", *bad])
+
+
+def test_incomplete_frames_on_every_camera_are_counted_and_retried(pyspin, capsys):
+    # As when several cameras saturate one USB link.
+    for fake in pyspin.system.cameras:
+        fake.queue_frames(
+            *(
+                FrameSpec(status=SPINNAKER_IMAGE_STATUS_DATA_INCOMPLETE)
+                for _ in range(3)
+            )
+        )
+    assert main(["spinnaker", "--frames", "2"]) == 0
+    out = capsys.readouterr().out
+    assert out.count("dropped 0 stale, 3 incomplete") == 2
+
+
+def test_a_driver_bug_is_reported_per_camera_not_as_a_thread_traceback(
+    pyspin, capsys, monkeypatch
+):
+    from educelab.devices.cameras.spinnaker import SpinnakerCamera
+
+    original = SpinnakerCamera._take
+
+    def broken(self, image, not_before):
+        if self.info.serial_number == MONO:
+            raise AttributeError("module 'PySpin' has no attribute 'X'")
+        return original(self, image, not_before)
+
+    monkeypatch.setattr(SpinnakerCamera, "_take", broken)
+    hooked = []
+    monkeypatch.setattr(threading, "excepthook", hooked.append)
+    assert main(["spinnaker", "--frames", "2"]) == 1
+    captured = capsys.readouterr()
+    assert hooked == []
+    assert "Traceback" not in captured.err
+    assert f"{MONO}: 0/2 captured" in captured.out
+    assert captured.out.count("failed: AttributeError: module 'PySpin'") == 2
+    assert f"{COLOR}: 2/2 captured" in captured.out
+    assert pyspin.system.cameras[0].held == []
+    assert pyspin.system.instances == 0

@@ -41,6 +41,7 @@ from educelab.devices.errors import (
 )
 
 __all__ = [
+    "MIN_SPINNAKER_VERSION",
     "PREVIEW_MAX_SIZE",
     "PYSPIN_INSTALL_HINT",
     "RETRIES_BEFORE_REMEASURE",
@@ -80,15 +81,19 @@ _PIXEL_FORMATS = frozenset(
 _AUTO_MODES = ("Off", "Continuous")
 _US_PER_S = 1e6
 
-# Spinnaker error codes the driver tells apart (assumed; see the hardware doc).
-_ERR_ACCESS_DENIED = -1005
-_ERR_TIMEOUT = -1011
 
+# The only SDK the driver's PySpin names have been checked against, and the first
+# with Python 3.12 wheels for macOS and Windows. See the hardware doc.
+MIN_SPINNAKER_VERSION = (4, 4, 0)
+
+_INSTALL_DOCS = (
+    "See docs/hardware/spinnaker.md: https://github.com/educelab/educelab-devices/"
+    "blob/main/docs/hardware/spinnaker.md"
+)
 PYSPIN_INSTALL_HINT = (
-    "PySpin is not on PyPI. Install the Spinnaker SDK, then the PySpin wheel from "
-    "the same SDK release (Python 3.12 and numpy<2 only). See docs/hardware/"
-    "spinnaker.md: https://github.com/educelab/educelab-devices/blob/main/docs/"
-    "hardware/spinnaker.md"
+    "PySpin is not on PyPI. Install the Spinnaker SDK "
+    f"{'.'.join(map(str, MIN_SPINNAKER_VERSION))} or newer, then the PySpin wheel "
+    f"from the same SDK release (Python 3.12). {_INSTALL_DOCS}"
 )
 
 
@@ -141,7 +146,8 @@ class SpinnakerSystem:
         """Take the PySpin ``System``. Does nothing if already open.
 
         Raises:
-            ImportError: PySpin isn't installed.
+            ImportError: PySpin isn't installed, or its SDK is older than
+                `MIN_SPINNAKER_VERSION`.
             DeviceError: The SDK couldn't start.
         """
         with self._lock:
@@ -157,6 +163,7 @@ class SpinnakerSystem:
                         raise DeviceError(
                             f"Spinnaker SDK failed to start: {exc}"
                         ) from exc
+                    _require_version(pyspin, system)
                     entry = _shared[id(pyspin)] = _SharedSystem(pyspin, system)
                     logger.debug("took the Spinnaker system")
                 entry.users += 1
@@ -398,7 +405,7 @@ class SpinnakerCamera(FrameCamera):
             self._call(
                 "initialize",
                 lambda: self._cam.Init(),
-                by_code={_ERR_ACCESS_DENIED: DeviceBusy},
+                by_code={self._pyspin.SPINNAKER_ERR_ACCESS_DENIED: DeviceBusy},
             )
             self._model = self._read_string("DeviceModelName") or self._model
             self._firmware = self._read_string("DeviceFirmwareVersion")
@@ -660,11 +667,11 @@ class SpinnakerCamera(FrameCamera):
         if image.IsIncomplete():
             status = image.GetImageStatus()
             # Accepted as complete, as in pgs-scan dev (assumed; hardware doc).
-            if status != self._pyspin.IMAGE_MISSING_TRAILER:
+            if status != self._pyspin.SPINNAKER_IMAGE_STATUS_MISSING_TRAILER:
                 logger.warning(
                     "%r: incomplete frame (%s)",
                     self,
-                    self._pyspin.Image_GetImageStatusDescription(status),
+                    self._pyspin.Image.GetImageStatusDescription(status),
                 )
                 return "incomplete"
             missing_trailer = True
@@ -705,7 +712,7 @@ class SpinnakerCamera(FrameCamera):
             return fn()
         except self._pyspin.SpinnakerException as exc:
             code: int = getattr(exc, "errorcode", 0)
-            if code == _ERR_TIMEOUT:
+            if code == self._pyspin.SPINNAKER_ERR_TIMEOUT:
                 kind = DeviceTimeout
             kind = (by_code or {}).get(code, kind)
             error = kind(f"{self!r} failed to {action}: {exc}")
@@ -780,3 +787,26 @@ class _Taken:
     device_timestamp_ns: int
     frame_id: int
     missing_trailer: bool
+
+
+def _require_version(pyspin: Any, system: Any) -> None:
+    """Release ``system`` and raise `ImportError` if its SDK is too old."""
+    try:
+        v = system.GetLibraryVersion()
+        version = (v.major, v.minor, v.type, v.build)
+    except pyspin.SpinnakerException as exc:
+        problem = f"could not read the Spinnaker SDK version: {exc}"
+    else:
+        if version[:3] >= MIN_SPINNAKER_VERSION:
+            return
+        problem = (
+            f"Spinnaker SDK {'.'.join(map(str, version))} is installed, but "
+            f"educelab-devices needs {'.'.join(map(str, MIN_SPINNAKER_VERSION))} "
+            f"or newer. Install a newer SDK and its matching PySpin wheel. "
+            f"{_INSTALL_DOCS}"
+        )
+    try:
+        system.ReleaseInstance()
+    except pyspin.SpinnakerException as exc:
+        logger.warning("could not release the Spinnaker system: %s", str(exc))
+    raise ImportError(problem, name="PySpin")

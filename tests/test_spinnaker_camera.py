@@ -21,9 +21,9 @@ from educelab.devices.errors import (
     DeviceTimeout,
 )
 from fakes.pyspin import (
-    IMAGE_DATA_INCOMPLETE,
-    IMAGE_MISSING_PACKETS,
-    IMAGE_MISSING_TRAILER,
+    SPINNAKER_IMAGE_STATUS_DATA_INCOMPLETE,
+    SPINNAKER_IMAGE_STATUS_MISSING_PACKETS,
+    SPINNAKER_IMAGE_STATUS_MISSING_TRAILER,
     CameraPtr,
     FakeCamera,
     FakeImage,
@@ -428,7 +428,8 @@ def test_without_not_before_the_newest_frame_is_taken(camera, fake):
 def test_incomplete_frames_are_rejected_even_when_first(camera, fake):
     # pgs-scan #83: the check was skipped on the frame normally returned.
     fake.queue_frames(
-        FrameSpec(status=IMAGE_DATA_INCOMPLETE), FrameSpec(status=IMAGE_MISSING_PACKETS)
+        FrameSpec(status=SPINNAKER_IMAGE_STATUS_DATA_INCOMPLETE),
+        FrameSpec(status=SPINNAKER_IMAGE_STATUS_MISSING_PACKETS),
     )
     frame = camera.capture_frame()
     assert frame.metadata["incomplete_frames"] == 2
@@ -436,7 +437,7 @@ def test_incomplete_frames_are_rejected_even_when_first(camera, fake):
 
 
 def test_missing_trailer_frames_are_accepted_and_flagged(camera, fake):
-    fake.queue_frames(FrameSpec(status=IMAGE_MISSING_TRAILER))
+    fake.queue_frames(FrameSpec(status=SPINNAKER_IMAGE_STATUS_MISSING_TRAILER))
     frame = camera.capture_frame()
     assert frame.metadata["missing_trailer"] is True
     assert frame.metadata["incomplete_frames"] == 0
@@ -445,7 +446,9 @@ def test_missing_trailer_frames_are_accepted_and_flagged(camera, fake):
 def test_every_grabbed_buffer_is_released(camera, fake):
     # pgs-scan #83: discarded frames leaked their buffers.
     for _ in range(3):
-        fake.queue_frames(stale(fake), FrameSpec(status=IMAGE_DATA_INCOMPLETE))
+        fake.queue_frames(
+            stale(fake), FrameSpec(status=SPINNAKER_IMAGE_STATUS_DATA_INCOMPLETE)
+        )
         camera.capture_frame(not_before=datetime.now(UTC))
     assert fake.frames_grabbed == 9
     assert fake.held == []

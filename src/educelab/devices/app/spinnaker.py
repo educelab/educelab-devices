@@ -153,8 +153,6 @@ def _benchmark(
     cameras: list["SpinnakerCamera"], frames: int, timeout: float
 ) -> dict["SpinnakerCamera", _Results]:
     """Capture from every camera at once, ``frames`` times, as a rig would."""
-    from educelab.devices.errors import DeviceError
-
     results = {camera: _Results() for camera in cameras}
 
     def capture(camera: "SpinnakerCamera", requested: datetime) -> None:
@@ -162,8 +160,10 @@ def _benchmark(
         start = time.perf_counter()
         try:
             frame = camera.capture_frame(not_before=requested, timeout=timeout)
-        except DeviceError as exc:
-            result.failures.append(str(exc))
+        except Exception as exc:  # noqa: BLE001
+            # Anything, even a driver bug: an uncaught exception would only print
+            # a traceback from this thread and drop the capture from the report.
+            result.failures.append(f"{type(exc).__name__}: {exc}")
             return
         result.latencies_ms.append((time.perf_counter() - start) * 1000)
         result.ages_ms.append((frame.timestamp - requested).total_seconds() * 1000)

@@ -2,6 +2,7 @@
 
 import pytest
 
+from fakes import pyspin as fake
 from fakes.pyspin import FakeCamera, FakeImage, FakePySpin, FrameSpec
 
 
@@ -131,7 +132,8 @@ def test_released_buffers_are_overwritten(pyspin):
 def test_queued_frames_come_first_and_carry_status(pyspin):
     camera = pyspin.system.cameras[0]
     camera.queue_frames(
-        FrameSpec(timestamp_ns=5, status=pyspin.IMAGE_DATA_INCOMPLETE), FrameSpec()
+        FrameSpec(timestamp_ns=5, status=pyspin.SPINNAKER_IMAGE_STATUS_DATA_INCOMPLETE),
+        FrameSpec(),
     )
     cam = pyspin.System.GetInstance().GetCameras().GetByIndex(0)
     cam.Init()
@@ -204,3 +206,83 @@ def test_trigger_mode_needs_a_trigger_per_fresh_frame(pyspin):
     cam.TriggerSoftware.Execute()
     with pytest.raises(pyspin.SpinnakerException):
         cam.GetNextImage()
+
+
+# --- Against the real PySpin --------------------------------------------------
+
+# The fake's stand-ins and the real classes they imitate. PySpin's API names start
+# with a capital letter; the fake's own helpers don't.
+_STAND_INS = {
+    fake.CameraPtr: ("CameraPtr",),
+    fake.CameraList: ("CameraList",),
+    fake.FakeImage: ("ImagePtr",),
+    fake.FakeSystem: ("System", "SystemPtr"),
+    fake.Image: ("Image",),
+    fake.NodeMap: ("INodeMap",),
+    fake.EnumNode: ("IEnumerationT_PixelFormatEnums",),
+    fake.EnumerationPtr: ("CEnumerationPtr",),
+    fake.EnumEntry: ("CEnumEntryPtr",),
+    fake.FloatNode: ("CFloatPtr",),
+    fake.IntegerNode: ("CIntegerPtr",),
+    fake.StringNode: ("CStringPtr",),
+    fake.BooleanNode: ("CBooleanPtr",),
+    fake.CommandNode: ("CCommandPtr",),
+}
+
+
+def _api_names(obj):
+    return sorted(n for n in dir(obj) if n[:1].isupper() and not n.isupper())
+
+
+@pytest.fixture(scope="module")
+def real():
+    return pytest.importorskip("PySpin")
+
+
+def test_fake_module_names_exist_in_pyspin(real):
+    names = [n for n in dir(FakePySpin()) if n[:1].isupper()]
+    assert [n for n in names if not hasattr(real, n)] == []
+
+
+def test_fake_node_names_exist_in_pyspin(real):
+    camera = FakeCamera(color=True)
+    for nodes, owner in (
+        (camera.nodes, real.CameraPtr),
+        (camera.tl_device_nodes, real.TransportLayerDevice),
+        (camera.tl_stream_nodes, real.TransportLayerStream),
+    ):
+        assert [n for n in nodes if not hasattr(owner, n)] == []
+
+
+def test_fake_constants_match_pyspin(real):
+    fake_module = FakePySpin()
+    exact = [
+        n
+        for n in dir(fake_module)
+        if n.startswith(("SPINNAKER_", "EVENT_TIMEOUT_"))
+        or n in ("NI", "NA", "WO", "RO", "RW")
+    ]
+    assert exact
+    wrong = {
+        n: getattr(fake_module, n)
+        for n in exact
+        if getattr(fake_module, n) != getattr(real, n)
+    }
+    assert wrong == {}
+
+
+@pytest.mark.parametrize("stand_in", list(_STAND_INS), ids=lambda c: c.__name__)
+def test_fake_methods_exist_in_pyspin(real, stand_in):
+    real_names = set()
+    for name in _STAND_INS[stand_in]:
+        real_names |= set(dir(getattr(real, name)))
+    assert [n for n in _api_names(stand_in) if n not in real_names] == []
+
+
+def test_fake_library_version_and_exception_match_pyspin(real):
+    assert all(
+        hasattr(real.LibraryVersion, f) for f in ("major", "minor", "type", "build")
+    )
+    exception = real.SpinnakerException
+    for attribute in ("errorcode", "message", "fullmessage"):
+        assert hasattr(exception, attribute) or attribute in dir(exception)

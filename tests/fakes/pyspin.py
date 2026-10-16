@@ -42,9 +42,13 @@ __all__ = [
     "SpinnakerException",
 ]
 
+# Names and values below match PySpin 4.4.0 (tests/test_fake_pyspin.py checks
+# them against the real module when it is installed).
+
 # GenApi access modes.
 NI, NA, WO, RO, RW = range(5)
 
+SPINNAKER_ERR_SUCCESS = 0
 SPINNAKER_ERR_ERROR = -1001
 SPINNAKER_ERR_NOT_INITIALIZED = -1002
 SPINNAKER_ERR_RESOURCE_IN_USE = -1004
@@ -55,6 +59,7 @@ SPINNAKER_ERR_IO = -1010
 SPINNAKER_ERR_TIMEOUT = -1011
 
 EVENT_TIMEOUT_INFINITE = 0xFFFFFFFFFFFFFFFF
+EVENT_TIMEOUT_NONE = 0
 
 _ENUMS = {
     "PixelFormat": (
@@ -81,25 +86,29 @@ _ENUMS = {
     ),
 }
 
-_IMAGE_STATUSES = (
-    "IMAGE_NO_ERROR",
-    "IMAGE_CRC_CHECK_FAILED",
-    "IMAGE_DATA_OVERFLOW",
-    "IMAGE_MISSING_PACKETS",
-    "IMAGE_LEADER_BUFFER_SIZE_INCONSISTENT",
-    "IMAGE_TRAILER_BUFFER_SIZE_INCONSISTENT",
-    "IMAGE_PACKETID_INCONSISTENT",
-    "IMAGE_MISSING_LEADER",
-    "IMAGE_MISSING_TRAILER",
-    "IMAGE_DATA_INCOMPLETE",
-    "IMAGE_INFO_INCONSISTENT",
-    "IMAGE_CHUNK_DATA_INVALID",
-    "IMAGE_NO_SYSTEM_RESOURCES",
-)
-IMAGE_NO_ERROR = 0
-IMAGE_MISSING_PACKETS = _IMAGE_STATUSES.index("IMAGE_MISSING_PACKETS")
-IMAGE_MISSING_TRAILER = _IMAGE_STATUSES.index("IMAGE_MISSING_TRAILER")
-IMAGE_DATA_INCOMPLETE = _IMAGE_STATUSES.index("IMAGE_DATA_INCOMPLETE")
+# Image statuses, with the descriptions their names suggest.
+_IMAGE_STATUSES = {
+    "SPINNAKER_IMAGE_STATUS_UNKNOWN_ERROR": -1,
+    "SPINNAKER_IMAGE_STATUS_NO_ERROR": 0,
+    "SPINNAKER_IMAGE_STATUS_CRC_CHECK_FAILED": 1,
+    "SPINNAKER_IMAGE_STATUS_DATA_OVERFLOW": 2,
+    "SPINNAKER_IMAGE_STATUS_MISSING_PACKETS": 3,
+    "SPINNAKER_IMAGE_STATUS_LEADER_BUFFER_SIZE_INCONSISTENT": 4,
+    "SPINNAKER_IMAGE_STATUS_TRAILER_BUFFER_SIZE_INCONSISTENT": 5,
+    "SPINNAKER_IMAGE_STATUS_PACKETID_INCONSISTENT": 6,
+    "SPINNAKER_IMAGE_STATUS_MISSING_LEADER": 7,
+    "SPINNAKER_IMAGE_STATUS_MISSING_TRAILER": 8,
+    "SPINNAKER_IMAGE_STATUS_DATA_INCOMPLETE": 9,
+    "SPINNAKER_IMAGE_STATUS_INFO_INCONSISTENT": 10,
+    "SPINNAKER_IMAGE_STATUS_CHUNK_DATA_INVALID": 11,
+    "SPINNAKER_IMAGE_STATUS_NO_SYSTEM_RESOURCES": 12,
+    "SPINNAKER_IMAGE_STATUS_GENDC_DATA_INVALID": 13,
+    "SPINNAKER_IMAGE_STATUS_GENDC_PART_DATA_INVALID": 14,
+}
+SPINNAKER_IMAGE_STATUS_NO_ERROR = 0
+SPINNAKER_IMAGE_STATUS_MISSING_PACKETS = 3
+SPINNAKER_IMAGE_STATUS_MISSING_TRAILER = 8
+SPINNAKER_IMAGE_STATUS_DATA_INCOMPLETE = 9
 
 CONSTANTS: dict[str, int] = {
     "NI": NI,
@@ -108,7 +117,13 @@ CONSTANTS: dict[str, int] = {
     "RO": RO,
     "RW": RW,
     "EVENT_TIMEOUT_INFINITE": EVENT_TIMEOUT_INFINITE,
-    **{name: i for i, name in enumerate(_IMAGE_STATUSES)},
+    "EVENT_TIMEOUT_NONE": EVENT_TIMEOUT_NONE,
+    **{
+        name: value
+        for name, value in globals().items()
+        if name.startswith("SPINNAKER_ERR_")
+    },
+    **_IMAGE_STATUSES,
     **{
         f"{family}_{entry}": i
         for family, entries in _ENUMS.items()
@@ -383,8 +398,54 @@ def _cast(node: Node | None) -> Node | None:
     return node
 
 
-def Image_GetImageStatusDescription(status: int) -> str:
-    return _IMAGE_STATUSES[status].removeprefix("IMAGE_").replace("_", " ").lower()
+class EnumerationPtr:
+    """What ``PySpin.CEnumerationPtr(node)`` gives: an enumeration without the
+    ``GetValue``/``SetValue`` that QuickSpin attributes (``cam.PixelFormat``) have.
+    """
+
+    def __init__(self, node: "EnumNode") -> None:
+        self._node = node
+
+    def GetAccessMode(self) -> int:
+        return self._node.GetAccessMode()
+
+    def GetName(self) -> str:
+        return self._node.GetName()
+
+    def GetIntValue(self) -> int:
+        return self._node.GetIntValue()
+
+    def SetIntValue(self, value: int) -> None:
+        self._node.SetIntValue(value)
+
+    def GetCurrentEntry(self) -> "EnumEntry":
+        return self._node.GetCurrentEntry()
+
+    def GetEntries(self) -> "list[EnumEntry]":
+        return self._node.GetEntries()
+
+    def GetEntryByName(self, symbolic: str) -> "EnumEntry | None":
+        return self._node.GetEntryByName(symbolic)
+
+    def ToString(self) -> str:
+        return self._node.ToString()
+
+
+def _enumeration(node: Node | None) -> EnumerationPtr | None:
+    if node is None:
+        return None
+    if not isinstance(node, EnumNode):
+        raise SpinnakerException(f"{node.GetName()} is not an enumeration")
+    return EnumerationPtr(node)
+
+
+class Image:
+    """Stands in for ``PySpin.Image``, which holds the status descriptions."""
+
+    @staticmethod
+    def GetImageStatusDescription(status: int) -> str:
+        name = next(n for n, v in _IMAGE_STATUSES.items() if v == status)
+        return name.removeprefix("SPINNAKER_IMAGE_STATUS_").replace("_", " ").lower()
 
 
 # --- Images -----------------------------------------------------------------
@@ -398,11 +459,11 @@ class FrameSpec:
         timestamp_ns: Device timestamp. A frame with one is already waiting in a
             buffer and needs no trigger. ``None`` makes a fresh frame, stamped
             when it is triggered (or retrieved, outside trigger mode).
-        status: Image status; anything but ``IMAGE_NO_ERROR`` is incomplete.
+        status: Image status; anything but ``SPINNAKER_IMAGE_STATUS_NO_ERROR`` is incomplete.
     """
 
     timestamp_ns: int | None = None
-    status: int = IMAGE_NO_ERROR
+    status: int = SPINNAKER_IMAGE_STATUS_NO_ERROR
 
 
 class FakeImage:
@@ -453,7 +514,7 @@ class FakeImage:
 
     def IsIncomplete(self) -> bool:
         self._check_held()
-        return self._status != IMAGE_NO_ERROR
+        return self._status != SPINNAKER_IMAGE_STATUS_NO_ERROR
 
     def GetPixelFormat(self) -> int:
         return _ENUMS["PixelFormat"].index(self._pixel_format)
@@ -944,8 +1005,9 @@ class FakePySpin(ModuleType):
     IsImplemented = staticmethod(IsImplemented)
     IsReadable = staticmethod(IsReadable)
     IsWritable = staticmethod(IsWritable)
-    Image_GetImageStatusDescription = staticmethod(Image_GetImageStatusDescription)
-    CValuePtr = CFloatPtr = CIntegerPtr = CEnumerationPtr = staticmethod(_cast)
+    Image = Image
+    CEnumerationPtr = staticmethod(_enumeration)
+    CValuePtr = CFloatPtr = CIntegerPtr = staticmethod(_cast)
     CStringPtr = CBooleanPtr = CCommandPtr = CEnumEntryPtr = staticmethod(_cast)
 
     def __init__(self, cameras: Iterable[FakeCamera] = ()) -> None:

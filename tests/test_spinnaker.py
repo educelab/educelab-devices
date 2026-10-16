@@ -1,5 +1,6 @@
 """The Spinnaker driver, tested against the fake PySpin in `fakes.pyspin`."""
 
+import importlib.metadata
 import subprocess
 import sys
 import threading
@@ -7,9 +8,14 @@ import threading
 import pytest
 
 from educelab.devices import DeviceInfo
-from educelab.devices.cameras.spinnaker import SpinnakerSystem, load_pyspin
+from educelab.devices.cameras.spinnaker import (
+    MIN_SPINNAKER_VERSION,
+    SpinnakerCamera,
+    SpinnakerSystem,
+    load_pyspin,
+)
 from educelab.devices.errors import DeviceError, NotConnected
-from fakes.pyspin import FakeCamera, FakePySpin, SpinnakerException
+from fakes.pyspin import FakeCamera, FakePySpin, LibraryVersion, SpinnakerException
 
 # --- Importing PySpin ---------------------------------------------------------
 
@@ -232,3 +238,59 @@ def test_discover_raises_device_error_when_enumeration_fails(pyspin, monkeypatch
     with pytest.raises(DeviceError, match="transport layer error"):
         SpinnakerSystem(pyspin=pyspin).discover()
     assert pyspin.system.instances == 0
+
+
+# --- Minimum SDK version ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "version", [(4, 3, 0, 190), (3, 2, 0, 65), (2, 7, 0, 128), (1, 29, 0, 5)]
+)
+def test_an_older_sdk_is_refused_naming_both_versions(pyspin, version):
+    pyspin.system.version = LibraryVersion(*version)
+    system = SpinnakerSystem(pyspin=pyspin)
+    installed = ".".join(map(str, version))
+    with pytest.raises(ImportError, match=rf"{installed} is installed.*needs 4\.4\.0"):
+        system.open()
+    assert not system.is_open
+    assert pyspin.system.instances == 0
+
+
+@pytest.mark.parametrize("version", [(4, 4, 0, 246), (4, 4, 1, 0), (5, 0, 0, 1)])
+def test_the_minimum_sdk_or_newer_is_accepted(pyspin, version):
+    pyspin.system.version = LibraryVersion(*version)
+    with SpinnakerSystem(pyspin=pyspin) as system:
+        assert system.library_version == ".".join(map(str, version))
+
+
+def test_an_older_sdk_fails_discovery_and_camera_open(pyspin):
+    pyspin.system.version = LibraryVersion(4, 2, 0, 88)
+    with pytest.raises(ImportError, match="4.2.0.88"):
+        SpinnakerSystem(pyspin=pyspin).discover()
+    with pytest.raises(ImportError, match="4.2.0.88"):
+        SpinnakerCamera("20000001", pyspin=pyspin).open()
+    assert pyspin.system.instances == 0
+
+
+def test_an_unreadable_sdk_version_is_refused(pyspin, monkeypatch):
+    def fail():
+        raise SpinnakerException("no version")
+
+    monkeypatch.setattr(pyspin.system, "GetLibraryVersion", fail)
+    with pytest.raises(ImportError, match="no version"):
+        SpinnakerSystem(pyspin=pyspin).open()
+    assert pyspin.system.instances == 0
+
+
+def test_minimum_version_is_the_checked_release():
+    assert MIN_SPINNAKER_VERSION == (4, 4, 0)
+
+
+def test_installed_pyspin_meets_the_minimum():
+    # Reads the installed wheel's version without starting the SDK.
+    try:
+        installed = importlib.metadata.version("spinnaker-python")
+    except importlib.metadata.PackageNotFoundError:
+        pytest.skip("PySpin isn't installed")
+    version = tuple(int(part) for part in installed.split(".")[:3])
+    assert version >= MIN_SPINNAKER_VERSION

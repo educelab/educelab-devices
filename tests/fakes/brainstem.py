@@ -4,9 +4,15 @@ Pass a `FakeBrainstem` wherever the driver takes ``sdk``. It mirrors the SDK's
 call shapes: commands return an integer error code, and getters return an
 object with ``error`` and ``value``. Hubs are `FakeUnit`s on a shared bus, so
 tests can unplug one, make it busy, or make a command fail with a given code.
+
+Devices plugged into a unit's ports (``FakeUnit.devices``) show up in the port
+state as attached, at the fastest speed both they and the port's enabled data
+lines allow. The fake renegotiates instantly; whether the real hub does is in
+the hardware doc.
 """
 
 from dataclasses import dataclass, field
+from functools import partial
 from types import SimpleNamespace
 
 # Error codes from brainstem.result.Result.
@@ -28,7 +34,11 @@ OTHER_MODEL = 4
 VBUS_ENABLED = 1 << 0
 USB2_DATA_ENABLED = 1 << 1
 USB3_DATA_ENABLED = 1 << 3
+SPEED_USB2 = 1 << 11
+SPEED_USB3 = 1 << 12
 DEVICE_ATTACHED = 1 << 23
+DATA_LINES = USB2_DATA_ENABLED | USB3_DATA_ENABLED
+ALL_LINES = VBUS_ENABLED | DATA_LINES
 
 
 @dataclass
@@ -55,6 +65,9 @@ class FakeUnit:
         busy: Whether connecting fails as if another process holds the hub.
         present: Whether the hub is plugged in. Unplugging a connected hub
             makes every later call fail with a connection error.
+        port_state: Each port's enabled lines (VBUS and data bits).
+        devices: Port number to the attached device's fastest speed,
+            ``"usb2"`` or ``"usb3"``.
     """
 
     serial_number: int
@@ -67,10 +80,23 @@ class FakeUnit:
     present: bool = True
     calls: list[tuple[str, tuple[int, ...]]] = field(default_factory=list)
     connections: int = 0
+    devices: dict[int, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        enabled = VBUS_ENABLED | USB2_DATA_ENABLED | USB3_DATA_ENABLED
-        self.port_state = [enabled] * self.ports
+        self.port_state = [ALL_LINES] * self.ports
+
+    def state(self, port: int) -> int:
+        """The port state as ``getPortState`` reports it."""
+        lines = self.port_state[port]
+        device = self.devices.get(port)
+        if device is None or not lines & VBUS_ENABLED:
+            return lines
+        state = lines | DEVICE_ATTACHED
+        if device == "usb3" and lines & USB3_DATA_ENABLED:
+            return state | SPEED_USB3
+        if lines & USB2_DATA_ENABLED:
+            return state | SPEED_USB2
+        return state
 
 
 class _Hub:
@@ -80,9 +106,23 @@ class _Hub:
         self._bus = bus
         self._unit: FakeUnit | None = None
         self.system = SimpleNamespace(getVersion=self._get_version)
+        switches = {
+            "PortEnable": (ALL_LINES, True),
+            "PortDisable": (ALL_LINES, False),
+            "PowerEnable": (VBUS_ENABLED, True),
+            "PowerDisable": (VBUS_ENABLED, False),
+            "DataEnable": (DATA_LINES, True),
+            "DataDisable": (DATA_LINES, False),
+            "HiSpeedDataEnable": (USB2_DATA_ENABLED, True),
+            "HiSpeedDataDisable": (USB2_DATA_ENABLED, False),
+            "SuperSpeedDataEnable": (USB3_DATA_ENABLED, True),
+            "SuperSpeedDataDisable": (USB3_DATA_ENABLED, False),
+        }
         self.usb = SimpleNamespace(
-            setPortEnable=self._set_port_enable,
-            setPortDisable=self._set_port_disable,
+            **{
+                f"set{name}": partial(self._switch, f"set{name}", bits, on)
+                for name, (bits, on) in switches.items()
+            },
             getPortState=self._get_port_state,
             getEnumerationDelay=self._get_enumeration_delay,
             setEnumerationDelay=self._set_enumeration_delay,
@@ -135,26 +175,19 @@ class _Hub:
         major, minor, patch = self._connected.firmware
         return FakeResult(NO_ERROR, (major << 24) | (minor << 16) | patch)
 
-    def _set_port_enable(self, channel: int) -> int:
-        if code := self._port("setPortEnable", channel):
+    def _switch(self, name: str, bits: int, on: bool, channel: int) -> int:
+        if code := self._port(name, channel):
             return code
-        self._connected.port_state[channel] |= (
-            VBUS_ENABLED | USB2_DATA_ENABLED | USB3_DATA_ENABLED
-        )
-        return NO_ERROR
-
-    def _set_port_disable(self, channel: int) -> int:
-        if code := self._port("setPortDisable", channel):
-            return code
-        self._connected.port_state[channel] &= ~(
-            VBUS_ENABLED | USB2_DATA_ENABLED | USB3_DATA_ENABLED
-        )
+        if on:
+            self._connected.port_state[channel] |= bits
+        else:
+            self._connected.port_state[channel] &= ~bits
         return NO_ERROR
 
     def _get_port_state(self, channel: int) -> FakeResult:
         if code := self._port("getPortState", channel):
             return FakeResult(code)
-        return FakeResult(NO_ERROR, self._connected.port_state[channel])
+        return FakeResult(NO_ERROR, self._connected.state(channel))
 
     def _get_enumeration_delay(self) -> FakeResult:
         if code := self._call("getEnumerationDelay"):

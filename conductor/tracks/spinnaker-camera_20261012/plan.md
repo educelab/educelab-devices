@@ -44,7 +44,8 @@ Build a fake PySpin first, then the system/enumeration layer, then the per-camer
 
 ### Verification
 
-- [ ] Camera tests and contracts pass; #83 and #90 covered by regression tests.
+- [x] Camera tests and contracts pass; #83 and #90 covered by regression tests.
+  - Approved 2026-10-16. The branch was then rebased onto PR #6 (`not_before`/`timeout` on `FrameCamera`) and PR #7 (`Setting.value` may be `None`), and the driver moved to the role's `_capture_frame` hook.
 
 ### Notes and deviations
 

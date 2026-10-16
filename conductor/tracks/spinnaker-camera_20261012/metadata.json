@@ -4,28 +4,30 @@
   "type": "feature",
   "status": "in_progress",
   "created": "2026-10-12T00:00:00Z",
-  "updated": "2026-10-15T00:00:00Z",
+  "updated": "2026-10-16T00:00:00Z",
   "phases": {
     "total": 3,
-    "completed": 1
+    "completed": 2
   },
   "tasks": {
     "total": 12,
     "completed": 8
   },
-  "current_phase": 2,
-  "current_task": "2.5",
+  "current_phase": 3,
+  "current_task": "3.1",
   "commits": [
-    "101f209: Add a fake PySpin module for Spinnaker driver tests",
-    "7581d07: Import PySpin lazily with an install hint",
-    "7f2e339: Add SpinnakerSystem with shared lifetime and discovery",
-    "d108176: Record approval of Spinnaker Phase 1",
-    "e46d0c8: Open and close Spinnaker cameras by serial number",
-    "663658a: Expose Spinnaker exposure, gain, pixel format, and auto modes",
-    "d47db07: Acquire Spinnaker frames by software trigger",
-    "2b060c4: Acquire Spinnaker frames continuously instead of by trigger",
-    "a33c8c5: Capture Spinnaker frames no older than a requested time",
-    "c91bea1: Record Spinnaker timestamps and capture checks in the hardware doc",
-    "9d2d1cc: Add Spinnaker preview frames and run the camera contracts"
+    "a7b36f7: Add a fake PySpin module for Spinnaker driver tests",
+    "67bd9f2: Import PySpin lazily with an install hint",
+    "e915c83: Add SpinnakerSystem with shared lifetime and discovery",
+    "67f378a: Record approval of Spinnaker Phase 1",
+    "3320b10: Open and close Spinnaker cameras by serial number",
+    "20c42fa: Expose Spinnaker exposure, gain, pixel format, and auto modes",
+    "3cd5228: Acquire Spinnaker frames by software trigger",
+    "ffb2156: Acquire Spinnaker frames continuously instead of by trigger",
+    "aeadee8: Capture Spinnaker frames no older than a requested time",
+    "4b4ad14: Record Spinnaker timestamps and capture checks in the hardware doc",
+    "c470c90: Add Spinnaker preview frames and run the camera contracts",
+    "b4a5a3c: Record Spinnaker Phase 2 progress",
+    "7e35133: Implement FrameCamera's not_before hook for Spinnaker"
   ]
 }

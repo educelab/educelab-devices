@@ -9,8 +9,8 @@ Driver: `educelab.devices.hubs.acroname.AcronameHub`. Manual check: `el-devices 
 
 Facts below come from the BrainStem SDK 2.12.5 source and docstrings, and from
 `pgs-scan`'s `utils/usb_hub3p_config.py` and `utils/usb_hub3p_reset.py` (branch `dev`),
-unless marked **verified**. Nothing here has been checked against a hub by this
-package yet.
+unless marked **verified**. The only run against a real hub so far is the
+2026-10-16 hardware test run (see [Manual check](#manual-check)).
 
 ## Identity
 
@@ -22,7 +22,8 @@ package yet.
   bare hex digits. `pgs-scan` logged it the same way.
 - **Firmware version**: `system.getVersion()` returns a packed number, which
   `brainstem.version.unpack_version()` splits into major, minor, and patch. The driver
-  reports it as `major.minor.patch`. Versions seen: none yet.
+  reports it as `major.minor.patch`. Versions seen: not recorded yet (the 2026-10-16
+  run's log doesn't include it).
 - **On the host**: **unknown**. Acroname's USB vendor ID is `24FF` (**assumed**, from
   Acroname's udev rules); the hub's product ID, and whether the BrainStem link needs
   the hub's separate control port connected or also works over the upstream port,
@@ -123,8 +124,10 @@ step 0.1) and `set_enumeration_delay(seconds)`, which rounds to the nearest 100 
 
 The driver only changes the running value. `pgs-scan`'s config script followed the
 set with `system.save()` (write to the hub's flash) and `system.reset()`. The driver
-doesn't do either, because devices persist nothing. **Unknown**: whether the new
-value takes effect without a save and reset, and what the maximum is.
+doesn't do either, because devices persist nothing. **Verified** 2026-10-16 that a
+new value reads back from the running hub (`test_enumeration_delay_reads_back`).
+**Unknown**: whether the new value takes effect without a save and reset, and what
+the maximum is.
 
 ## Timing
 
@@ -136,6 +139,9 @@ value takes effect without a save and reset, and what the maximum is.
 
 ## State and recovery
 
+- **Across a reconnect**: a port switched off stays off after `close()` and a new
+  `open()`; opening doesn't change port power. **Verified** 2026-10-16
+  (`test_a_port_switched_off_stays_off_across_a_reconnect`).
 - **After a hub power loss or reset**: whether disabled ports come back enabled is
   **unknown**.
 - **Unplugged while open**: commands fail with `NotConnected`. `close()` still
@@ -159,4 +165,27 @@ identity, enumeration delay, and the power state of every port.
 switch (tests that switch power skip without it) and, with several hubs attached,
 `ACRONAME_SERIAL_NUMBER`.
 
-Not yet run on hardware.
+### 2026-10-16
+
+The `hardware`-marked tests, run by the maintainer on macOS with Python 3.13.15,
+pytest 9.1.1, and brainstem 2.12.5, with `ACRONAME_TEST_PORT` set: all 7 passed in
+7.79 s.
+
+- The hub identifies as a USBHub3p, with a serial number and a firmware version in
+  the expected formats.
+- `discover()` lists the open hub.
+- Every port reports its power state.
+- `power_off()` and `power_on()` switch the test port, and `is_powered()` follows.
+- `power_cycle()` leaves the test port powered.
+- A port switched off stays off across a reconnect.
+- The enumeration delay reads back after being set, and was restored.
+
+| | |
+|---|---|
+| Hub serial number | not in the log |
+| Firmware version | not in the log |
+| Test port | not in the log |
+
+Not yet run: `el-devices hub` against the hub, and the checks the tests don't cover
+(whether the enumeration delay takes effect without a save, port numbering on the
+case, behavior after a hub power loss, USB vendor and product IDs).

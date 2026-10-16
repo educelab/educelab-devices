@@ -449,3 +449,13 @@ def test_failed_speed_change_is_a_device_error(hub, unit):
     with pytest.raises(DeviceTimeout, match="port 2"):
         hub.set_port_speed(2, PortSpeed.USB2)
     assert hub.port_speed(2) is PortSpeed.USB3
+
+
+def test_raising_to_usb3_takes_a_power_cycle(hub, unit, monkeypatch):
+    monkeypatch.setattr(time, "sleep", lambda seconds: None)
+    unit.devices[6] = "usb3"
+    hub.set_port_speed(6, PortSpeed.USB2)
+    hub.set_port_speed(6, PortSpeed.USB3)
+    assert hub.connected_speed(6) is PortSpeed.USB2
+    hub.power_cycle(6)
+    assert hub.connected_speed(6) is PortSpeed.USB3

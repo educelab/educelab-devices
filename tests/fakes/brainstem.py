@@ -7,8 +7,9 @@ tests can unplug one, make it busy, or make a command fail with a given code.
 
 Devices plugged into a unit's ports (``FakeUnit.devices``) show up in the port
 state as attached, at the fastest speed both they and the port's enabled data
-lines allow. The fake renegotiates instantly; whether the real hub does is in
-the hardware doc.
+lines allow. As seen on a real hub, a USB 3 device that drops to USB 2 when its
+SuperSpeed lines are disabled stays at USB 2 when they're re-enabled, until its
+port loses power or both data lines. The fake reconnects instantly.
 """
 
 from dataclasses import dataclass, field
@@ -81,6 +82,7 @@ class FakeUnit:
     calls: list[tuple[str, tuple[int, ...]]] = field(default_factory=list)
     connections: int = 0
     devices: dict[int, str] = field(default_factory=dict)
+    fallen_back: set[int] = field(default_factory=set)
 
     def __post_init__(self) -> None:
         self.port_state = [ALL_LINES] * self.ports
@@ -92,7 +94,11 @@ class FakeUnit:
         if device is None or not lines & VBUS_ENABLED:
             return lines
         state = lines | DEVICE_ATTACHED
-        if device == "usb3" and lines & USB3_DATA_ENABLED:
+        if (
+            device == "usb3"
+            and lines & USB3_DATA_ENABLED
+            and port not in self.fallen_back
+        ):
             return state | SPEED_USB3
         if lines & USB2_DATA_ENABLED:
             return state | SPEED_USB2
@@ -179,10 +185,16 @@ class _Hub:
     def _switch(self, name: str, bits: int, on: bool, channel: int) -> int:
         if code := self._port(name, channel):
             return code
+        unit = self._connected
         if on:
-            self._connected.port_state[channel] |= bits
+            unit.port_state[channel] |= bits
         else:
-            self._connected.port_state[channel] &= ~bits
+            unit.port_state[channel] &= ~bits
+        lines = unit.port_state[channel]
+        if not lines & VBUS_ENABLED or not lines & USB2_DATA_ENABLED:
+            unit.fallen_back.discard(channel)
+        elif unit.devices.get(channel) == "usb3" and not lines & USB3_DATA_ENABLED:
+            unit.fallen_back.add(channel)
         return NO_ERROR
 
     def _get_port_state(self, channel: int) -> FakeResult:

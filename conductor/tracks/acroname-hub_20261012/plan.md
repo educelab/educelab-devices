@@ -119,8 +119,27 @@ hub.connected_speed(port) -> PortSpeed | None   # what the attached device
     untested. Reworked the device tests: they first require a device at USB 3 on
     the test port and say to plug one in if there isn't. They test limits without a
     cycle, and test USB 3 restore without a cycle and reconnecting after a power
-    cycle separately (30 s). On failure they print the raw port state. Re-run with
-    a device pending.
+    cycle separately (30 s). On failure they print the raw port state.
+  - Re-run with a USB 3 device on port 7, 2026-10-16: 14 passed, 1 failed, 2 errors,
+    in 89.57 s.
+    - USB2 limit: applied without a power cycle, at USB 2 in 0.5 s.
+    - DATA_OFF: disconnected in 0.3 s.
+    - Raising USB2 to USB3 without a power cycle: the device stayed at USB 2 for
+      15.1 s. That's a finding, not a bug.
+    - The 2 errors followed from that: the reconnect tests' precondition found the
+      device still at USB 2.
+
+    Since then:
+    - That test now pins the behavior, and its cleanup power-cycles back to USB 3.
+    - The precondition power-cycles once before failing, and tells "stayed at USB 2"
+      apart from "no device".
+    - The `set_port_speed` docstring, the CLI help, and the hardware doc say that
+      raising to USB 3 needs `power_cycle()`.
+    - `el-devices hub speed PORT usb3` without `--cycle` warns when the device is
+      still at USB 2.
+    - The fake now models the fallback.
+
+    Reconnect after a power cycle: re-run pending.
 
 ### Verification
 

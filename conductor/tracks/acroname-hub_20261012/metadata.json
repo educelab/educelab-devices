@@ -6,15 +6,15 @@
   "created": "2026-10-12T00:00:00Z",
   "updated": "2026-10-16T00:00:00Z",
   "phases": {
-    "total": 2,
+    "total": 3,
     "completed": 1
   },
   "tasks": {
-    "total": 6,
-    "completed": 6
+    "total": 10,
+    "completed": 10
   },
-  "current_phase": 2,
-  "current_task": "2.3",
+  "current_phase": 3,
+  "current_task": null,
   "commits": [
     "91afc5d: Add acroname extra, lazy brainstem loader, and fake BrainStem SDK",
     "d0eeff0: Add AcronameHub driver for the USBHub3p",
@@ -23,6 +23,11 @@
     "4482139: Write the Acroname USBHub3p hardware doc",
     "b13a3c9: Add el-devices hub and register the acroname discovery backend",
     "d6e8853: Add hardware tests for the Acroname USBHub3p",
-    "63bd455: Propose a port-speed interface for the Acroname hub"
+    "63bd455: Propose a port-speed interface for the Acroname hub",
+    "49da844: Record the Acroname hardware test run",
+    "1592e1c: Record approval of the Acroname port-speed design",
+    "7eb3f03: Add port speed limits to AcronameHub",
+    "5b183bc: Add el-devices hub speed and show port speeds in status",
+    "b1c1106: Document Acroname port speed and record read-only checks of the hub"
   ]
 }

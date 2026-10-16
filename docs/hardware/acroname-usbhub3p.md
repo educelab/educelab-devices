@@ -167,19 +167,17 @@ role, until a second hub driver needs it.
   report as USB 2 (**assumed**; the 12 Mb/s serial adapter on port 0 of
   `0x1A43352C` did).
 - Nothing is saved to the hub's flash.
-- **A USB 2 limit applies without a power cycle**: a USB 3 device on port 7 of
-  `0x1A43352C` dropped to USB 2 after `el-devices hub speed 7 usb2` and stayed there
-  until `el-devices hub speed 7 usb3 --cycle` (**verified** by hand by the
-  maintainer, 2026-10-16).
-- **Unknown**:
-  - whether restoring `USB3` brings an attached device back to USB 3 without a power
-    cycle (the 2026-10-16 check used `--cycle`). The driver doesn't re-enumerate;
-    call `power_cycle(port)` (or `el-devices hub speed PORT usb3 --cycle`) to make
-    the device reconnect;
-  - how long a device takes to reconnect after the driver's `power_cycle()`, and
-    whether it always does. In the 2026-10-16 test run a USB 3 device on port 7 didn't
-    report a connected speed within 15 s of a power cycle, at either limit (see
-    [Manual check](#manual-check));
+- **The limit reads back without a power cycle**: on empty port 7 of `0x1A43352C`,
+  `el-devices hub speed 7 usb2` reported a `usb2` limit until
+  `el-devices hub speed 7 usb3 --cycle` (**verified** by hand by the maintainer,
+  2026-10-16). No device was attached, so this says nothing about connected speed.
+- **Unknown** (untested; no device has been on the test port yet):
+  - whether an attached USB 3 device drops to USB 2 when its SuperSpeed lines are
+    disabled, without a power cycle;
+  - whether restoring `USB3` brings it back to USB 3 without a power cycle. The
+    driver doesn't re-enumerate; call `power_cycle(port)` (or
+    `el-devices hub speed PORT usb3 --cycle`) to make the device reconnect;
+  - how long a device takes to reconnect after the driver's `power_cycle()`;
   - whether data-line settings survive a hub reset or power loss;
   - whether the hub accepts data-line changes on an unpowered port (the driver
     avoids them).
@@ -284,25 +282,23 @@ The port-speed hardware tests, run by the maintainer on macOS with Python 3.13.1
   limits reach the hub (a fresh connection reads them back from the port's data
   lines), and `USB2` and `DATA_OFF` survive `power_off()`/`power_on()` and
   `power_cycle()`.
-- **A USB 3 device on port 7, `ACRONAME_USB3_DEVICE=1`**: 13 passed and 2 failed, in
-  73.73 s. Each test set a limit, power-cycled the port, and then waited 15 s for a
-  connected speed. At `USB2` and at `USB3`, `connected_speed()` stayed `None` for the
-  whole 15 s. The `DATA_OFF` case expected `None`, so it passed without showing
-  anything. The run times account for both waits in full. The log doesn't show
-  whether the device was connected before the test began, or why it didn't
-  reconnect.
-- **By hand**, with the same device on port 7: `el-devices hub speed 7 usb2` brought
-  the device down to USB 2 without a power cycle, and it stayed there until
-  `el-devices hub speed 7 usb3 --cycle`.
+- **`ACRONAME_USB3_DEVICE=1`, but port 7 still empty**: 13 passed and 2 failed, in
+  73.73 s. Nothing was plugged into port 7 (confirmed by the maintainer), so the
+  `USB2` and `USB3` connected-speed tests waited 15 s for a device that wasn't
+  there. The `DATA_OFF` case passed only because it expected no device. These
+  failures say nothing about the hub or the driver.
+- **By hand**, on the same empty port: `el-devices hub speed 7 usb2` reported a `usb2`
+  limit until `el-devices hub speed 7 usb3 --cycle`. That shows the limit reads back;
+  connected speed wasn't tested.
 
-Read-only checks afterwards found port 7 powered with both data lines enabled, no
-device attached, and drawing 0 µA, so the device had probably been unplugged.
-Hub mode and every other port matched the earlier checks.
+Read-only checks afterwards agreed: port 7 powered with both data lines enabled, no
+device attached, drawing 0 µA. Hub mode and every other port matched the earlier
+checks.
 
 The device tests have since been reworked:
-- They first wait for the device to show up at USB 3, and fail with the raw port
-  state if it doesn't.
-- Limiting is tested without a power cycle, matching the by-hand result.
+- They first wait for a device at USB 3 on the test port, and fail saying to plug
+  one in if none shows up within 15 s.
+- Limiting is tested without a power cycle.
 - Restoring `USB3` without a cycle has its own test.
 - Reconnecting after a power cycle has its own test, with a 30 s wait and the raw
   port state (VBUS, data lines, attached bit, current) on failure.

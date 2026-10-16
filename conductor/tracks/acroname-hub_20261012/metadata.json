@@ -4,14 +4,14 @@
   "type": "feature",
   "status": "in_progress",
   "created": "2026-10-12T00:00:00Z",
-  "updated": "2026-10-15T00:00:00Z",
+  "updated": "2026-10-16T00:00:00Z",
   "phases": {
     "total": 2,
     "completed": 1
   },
   "tasks": {
     "total": 6,
-    "completed": 5
+    "completed": 6
   },
   "current_phase": 2,
   "current_task": "2.3",
@@ -21,6 +21,8 @@
     "3657573: Run the Hub contract suite against AcronameHub",
     "6c48a48: Record approval of Acroname Phase 1",
     "4482139: Write the Acroname USBHub3p hardware doc",
-    "b13a3c9: Add el-devices hub and register the acroname discovery backend"
+    "b13a3c9: Add el-devices hub and register the acroname discovery backend",
+    "d6e8853: Add hardware tests for the Acroname USBHub3p",
+    "63bd455: Propose a port-speed interface for the Acroname hub"
   ]
 }

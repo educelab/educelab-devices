@@ -1,3 +1,4 @@
+import dataclasses
 import logging
 import subprocess
 import sys
@@ -492,6 +493,29 @@ class TestGPhoto2Contract(FileCameraContract):
         return lambda: GPhoto2Camera("usb:020,007", library=attached)
 
 
+def at_bulb_and_auto_iso():
+    """Nikon widgets with the shutter at Bulb and ISO at Auto."""
+    widgets = {w.name: w for w in NIKON_WIDGETS}
+    widgets["shutterspeed"] = dataclasses.replace(widgets["shutterspeed"], value="Bulb")
+    iso = widgets["iso"]
+    widgets["iso"] = dataclasses.replace(
+        iso, value="Auto", choices=("Auto", *iso.choices)
+    )
+    return list(widgets.values())
+
+
+class TestGPhoto2AtBulbContract(TestGPhoto2Contract):
+    """The same rules with the camera at Bulb and Auto ISO, where the canonical
+    settings have no value."""
+
+    @pytest.fixture(autouse=True)
+    def attached(self, monkeypatch, fast_capture, fast_keep_alive):
+        camera = FakeCamera(suffixes=(".NEF", ".JPG"), widgets=at_bulb_and_auto_iso())
+        library = FakeLibrary(camera)
+        monkeypatch.setattr(gphoto2, "_default_library", lambda: library)
+        return library
+
+
 def settings_of(attached):
     with opened(attached) as camera:
         return camera.settings()
@@ -509,6 +533,43 @@ def test_exposure_time_lists_the_shutter_speeds_in_seconds():
 def test_shutter_speeds_that_are_not_durations_are_left_out():
     exposure = settings_of(FakeCamera())[EXPOSURE_TIME]
     assert all(isinstance(choice, float) for choice in exposure.choices)
+
+
+def test_canonical_settings_at_bulb_and_auto_have_no_value():
+    settings = settings_of(FakeCamera(widgets=at_bulb_and_auto_iso()))
+    assert settings[EXPOSURE_TIME].value is None
+    assert settings[EXPOSURE_TIME].choices == pytest.approx(
+        [1 / 8000, 1 / 1000, 1 / 60, 1 / 3, 10 / 13, 1.0, 2.5, 30.0]
+    )
+    assert settings[ISO].value is None
+    assert settings[ISO].choices == (64, 100, 200, 400, 25600)
+    # Bulb isn't offered under the native name either.
+    assert "shutterspeed" not in settings
+
+
+def test_writing_a_number_leaves_bulb_and_auto():
+    attached = FakeCamera(widgets=at_bulb_and_auto_iso())
+    with opened(attached) as camera:
+        exposure = camera.setting(EXPOSURE_TIME)
+        camera.set_setting(EXPOSURE_TIME, exposure.nearest(1 / 50))
+        camera.set_setting(ISO, 200)
+        assert camera.setting(EXPOSURE_TIME).value == pytest.approx(1 / 60)
+        assert camera.setting(ISO).value == 200
+    assert attached.widgets["shutterspeed"].value == "1/60"
+    assert attached.widgets["iso"].value == "200"
+
+
+def test_widget_with_no_numeric_choices_is_canonical_with_none_allowed():
+    widgets = {w.name: w for w in NIKON_WIDGETS}
+    widgets["iso"] = dataclasses.replace(
+        widgets["iso"], value="Auto", choices=("Auto",)
+    )
+    attached = FakeCamera(widgets=list(widgets.values()))
+    with opened(attached) as camera:
+        iso = camera.setting(ISO)
+        assert (iso.value, iso.choices) == (None, ())
+        with pytest.raises(ValueError):
+            camera.set_setting(ISO, 100)
 
 
 @pytest.mark.parametrize(

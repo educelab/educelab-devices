@@ -47,7 +47,8 @@ def quality(camera):
         return chosen
 
     yield use
-    camera.set_setting("imagequality", original)
+    if original is not None:
+        camera.set_setting("imagequality", original)
 
 
 @pytest.fixture
@@ -56,7 +57,9 @@ def quick_exposure(camera):
     exposure = camera.setting(EXPOSURE_TIME)
     camera.set_setting(EXPOSURE_TIME, exposure.nearest(1 / 60))
     yield
-    camera.set_setting(EXPOSURE_TIME, original)
+    # At Bulb there's no number to go back to; the camera stays at the new speed.
+    if original is not None:
+        camera.set_setting(EXPOSURE_TIME, original)
 
 
 def test_identifies_the_camera(camera):
@@ -85,7 +88,22 @@ def test_exposure_time_reads_back_as_set(camera):
             camera.set_setting(EXPOSURE_TIME, value)
             assert camera.setting(EXPOSURE_TIME).value == value
     finally:
-        camera.set_setting(EXPOSURE_TIME, original)
+        if original is not None:
+            camera.set_setting(EXPOSURE_TIME, original)
+
+
+def test_bulb_and_auto_iso_read_as_none_until_a_number_is_written(camera):
+    """Set the shutter to Bulb and ISO to Auto on the camera before running."""
+    settings = camera.settings()
+    at_bulb = [n for n in (EXPOSURE_TIME, "iso") if settings[n].value is None]
+    if not at_bulb:
+        pytest.skip("set the shutter to Bulb or ISO to Auto on the camera first")
+    for name in at_bulb:
+        setting = settings[name]
+        print(f"\n{name} at a non-numeric value; {len(setting.choices or ())} choices")
+        assert setting.choices
+        camera.set_setting(name, setting.choices[0])
+        assert camera.setting(name).value == setting.choices[0]
 
 
 def test_raw_capture_returns_one_nef(camera, quality, quick_exposure):

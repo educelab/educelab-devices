@@ -75,8 +75,9 @@ def usb3_device(hub, port):
     # The port fixture may just have powered the port or restored its data lines.
     speed, waited = wait_for_connected_speed(hub, port, PortSpeed.USB3)
     assert speed is PortSpeed.USB3, (
-        f"no USB 3 device connected on port {port} after {waited:.1f} s; is one "
-        f"plugged in? {describe(hub, port)}"
+        f"ACRONAME_USB3_DEVICE=1, but no USB 3 device connected on port {port} "
+        f"(ACRONAME_TEST_PORT) within {waited:.1f} s. Plug a spare USB 3 device "
+        f"into port {port}, or unset ACRONAME_USB3_DEVICE. {describe(hub, port)}"
     )
     return port
 

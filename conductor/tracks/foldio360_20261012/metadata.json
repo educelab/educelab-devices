@@ -2,15 +2,50 @@
   "id": "foldio360_20261012",
   "title": "Foldio360 Turntable",
   "type": "feature",
-  "status": "pending",
+  "status": "in_progress",
   "created": "2026-10-12T00:00:00Z",
-  "updated": "2026-10-12T00:00:00Z",
+  "updated": "2026-10-16T00:00:00Z",
   "phases": {
     "total": 5,
-    "completed": 0
+    "completed": 4
   },
   "tasks": {
-    "total": 15,
-    "completed": 0
-  }
+    "total": 16,
+    "completed": 15
+  },
+  "current_phase": 5,
+  "current_task": "5.3",
+  "commits": [
+    "8a3fef0: Move the Foldio360 BLE client into the stages package",
+    "dd05892: Port the Foldio360 offline tests to pytest",
+    "f674df4: Add the Foldio360 hardware doc from PROTOCOL.md",
+    "0fdf853: Record Phase 1 progress for the Foldio360 track",
+    "b9c515f: Record approval of Foldio360 Phase 1",
+    "a50f30f: List the all extra after the backend extras",
+    "1e1ac1c: Bring the Foldio360 run, IR shutter, and set_signal commands into scope",
+    "1e5929e: Make Foldio360 a Stage with a whole-degree theta axis",
+    "ef86e4d: Test Foldio360 jog and stop, and refuse moves during a jog",
+    "903c4b3: Test that Foldio360 position() never waits for a move",
+    "4cd9e72: Test that Foldio360 commands are serialized by the device lock",
+    "b1d9eab: Run the Stage contract suite against Foldio360",
+    "7cecc7f: Port the Foldio360 run, IR shutter, and set_signal commands",
+    "2b8ab6b: Record Phase 2 progress for the Foldio360 track",
+    "32229b5: Record approval of Foldio360 Phase 2",
+    "a65d76d: Add the Foldio360 halo as a Light on the turntable's connection",
+    "f34c9c9: Run the Light contract suite against the Foldio360 halo",
+    "5764e21: Record Phase 3 progress for the Foldio360 track",
+    "2eef9ff: Record approval of Foldio360 Phase 3",
+    "451f8ee: Let the Foldio360 halo close the turntable only if it opened it",
+    "fee5359: Wrap bleak's connection errors in the Foldio360 transport",
+    "3065562: Fold the Foldio360 client guide into the hardware doc and guide",
+    "92681b7: Add el-devices foldio and BLE discovery for the Foldio360",
+    "025718c: Accept a copied TimeoutError as the cause on Python 3.11",
+    "6bbce66: Record Phase 4 progress for the Foldio360 track",
+    "92de429: Record approval of Foldio360 Phase 4",
+    "2b3c105: Add hardware tests for the Foldio360",
+    "d24545e: Record Phase 5 progress for the Foldio360 track",
+    "771d9e5: Record that CW turns the Foldio360 clockwise, and pin that stop leaves the halo",
+    "f42fe88: Let timeout=math.inf mean no limit on the Foldio360",
+    "136ad8f: Record the Foldio360 hardware run"
+  ]
 }

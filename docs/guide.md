@@ -24,8 +24,12 @@ remembers only what it learned since `open()`. Most of what follows comes from t
    something remembered, your application owns that, along with the hazard of it going
    stale.
 4. **Roles, not vendors.** Code against `Camera`, `Light`, `Stage`, `Hub`, or `FocusDrive`.
-   One device can offer several roles; a turntable with a built-in light is both a
-   `Stage` and a `Light`.
+   One device can offer several roles. A driver either implements them in one class or
+   hands out a second object for a role that shares the device's connection and lock:
+   the Foldio360 is a `Stage`, and its built-in light is the `Light` at
+   `Foldio360.halo`. Such a role is opened and closed on its own. Opening it opens the
+   device if needed, and closing it closes the device only if it was the one that opened
+   it. Closing the device closes the role too.
 5. **Positions are machine coordinates.** A stage reports what the hardware counts, not
    an origin you pinned (ADR 0003).
 
@@ -69,10 +73,11 @@ closed one. A closed device can be opened again.
 
 ## 3. Blocking and timeouts
 
-Long operations take a `timeout` in seconds. `None` means the device's default (for
-stages, `Stage.move_timeout`; for frame cameras, `FrameCamera.capture_timeout`). Pass
-`math.inf` to wait indefinitely. A device that doesn't finish in time raises
-`DeviceTimeout`, which is also a `TimeoutError`.
+Long operations take a `timeout` in seconds. `None` means the device's default: for
+stages, `Stage.move_timeout`, or, on stages that can predict a move's duration (the
+Foldio360), a limit derived from that prediction; for frame cameras,
+`FrameCamera.capture_timeout`. Pass `math.inf` to wait indefinitely. A device that
+doesn't finish in time raises `DeviceTimeout`, which is also a `TimeoutError`.
 
 Pass your own timeout when you know something the default doesn't, e.g. a heavy load
 that accelerates slowly, or a test where you'd rather fail fast. Defaults are deliberately
@@ -186,6 +191,7 @@ code.
 | Pin origins on stages | Stages use machine coordinates (ADR 0003). Offsets belong to the consumer |
 | Home on connect | Homing moves hardware and is always an explicit `home()` |
 | Decode raw camera files | Cameras return files exactly as produced (ADR 0002). Decode the bytes in memory if you need pixels |
+| Guess at state the hardware can't report | A wrong guess (e.g. that a turntable was power-cycled because it reads 0) is worse than a documented habit. The hardware doc says what can't be detected |
 | Retry commands | Whether a retry is safe depends on the device and on what the consumer is doing |
 | Sequence a capture or manage a rig | Rigs and workflows belong to consumers |
 | Offer framework wrappers | Qt or asyncio wrappers live in consumers until two of them need the same one (ADR 0001) |
@@ -261,6 +267,11 @@ Otherwise they report the last value set since `open()`, or `None` if nothing ha
 `speed()` is a `Setting` named `"speed"`, in mm/s if the stage has any linear axis and deg/s
 if it is rotary only. Stages with fixed speeds (the Foldio360) list them as `choices`;
 others (GRBL feed rates) give a range. `set_speed()` applies to later moves and jogs.
+
+Positions are only as fine as the hardware counts them. A stage that counts whole degrees
+(the Foldio360) rounds targets to the nearest degree and accepts a move that lands within
+±1° of it, so compare its positions with that tolerance, not exactly. The stage's hardware
+doc gives its resolution.
 
 
 `can_home` says the stage has a hardware reference, such as limit switches, that `home()`

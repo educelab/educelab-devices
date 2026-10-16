@@ -1,6 +1,8 @@
 """Foldio360 tests against a real turntable: ``pytest -m hardware tests/test_foldio360_hardware.py -s``.
 
-Connects to ``FOLDIO360_ADDRESS`` if set, otherwise scans for one. Close the
+Connects to ``FOLDIO360_ADDRESS`` if set, otherwise scans for one. On macOS
+the address is the CoreBluetooth UUID that ``el-devices foldio scan`` shows,
+which differs from host to host. Close the
 official app first. The platter turns, so clear anything that could fall off.
 Run with ``-s`` to see the measurements these tests print for the hardware doc.
 """

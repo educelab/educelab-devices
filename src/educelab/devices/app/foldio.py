@@ -23,7 +23,9 @@ def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") 
         "Close the official app first: only one host can hold the turntable.",
     )
     parser.add_argument(
-        "--address", help="BLE address to connect to, skipping the scan"
+        "--address",
+        help="BLE address to connect to, skipping the scan; on macOS, the "
+        "per-host UUID that 'scan' shows",
     )
     parser.add_argument(
         "--scan-timeout",

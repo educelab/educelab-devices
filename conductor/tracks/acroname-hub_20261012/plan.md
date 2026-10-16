@@ -104,11 +104,14 @@ hub.connected_speed(port) -> PortSpeed | None   # what the attached device
 - [x] Task 3.2: Add `el-devices hub speed` and the speed columns in `status`.
 - [x] Task 3.3: Document port speed in `docs/hardware/acroname-usbhub3p.md` (API,
   state bits, unknowns).
-- [ ] Task 3.4: Hardware tests on `ACRONAME_TEST_PORT` only, restoring its power and
+- [x] Task 3.4: Hardware tests on `ACRONAME_TEST_PORT` only, restoring its power and
   speed afterwards: the limit reads back and survives `power_off()`/`power_on()`,
   `power_cycle()`, and a reconnect; with `ACRONAME_USB3_DEVICE=1` (a USB 3 device on
   that port), `connected_speed()` is USB2 after limiting and power-cycling, USB3 after
   restoring, and `None` with `DATA_OFF`.
+  - Written; not yet run on hardware. Dry-run on the fake SDK (real `brainstem`
+    blocked) with the test port starting off, powered at USB3, USB2, and DATA_OFF:
+    all 15 pass, only the test port is switched, and its state is restored.
 
 ### Verification
 

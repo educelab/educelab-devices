@@ -6,6 +6,7 @@ PySpin is imported on first use, so this module imports without it. See
 
 import functools
 import logging
+import math
 import statistics
 import threading
 import time
@@ -40,8 +41,6 @@ from educelab.devices.errors import (
 )
 
 __all__ = [
-    "CAPTURE_MARGIN_S",
-    "MAX_ATTEMPTS",
     "PREVIEW_MAX_SIZE",
     "PYSPIN_INSTALL_HINT",
     "RETRIES_BEFORE_REMEASURE",
@@ -64,13 +63,9 @@ TIMESTAMP_SAMPLES = 20
 # "TimestampLatchValue" (docs/hardware/spinnaker.md, Protocol).
 _TIMESTAMP_NODES = ("Timestamp", "TimestampLatchValue")
 
-# Frames a capture tries before re-measuring the timestamp offset (pgs-scan
-# dev uses 5), and the total it tries before giving up. See the hardware doc.
+# Stale frames a capture drops before re-measuring the timestamp offset, as in
+# pgs-scan dev. The capture's timeout bounds the retries. See the hardware doc.
 RETRIES_BEFORE_REMEASURE = 5
-MAX_ATTEMPTS = 2 * RETRIES_BEFORE_REMEASURE
-# Default capture timeout on top of the exposure time; pgs-scan dev's rig
-# allowed 2 s per capture. Deliberately loose.
-CAPTURE_MARGIN_S = 2.0
 
 # Longest side of a preview, in pixels; larger frames are subsampled.
 PREVIEW_MAX_SIZE = 1280
@@ -366,43 +361,6 @@ class SpinnakerCamera(FrameCamera):
         """
         return SpinnakerSystem().discover()
 
-    @synchronized
-    def capture_frame(
-        self,
-        not_before: float | datetime | None = None,
-        timeout: float | None = None,
-    ) -> Frame:
-        """Capture one frame, optionally no older than ``not_before``.
-
-        The camera free-runs, so the newest frame may have been exposed before
-        the call. With ``not_before``, older frames are dropped and the next
-        one taken, up to `MAX_ATTEMPTS` frames in all; the timestamp offset is
-        measured again after every `RETRIES_BEFORE_REMEASURE`. Incomplete frames
-        are always dropped. Every frame taken from the SDK is released.
-
-        Args:
-            not_before: Reject frames exposed before this time: a timezone-aware
-                datetime, or seconds since the epoch (e.g. ``time.time()`` once
-                the scene is ready).
-            timeout: Seconds for the whole capture. ``None`` means the exposure
-                time plus `CAPTURE_MARGIN_S`.
-
-        Returns:
-            The frame. Its ``metadata`` has ``exposure_time``, ``gain``,
-            ``device_timestamp_ns``, ``frame_id``, ``retries``,
-            ``stale_frames``, ``incomplete_frames``, ``missing_trailer``, and
-            ``timestamp_remeasured``.
-
-        Raises:
-            DeviceTimeout: No usable frame arrived in time.
-            DeviceError: Every frame tried was stale or incomplete, or
-                ``not_before`` was given but the camera can't latch its
-                timestamp.
-        """
-        if isinstance(not_before, datetime):
-            not_before = not_before.timestamp()
-        return self._grab(not_before, timeout)
-
     @property
     def timestamp_offset(self) -> float | None:
         """Host clock minus the camera's timestamp counter, in seconds.
@@ -603,12 +561,12 @@ class SpinnakerCamera(FrameCamera):
             read_only=not (writable or self._pyspin.IsWritable(node)),
         )
 
-    def _capture_frame(self) -> Frame:
-        return self._grab(None, None)
+    def _capture_frame(self, not_before: datetime | None, timeout: float) -> Frame:
+        return self._grab(not_before, timeout)
 
     def _preview_frame(self) -> npt.NDArray[np.uint8]:
         """The newest frame as 8 bits, subsampled to `PREVIEW_MAX_SIZE`."""
-        pixels = self._grab(None, None).pixels
+        pixels = self._grab(None, self.capture_timeout).pixels
         if pixels.dtype == np.uint16:
             pixels = pixels >> 8
         stride = -(-max(pixels.shape[:2]) // PREVIEW_MAX_SIZE)
@@ -616,26 +574,43 @@ class SpinnakerCamera(FrameCamera):
 
     # --- Capture ----------------------------------------------------------------
 
-    def _grab(self, not_before: float | None, timeout: float | None) -> Frame:
-        if not_before is not None and self._timestamp_offset is None:
-            raise DeviceError(
-                f"{self!r} can't check not_before: it can't latch its timestamp"
-            )
-        exposure = self._read_float("ExposureTime") / _US_PER_S
-        if timeout is None:
-            timeout = exposure + CAPTURE_MARGIN_S
+    def _grab(self, not_before: datetime | None, timeout: float) -> Frame:
+        """Take the first complete frame no older than ``not_before``.
+
+        The camera free-runs with newest-only buffering, so the first frame is
+        often from before the call. Stale and incomplete frames are released
+        and the next one taken until ``timeout`` runs out; the timestamp offset
+        is re-measured after every `RETRIES_BEFORE_REMEASURE` stale frames.
+        """
         deadline = time.monotonic() + timeout
+        if not_before is not None:
+            if self._timestamp_offset is None:
+                raise DeviceError(
+                    f"{self!r} can't check not_before: it can't latch its timestamp"
+                )
+            wait = (not_before - datetime.now(UTC)).total_seconds()
+            if wait >= timeout:
+                raise DeviceTimeout(
+                    f"{self!r}: not_before is {wait:.3g} s away, past the "
+                    f"{timeout:g} s timeout"
+                )
+            if wait > 0:
+                # No frame from before not_before would do, so don't grab any.
+                time.sleep(wait)
+        exposure = self._read_float("ExposureTime") / _US_PER_S
         stale = incomplete = 0
         remeasured = False
-        for attempt in range(MAX_ATTEMPTS):
-            if attempt and attempt % RETRIES_BEFORE_REMEASURE == 0 and stale:
-                logger.info("%r: %d stale frames; re-measuring offset", self, stale)
-                self._measure_timestamp_offset()
-                remeasured = True
+        while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise DeviceTimeout(f"{self!r}: no usable frame in {timeout:g} s")
-            grab_ms = max(1, round(remaining * 1000))
+                raise DeviceTimeout(
+                    f"{self!r}: no usable frame in {timeout:g} s "
+                    f"({stale} stale, {incomplete} incomplete)"
+                )
+            if math.isinf(remaining):
+                grab_ms = self._pyspin.EVENT_TIMEOUT_INFINITE
+            else:
+                grab_ms = max(1, math.ceil(remaining * 1000))
             image = self._call(
                 "get a frame", functools.partial(self._cam.GetNextImage, grab_ms)
             )
@@ -651,7 +626,7 @@ class SpinnakerCamera(FrameCamera):
                     GAIN: self._read_optional_float("Gain"),
                     "device_timestamp_ns": taken.device_timestamp_ns,
                     "frame_id": taken.frame_id,
-                    "retries": attempt,
+                    "retries": stale + incomplete,
                     "stale_frames": stale,
                     "incomplete_frames": incomplete,
                     "missing_trailer": taken.missing_trailer,
@@ -660,19 +635,19 @@ class SpinnakerCamera(FrameCamera):
                 return Frame(
                     taken.pixels,
                     taken.pixel_format,
-                    datetime.fromtimestamp(taken.host_time, UTC),
+                    taken.timestamp,
                     metadata,
                 )
-            if taken == "stale":
-                stale += 1
-            else:
+            if taken == "incomplete":
                 incomplete += 1
-        raise DeviceError(
-            f"{self!r}: no usable frame in {MAX_ATTEMPTS} tries "
-            f"({stale} stale, {incomplete} incomplete)"
-        )
+                continue
+            stale += 1
+            if stale % RETRIES_BEFORE_REMEASURE == 0:
+                logger.info("%r: %d stale frames; re-measuring offset", self, stale)
+                self._measure_timestamp_offset()
+                remeasured = True
 
-    def _take(self, image: Any, not_before: float | None) -> "_Taken | str":
+    def _take(self, image: Any, not_before: datetime | None) -> "_Taken | str":
         """Copy a frame out of its buffer, or say why it won't do."""
         missing_trailer = False
         if image.IsIncomplete():
@@ -691,15 +666,14 @@ class SpinnakerCamera(FrameCamera):
             host_time = time.time()
         else:
             host_time = self._timestamp_offset + device_ns / 1e9
-        if not_before is not None and host_time < not_before:
-            logger.debug(
-                "%r: dropping a frame %.3f s stale", self, not_before - host_time
-            )
+        timestamp = datetime.fromtimestamp(host_time, UTC)
+        if not_before is not None and timestamp < not_before:
+            logger.debug("%r: dropping a frame from %s", self, timestamp)
             return "stale"
         return _Taken(
             pixels=image.GetNDArray().copy(),
             pixel_format=str(image.GetPixelFormatName()),
-            host_time=host_time,
+            timestamp=timestamp,
             device_timestamp_ns=device_ns,
             frame_id=int(image.GetFrameID()),
             missing_trailer=missing_trailer,
@@ -795,7 +769,7 @@ class _Taken:
 
     pixels: npt.NDArray[Any]
     pixel_format: str
-    host_time: float
+    timestamp: datetime
     device_timestamp_ns: int
     frame_id: int
     missing_trailer: bool

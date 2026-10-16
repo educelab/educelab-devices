@@ -48,8 +48,8 @@ Build a fake PySpin first, then the system/enumeration layer, then the per-camer
 
 ### Notes and deviations
 
-- `capture_frame(not_before=None, timeout=None)` is an override on `SpinnakerCamera` with optional keyword arguments. The `FrameCamera` ABC is unchanged, so code written against the role can't pass `not_before`; promoting it to the role would be an ABC change and needs approval.
-- Capture retries: 5 frames per round (`RETRIES_BEFORE_REMEASURE`, pgs-scan's limit). If a round included stale frames, the offset is re-measured, and the capture gives up with `DeviceError` after 10 frames (`MAX_ATTEMPTS`). The default timeout is the exposure time plus 2 s.
+- `not_before` and `timeout` were first an override on `SpinnakerCamera`. After PR #6 moved them onto the `FrameCamera` role (merged 2026-10-16; the branch was rebased onto it), the driver implements the role's `_capture_frame(not_before, timeout)` hook instead. `not_before` is now an aware `datetime` only, and `timeout` defaults to `capture_timeout` (30 s).
+- Capture retries are bounded by the timeout, not by a count. The `MAX_ATTEMPTS` cap of 10 frames and the default timeout of exposure + 2 s were dropped, because the role contract requires `DeviceTimeout` when no acceptable frame arrives in time. A future `not_before` is waited for, or fails at once if it lies past the timeout. The offset is re-measured after every 5 stale frames (`RETRIES_BEFORE_REMEASURE`, pgs-scan's limit).
 - Frame metadata: `exposure_time`, `gain`, `device_timestamp_ns`, `frame_id`, `retries`, `stale_frames`, `incomplete_frames`, `missing_trailer`, `timestamp_remeasured`.
 - Settings: canonical `exposure_time` (s), `gain` (dB), `pixel_format`, plus native `ExposureAuto` and `GainAuto` with choices `Off` and `Continuous`. `Once` is left out because it reverts to `Off` on its own and would never read back. `pixel_format` offers only Mono8, Mono16, RGB8 and 8/16-bit Bayer formats, which the driver can shape into arrays, and `open()` switches away from any other format. Changing it pauses acquisition.
 - `open()` also turns `TriggerMode` off, so a camera left triggered by another program still free-runs.

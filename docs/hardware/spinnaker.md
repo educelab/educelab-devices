@@ -103,7 +103,10 @@ setting `pixel_format` ends acquisition, changes the format, and begins again.
 
 ### Capturing a frame
 
-`capture_frame(not_before=…)` takes the next frame and checks it:
+`capture_frame(not_before=…, timeout=…)` (the `FrameCamera` role's arguments; `not_before`
+is an aware `datetime`) first waits until `not_before` if it is in the future, or raises
+`DeviceTimeout` at once if it is further away than the timeout. Then it takes the next
+frame and checks it:
 
 1. **Incomplete** (`IsIncomplete()`): dropped, except status `IMAGE_MISSING_TRAILER`,
    which is accepted as complete and flagged as `missing_trailer` in the frame's metadata,
@@ -111,11 +114,12 @@ setting `pixel_format` ends acquisition, changes the format, and begins again.
 2. **Stale** (offset-corrected timestamp before `not_before`): dropped.
 3. Otherwise the pixels are copied out of the buffer.
 
-Every buffer is released whatever the outcome. After 5 dropped frames
-(`RETRIES_BEFORE_REMEASURE`, `pgs-scan`'s limit), if any were stale, the driver
-re-measures the offset. It gives up with `DeviceError` after 10 (`MAX_ATTEMPTS`). The
-metadata reports `retries`, `stale_frames`, `incomplete_frames`, and
-`timestamp_remeasured`.
+Every buffer is released whatever the outcome. It keeps taking frames until one passes
+or the timeout runs out (`DeviceTimeout`), so the timeout is the bound on retries. After
+every 5 stale frames (`RETRIES_BEFORE_REMEASURE`, `pgs-scan`'s limit) it re-measures the
+offset. The metadata reports `retries`, `stale_frames`, `incomplete_frames`, and
+`timestamp_remeasured`. `Frame.timestamp` is the offset-corrected image timestamp; see
+Timestamps for which moment that is.
 
 `preview_frame()` takes the newest frame the same way (no `not_before`), shifts 16-bit
 pixels right by 8, and subsamples so the longest side is at most 1280 pixels. That
@@ -124,9 +128,10 @@ bit, and whether `Mono16` data is left-aligned decides how dark previews look).
 
 ## Timing
 
-- **Capture timeout:** by default the exposure time plus 2 s (`CAPTURE_MARGIN_S`),
-  matching the 2 s `pgs-scan` `dev` allowed a rig capture. Deliberately loose. Measured
-  latency comes in Phase 3.
+- **Capture timeout:** the role's default, `FrameCamera.capture_timeout` (30 s), unless
+  the caller passes one. `pgs-scan` `dev` allowed a rig capture 2 s. Each
+  `GetNextImage()` waits for whatever time is left (`EVENT_TIMEOUT_INFINITE` for
+  `math.inf`). Measured latency comes in Phase 3.
 - **Error codes** (assumed, from memory of the Spinnaker headers; to confirm in Phase 3):
   `-1011` is a timeout, mapped to `DeviceTimeout`; `-1005` from `Init()` is access
   denied, mapped to `DeviceBusy` (another process, e.g. SpinView, holds the camera).

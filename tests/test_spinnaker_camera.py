@@ -1,5 +1,6 @@
 """`SpinnakerCamera`, tested against the fake PySpin in `fakes.pyspin`."""
 
+import math
 import sys
 import time
 from datetime import UTC, datetime, timedelta
@@ -394,18 +395,29 @@ def test_capture_metadata(camera, fake):
 
 def test_capture_rejects_frames_older_than_not_before(camera, fake):
     fake.queue_frames(stale(fake), stale(fake, 0.5))
-    request = time.time()
+    request = datetime.now(UTC)
     frame = camera.capture_frame(not_before=request)
-    assert frame.timestamp.timestamp() >= request - 0.01
+    assert frame.timestamp >= request
     assert frame.metadata["stale_frames"] == 2
     assert frame.metadata["retries"] == 2
     assert fake.frames_grabbed == 3
 
 
-def test_not_before_accepts_a_datetime(camera, fake):
-    fake.queue_frames(stale(fake))
-    frame = camera.capture_frame(not_before=datetime.now(UTC))
-    assert frame.metadata["stale_frames"] == 1
+def test_a_future_not_before_waits_for_a_later_frame(camera, fake):
+    later = datetime.now(UTC) + timedelta(seconds=0.05)
+    frame = camera.capture_frame(not_before=later, timeout=1.0)
+    assert frame.timestamp >= later
+    assert fake.frames_grabbed == 1
+
+
+def test_a_not_before_past_the_timeout_fails_without_waiting(camera, fake):
+    started = time.monotonic()
+    with pytest.raises(DeviceTimeout, match="not_before"):
+        camera.capture_frame(
+            not_before=datetime.now(UTC) + timedelta(seconds=60), timeout=1.0
+        )
+    assert time.monotonic() - started < 0.5
+    assert fake.frames_grabbed == 0
 
 
 def test_without_not_before_the_newest_frame_is_taken(camera, fake):
@@ -434,7 +446,7 @@ def test_every_grabbed_buffer_is_released(camera, fake):
     # pgs-scan #83: discarded frames leaked their buffers.
     for _ in range(3):
         fake.queue_frames(stale(fake), FrameSpec(status=IMAGE_DATA_INCOMPLETE))
-        camera.capture_frame(not_before=time.time())
+        camera.capture_frame(not_before=datetime.now(UTC))
     assert fake.frames_grabbed == 9
     assert fake.held == []
 
@@ -442,15 +454,16 @@ def test_every_grabbed_buffer_is_released(camera, fake):
 def test_many_captures_never_exhaust_the_buffer_pool(camera, fake):
     for _ in range(fake.buffer_count * 3):
         fake.queue_frames(stale(fake))
-        camera.capture_frame(not_before=time.time())
+        camera.capture_frame(not_before=datetime.now(UTC))
     assert fake.held == []
 
 
-def test_retries_are_bounded(camera, fake):
-    # Every frame is older than a request in the future, so none will do.
-    with pytest.raises(DeviceError, match="no usable frame") as info:
-        camera.capture_frame(not_before=time.time() + 60)
-    assert fake.frames_grabbed == spinnaker.MAX_ATTEMPTS
+def test_retries_are_bounded_by_the_timeout(camera, fake):
+    # pgs-scan #83: its stale-frame loop could run forever.
+    fake.queue_frames(*(stale(fake) for _ in range(100_000)))
+    with pytest.raises(DeviceTimeout, match="stale") as info:
+        camera.capture_frame(not_before=datetime.now(UTC), timeout=0.05)
+    assert 0 < fake.frames_grabbed < 100_000
     assert fake.held == []
     assert info.value.__context__ is None
 
@@ -459,7 +472,7 @@ def test_offset_is_remeasured_when_a_round_of_retries_runs_out(camera, fake):
     # The camera's counter jumped, so every frame looks 5 s old until the
     # offset is measured again.
     fake.device_epoch += 5.0
-    frame = camera.capture_frame(not_before=time.time())
+    frame = camera.capture_frame(not_before=datetime.now(UTC))
     assert frame.metadata["retries"] == spinnaker.RETRIES_BEFORE_REMEASURE
     assert frame.metadata["timestamp_remeasured"] is True
     assert fake.latch_calls == 2 * spinnaker.TIMESTAMP_SAMPLES
@@ -476,14 +489,7 @@ def test_no_frame_in_time_raises_device_timeout(camera, fake, monkeypatch):
     assert info.value.__context__ is None
 
 
-def test_an_expired_timeout_raises_device_timeout(camera, fake):
-    fake.queue_frames(stale(fake))
-    with pytest.raises(DeviceTimeout):
-        camera.capture_frame(not_before=time.time(), timeout=0)
-    assert fake.held == []
-
-
-def test_grab_timeout_covers_the_exposure(camera, fake, monkeypatch):
+def test_grab_timeout_is_the_time_left(camera, monkeypatch, pyspin):
     seen = []
     original = CameraPtr.GetNextImage
 
@@ -492,10 +498,12 @@ def test_grab_timeout_covers_the_exposure(camera, fake, monkeypatch):
         return original(self, timeout)
 
     monkeypatch.setattr(CameraPtr, "GetNextImage", spy)
-    camera.set_setting("ExposureAuto", "Off")
-    camera.set_setting(EXPOSURE_TIME, 5.0)
+    camera.capture_frame(timeout=2.0)
+    assert 1900 <= seen[-1] <= 2000
+    camera.capture_frame(timeout=math.inf)
+    assert seen[-1] == pyspin.EVENT_TIMEOUT_INFINITE
     camera.capture_frame()
-    assert seen[0] >= 5000
+    assert seen[-1] <= camera.capture_timeout * 1000
 
 
 def test_capture_in_each_pixel_format(pyspin):
@@ -515,9 +523,10 @@ def test_close_after_captures_releases_the_system(pyspin, fake):
     camera = SpinnakerCamera(MONO, pyspin=pyspin)
     with camera:
         fake.queue_frames(stale(fake))
-        camera.capture_frame(not_before=time.time())
-        with pytest.raises(DeviceError):
-            camera.capture_frame(not_before=time.time() + 60)
+        camera.capture_frame(not_before=datetime.now(UTC))
+        fake.queue_frames(*(stale(fake) for _ in range(100_000)))
+        with pytest.raises(DeviceTimeout):
+            camera.capture_frame(not_before=datetime.now(UTC), timeout=0.02)
     assert_released(pyspin)
 
 

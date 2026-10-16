@@ -149,6 +149,12 @@ role, until a second hub driver needs it.
 | `USB2` | Hi-Speed only | `setSuperSpeedDataDisable`, `setHiSpeedDataEnable` |
 | `DATA_OFF` | none; power only | `setSuperSpeedDataDisable`, `setHiSpeedDataDisable` |
 
+**Lowering the limit applies at once; raising it to `USB3` needs a power cycle.**
+Call `power_cycle(port)` after `set_port_speed(port, PortSpeed.USB3)`, or use
+`el-devices hub speed PORT usb3 --cycle`. Without `--cycle`, `el-devices hub speed`
+warns when the port's device is still at USB 2. Details under
+[Speed changes on a live device](#speed-changes-on-a-live-device).
+
 - `set_port_speed(port, speed)` switches only the data lines, never VBUS. It disables
   lines before enabling others, so the port never briefly allows more than asked.
 - **`power_on()` keeps the limit.** `setPortEnable` would turn every data line back
@@ -170,17 +176,41 @@ role, until a second hub driver needs it.
 - **The limit reads back without a power cycle**: on empty port 7 of `0x1A43352C`,
   `el-devices hub speed 7 usb2` reported a `usb2` limit until
   `el-devices hub speed 7 usb3 --cycle` (**verified** by hand by the maintainer,
-  2026-10-16). No device was attached, so this says nothing about connected speed.
-- **Unknown** (untested; no device has been on the test port yet):
-  - whether an attached USB 3 device drops to USB 2 when its SuperSpeed lines are
-    disabled, without a power cycle;
-  - whether restoring `USB3` brings it back to USB 3 without a power cycle. The
-    driver doesn't re-enumerate; call `power_cycle(port)` (or
-    `el-devices hub speed PORT usb3 --cycle`) to make the device reconnect;
-  - how long a device takes to reconnect after the driver's `power_cycle()`;
-  - whether data-line settings survive a hub reset or power loss;
-  - whether the hub accepts data-line changes on an unpowered port (the driver
-    avoids them).
+  2026-10-16).
+
+#### Speed changes on a live device
+
+**Verified** on port 7 of `0x1A43352C`, firmware 2.9.20, with a USB 3 device drawing
+about 245 mA, 2026-10-16 (hardware tests):
+
+- **Lowering to `USB2`** without a power cycle: the device dropped from USB 3 to
+  USB 2 within 0.5 s.
+- **`DATA_OFF`** without a power cycle: the device disconnected within 0.3 s.
+- **Raising from `USB2` to `USB3`** without a power cycle: the device stayed at USB 2
+  (port state `0x0080080B`: VBUS, both data lines enabled, at USB 2, attached) for the
+  15.1 s the test watched. It was also still at USB 2 another 15.1 s later, after
+  the test fixture had re-enabled both data lines and called `setPortEnable` on the
+  powered port. So neither re-enabling the lines nor `setPortEnable` brings it back;
+  cutting VBUS is assumed to.
+- In the same run, two restores done by the test fixture reached USB 3 without a
+  power cycle. They re-enabled both data lines and then called `setPortEnable`.
+  - From `DATA_OFF`: back at USB 3 in 0.8 s. With no data lines the device was fully
+    disconnected, so it attached fresh.
+  - From `USB2`, about half a second after the device dropped: back at USB 3 in
+    0.3 s.
+
+  Why the second one worked and the dedicated test didn't is **unknown**. One guess
+  is that a USB 3 device retries SuperSpeed only for a short while after losing it,
+  and then waits for a power cycle (**assumed**, from the USB 3 spec's SS.Disabled
+  state). Don't rely on it: power-cycle after raising to `USB3`.
+
+**Unknown**:
+- how long a device takes to reconnect after the driver's `power_cycle()`. Not yet
+  measured, because the 2026-10-16 run's reconnect tests didn't get past their
+  precondition (see [Manual check](#manual-check));
+- whether data-line settings survive a hub reset or power loss;
+- whether the hub accepts data-line changes on an unpowered port (the driver
+  avoids them).
 
 ### Enumeration delay
 
@@ -303,6 +333,29 @@ The device tests have since been reworked:
 - Reconnecting after a power cycle has its own test, with a 30 s wait and the raw
   port state (VBUS, data lines, attached bit, current) on failure.
 
-Not yet run: the reworked device tests, and the checks the tests don't cover
+#### Re-run with a USB 3 device on port 7
+
+The maintainer re-ran the 17 tests with a USB 3 device on port 7,
+`ACRONAME_USB3_DEVICE=1`, and `-s`: 14 passed, 1 failed, 2 errors, in 89.57 s.
+
+- Passed: the 11 tests that don't need a device, plus
+  `test_usb2_limit_applies_without_a_power_cycle` (USB 2 in 0.5 s),
+  `test_data_off_disconnects_the_device` (disconnected in 0.3 s), and
+  `test_enumeration_delay_reads_back`.
+- Failed: `test_restoring_usb3_without_a_power_cycle`. The device stayed at USB 2
+  for 15.1 s, drawing about 245 mA. That's the finding above, not a bug.
+- Errors: both `test_device_reconnects_after_a_power_cycle` cases. The failed test
+  left the device at USB 2, and the `usb3_device` precondition waited 15.1 s for USB 3
+  before giving up. So reconnecting after a power cycle is still untested.
+
+Since then:
+- The failed test became `test_raising_to_usb3_without_a_power_cycle_leaves_the_device_at_usb2`.
+  It now pins this behavior: after raising the limit it checks the device stays at
+  USB 2 for 5 s. Its cleanup power-cycles the port and waits up to 30 s for USB 3.
+- The precondition now power-cycles once when it finds the device at USB 2. If the
+  device is still at USB 2 after that, it fails saying the device may not be USB 3,
+  or may be on a USB 2 cable.
+
+Not yet run: the reconnect tests, and the checks the tests don't cover
 (whether the enumeration delay takes effect without a save, port numbering on the
 case, behavior after a hub power loss).

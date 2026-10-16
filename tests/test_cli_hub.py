@@ -148,3 +148,23 @@ def test_speed_unknown_port_fails(sdk, capsys):
 def test_cycle_without_a_speed_is_refused(sdk, capsys):
     assert main(["hub", "speed", "4", "--cycle"]) == 2
     assert not any(c[0].startswith("set") for c in sdk.units[0].calls)
+
+
+def test_raising_to_usb3_warns_when_the_device_stays_at_usb2(sdk, capsys):
+    sdk.units[0].devices[4] = "usb3"
+    main(["hub", "speed", "4", "usb2"])
+    capsys.readouterr()
+    assert main(["hub", "speed", "4", "usb3"]) == 0
+    captured = capsys.readouterr()
+    assert "connected usb2" in captured.out
+    assert "hub speed 4 usb3 --cycle" in captured.err
+
+
+def test_raising_to_usb3_with_cycle_reconnects_without_warning(sdk, capsys):
+    sdk.units[0].devices[4] = "usb3"
+    main(["hub", "speed", "4", "usb2"])
+    capsys.readouterr()
+    assert main(["hub", "speed", "4", "usb3", "--cycle"]) == 0
+    captured = capsys.readouterr()
+    assert "connected usb3" in captured.out
+    assert captured.err == ""

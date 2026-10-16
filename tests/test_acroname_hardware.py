@@ -27,6 +27,11 @@ pytestmark = pytest.mark.hardware
 RECONNECT_TIMEOUT_S = 15.0
 # After a power cycle the device also has to boot.
 POWER_CYCLE_RECONNECT_TIMEOUT_S = 30.0
+# How long a device must stay at USB 2 after the limit is raised to count as
+# staying there. The 2026-10-16 run watched for 15 s.
+STAYS_AT_USB2_S = 5.0
+# Restoring USB 3 reached it within 0.8 s when it worked at all (2026-10-16).
+USB3_SETTLE_S = 3.0
 
 
 def make_hub() -> AcronameHub:
@@ -73,9 +78,25 @@ def usb3_device(hub, port):
     if os.environ.get("ACRONAME_USB3_DEVICE") != "1":
         pytest.skip("set ACRONAME_USB3_DEVICE=1 with a USB 3 device on the test port")
     # The port fixture may just have powered the port or restored its data lines.
-    speed, waited = wait_for_connected_speed(hub, port, PortSpeed.USB3)
+    speed, waited = wait_for_connected_speed(
+        hub, port, PortSpeed.USB3, timeout=USB3_SETTLE_S
+    )
+    if speed is None:
+        speed, more = wait_for_connected_speed(hub, port, PortSpeed.USB3)
+        waited += more
+    if speed is PortSpeed.USB2:
+        # A device that fell back to USB 2 needs a power cycle to try USB 3 again.
+        hub.power_cycle(port)
+        speed, waited = wait_for_connected_speed(
+            hub, port, PortSpeed.USB3, timeout=POWER_CYCLE_RECONNECT_TIMEOUT_S
+        )
+        assert speed is not PortSpeed.USB2, (
+            f"the device on port {port} (ACRONAME_TEST_PORT) stayed at USB 2 after a "
+            f"power cycle and {waited:.1f} s, with USB 3 data enabled. It may not be "
+            f"a USB 3 device, or may be on a USB 2 cable. {describe(hub, port)}"
+        )
     assert speed is PortSpeed.USB3, (
-        f"ACRONAME_USB3_DEVICE=1, but no USB 3 device connected on port {port} "
+        f"ACRONAME_USB3_DEVICE=1, but no device attached on port {port} "
         f"(ACRONAME_TEST_PORT) within {waited:.1f} s. Plug a spare USB 3 device "
         f"into port {port}, or unset ACRONAME_USB3_DEVICE. {describe(hub, port)}"
     )
@@ -191,15 +212,26 @@ def test_data_off_disconnects_the_device(hub, usb3_device):
     assert speed is None, f"after {waited:.1f} s. {describe(hub, port)}"
 
 
-def test_restoring_usb3_without_a_power_cycle(hub, usb3_device):
-    # Whether the hub or device renegotiates up without a reset is unknown; a
-    # failure here is a finding for the hardware doc, not necessarily a bug.
+def test_raising_to_usb3_without_a_power_cycle_leaves_the_device_at_usb2(
+    hub, usb3_device
+):
+    # Seen 2026-10-16: the device stays at USB 2 until the port is power-cycled.
     port = usb3_device
     hub.set_port_speed(port, PortSpeed.USB2)
     wait_for_connected_speed(hub, port, PortSpeed.USB2)
-    hub.set_port_speed(port, PortSpeed.USB3)
-    speed, waited = wait_for_connected_speed(hub, port, PortSpeed.USB3)
-    assert speed is PortSpeed.USB3, f"after {waited:.1f} s. {describe(hub, port)}"
+    try:
+        hub.set_port_speed(port, PortSpeed.USB3)
+        speed, waited = wait_for_connected_speed(
+            hub, port, PortSpeed.USB3, timeout=STAYS_AT_USB2_S
+        )
+        assert speed is PortSpeed.USB2, f"after {waited:.1f} s. {describe(hub, port)}"
+    finally:
+        # Leave the device at USB 3 for the tests after this one.
+        hub.set_port_speed(port, PortSpeed.USB3)
+        hub.power_cycle(port)
+        wait_for_connected_speed(
+            hub, port, PortSpeed.USB3, timeout=POWER_CYCLE_RECONNECT_TIMEOUT_S
+        )
 
 
 @pytest.mark.parametrize("speed", [PortSpeed.USB3, PortSpeed.USB2])

@@ -216,9 +216,11 @@ class AcronameHub(Hub):
     def set_port_speed(self, port: int, speed: PortSpeed | str) -> None:
         """Limit ``port`` to ``speed``, switching only its data lines.
 
-        A device already attached may keep its current connection until it
-        re-enumerates; call `power_cycle()` on the port to make it reconnect at
-        the new speed. The limit lasts while the hub is open, including across
+        Lowering the limit applies at once: an attached USB 3 device drops to
+        USB 2, or disconnects for `PortSpeed.DATA_OFF`. Raising it to
+        `PortSpeed.USB3` doesn't bring back a device that dropped to USB 2;
+        call `power_cycle()` on the port afterwards. The limit lasts while the
+        hub is open, including across
         `power_off()` and `power_on()`, and isn't saved to the hub's flash. On
         an unpowered port it applies at the next `power_on()`.
 

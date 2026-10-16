@@ -45,8 +45,9 @@ def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") 
         "speed",
         help="show or limit one port's USB speed",
         description="Show a port's speed limit and the speed its device connected "
-        "at, or set the limit. A device already attached may keep its connection "
-        "until it reconnects; add --cycle to power-cycle the port afterwards.",
+        "at, or set the limit. Lowering the limit applies at once. Raising it to "
+        "usb3 doesn't bring back a device that dropped to USB 2: add --cycle to "
+        "power-cycle the port afterwards.",
     )
     _add_serial_number(speed)
     speed.add_argument("port", type=int, help="port number, from 0")
@@ -161,6 +162,15 @@ def _port_speed(args: argparse.Namespace) -> int:
                 if args.cycle:
                     hub.power_cycle(args.port)
                     print(f"Power-cycled port {args.port}.")
+                elif args.speed == "usb3" and (
+                    hub.connected_speed(args.port) == "usb2"
+                ):
+                    print(
+                        f"el-devices: the device on port {args.port} is still at "
+                        "USB 2. If it's a USB 3 device, power-cycle the port to "
+                        f"reconnect it: el-devices hub speed {args.port} usb3 --cycle",
+                        file=sys.stderr,
+                    )
             print(f"  {_port_line(hub, args.port)}")
         except KeyError as exc:
             print(f"el-devices: {exc.args[0]}", file=sys.stderr)

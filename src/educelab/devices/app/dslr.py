@@ -77,10 +77,14 @@ def run(args: argparse.Namespace) -> int:
 
 def _describe(setting: "Setting") -> str:
     value = setting.value
-    shown = f"{value:.4g}" if isinstance(value, float) else repr(value)
-    text = f"{setting.name} = {shown}"
-    if setting.unit:
-        text += f" {setting.unit}"
+    if value is None:
+        # e.g. exposure_time with the shutter at Bulb
+        text = f"{setting.name} = no number"
+    else:
+        shown = f"{value:.4g}" if isinstance(value, float) else repr(value)
+        text = f"{setting.name} = {shown}"
+        if setting.unit:
+            text += f" {setting.unit}"
     if setting.read_only:
         text += " (read-only)"
     elif setting.choices is not None:

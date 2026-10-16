@@ -78,9 +78,11 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
 - `iso` and `aperture` are canonical as well as `exposure_time` (from `iso` and
   `f-number`/`aperture`), since the guide defines them and Nikon's `iso` widget would
   otherwise take the canonical name with string values.
-- Canonical choices are the native choices that parse as numbers. When the camera is set
-  to a value that doesn't (`Bulb`, `Auto`), the canonical setting is absent and the
-  widget is listed under its native name.
+- Canonical choices are the native choices that parse as numbers. A canonical setting is
+  listed whenever the camera has its widget; while the camera is at a value that isn't a
+  number (`Bulb`, `Auto` ISO), its `value` is `None`, and writing any choice leaves that
+  state. The non-numeric values themselves can't be written through the driver. (Revised
+  2026-10-16 after `Setting.value` allowed `None` on main.)
 - `close()` turns live view off if the driver turned it on (the prototype left it on).
 - Keep-alive skips an interval when the device lock is held as well as during a capture,
   and logs a failed ping instead of emitting `Disconnected`.
@@ -93,7 +95,7 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
   - Approved 2026-10-15, after CI on PR #4 passed all 14 jobs.
   - Decided (2026-10-15): pause live view around aperture reads and writes only if Phase 5 shows the Z7 II restricts aperture choices while live view is on (Task 5.6).
   - Decided (2026-10-15): after 3 consecutive failed keep-alive pings, emit `Disconnected` to listeners, still logging each failure.
-  - Pending: how canonical settings behave while the camera is at a non-numeric value (`Bulb`, `Auto`). Left as is (absent, with the widget under its native name) until the maintainer decides.
+  - Pending at the time: how canonical settings behave at a non-numeric value. Decided after Phase 4; see the Phase 4 approval.
 
 ## Phase 4: Focus drive
 
@@ -147,7 +149,8 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
 
 ## Waiting on main
 
-- [ ] After `Setting.value` allows `None` on main: rebase, then make canonical settings always present with `value=None` at non-numeric camera values (Phase 4 decision).
+- [x] After `Setting.value` allows `None` on main: rebase, then make canonical settings always present with `value=None` at non-numeric camera values (Phase 4 decision).
+  - Rebased onto main at `6dbb066` (PRs #6 and #7) on 2026-10-16 with no conflicts. #6 changes only `FrameCamera`, which this driver doesn't offer. The contract suite also runs with the fake at Bulb and Auto ISO.
 - [ ] After the Foldio track's guide wording is on main: add `camera.focus` to `docs/guide.md`.
 
 ## Final Verification

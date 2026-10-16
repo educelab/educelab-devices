@@ -619,13 +619,15 @@ class _Canonical:
         self, widgets: Mapping[str, Widget]
     ) -> tuple[Setting, Widget, dict[SettingValue, str]] | None:
         """The setting, its widget, and the native text of each choice, or
-        ``None`` if the camera has no such widget or its value isn't a number."""
+        ``None`` if the camera has no such widget.
+
+        Choices that aren't numbers are left out. While the camera is at one,
+        the setting's value is ``None``, and writing any choice leaves it.
+        """
         widget = next((widgets[w] for w in self.widgets if w in widgets), None)
         if widget is None or widget.kind not in ("radio", "menu"):
             return None
         value = self.parse(str(widget.value))
-        if value is None:
-            return None
         natives: dict[SettingValue, str] = {}
         for text in widget.choices:
             parsed = self.parse(text)
@@ -641,9 +643,9 @@ class _Canonical:
         return setting, widget, natives
 
 
-# Shutter speeds that aren't durations (Bulb, Time) aren't exposure times.
-# When the camera is set to one, exposure_time is absent and the widget is
-# listed under its native name instead (docs/hardware/gphoto2-cameras.md#settings).
+# Shutter speeds that aren't durations (Bulb, Time) and Auto ISO aren't
+# numbers, so they aren't choices; at one, the value is None
+# (docs/hardware/gphoto2-cameras.md#settings).
 _CANONICAL = (
     _Canonical(EXPOSURE_TIME, ("shutterspeed", "shutterspeed2"), shutter_seconds),
     _Canonical(ISO, ("iso",), _iso),

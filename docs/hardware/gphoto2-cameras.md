@@ -145,8 +145,9 @@ guide). How long a full read takes on the Z7 II is **unknown**; measure it in Ph
   one with `Setting.nearest()`. Writes send the camera's own text for the choice.
 - **Values that aren't numbers** (`Bulb` and `Time` shutter speeds, an `Auto` ISO on
   some bodies) are left out of the canonical choices. While the camera is set to one,
-  the canonical setting is absent and the widget is listed under its native name; set a
-  numeric value there first. The shutter speed texts above come from libgphoto2's PTP
+  the canonical setting is still listed with `value` `None`; writing any of its choices
+  takes the camera out of that state. The driver can't put the camera into Bulb or Auto;
+  do that on the camera. The shutter speed texts above come from libgphoto2's PTP
   driver; what the Z7 II actually lists is **unknown** until Phase 5 records it.
 - **Native settings**: every other widget, by libgphoto2's name (e.g. `imagequality`,
   `whitebalance`). Radio and menu widgets are strings with `choices`, ranges are floats

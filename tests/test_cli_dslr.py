@@ -1,3 +1,5 @@
+import dataclasses
+
 import pytest
 
 from educelab.devices.app.cli import main
@@ -105,3 +107,13 @@ def test_missing_sdk_says_how_to_install_it(monkeypatch, capsys):
     monkeypatch.setattr(gphoto2, "_default_library", missing)
     assert main(["dslr"]) == 1
     assert "pip install" in capsys.readouterr().err
+
+
+def test_lists_a_setting_with_no_value(attach, capsys):
+    widgets = [
+        dataclasses.replace(w, value="Bulb") if w.name == "shutterspeed" else w
+        for w in NIKON_WIDGETS
+    ]
+    attach(FakeCamera(widgets=widgets))
+    assert main(["dslr"]) == 0
+    assert "exposure_time = no number (8 choices)" in capsys.readouterr().out

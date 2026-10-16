@@ -111,6 +111,10 @@ _ARRIVAL_TOLERANCE_DEG = 1
 # Open questions), so longer turns are split into legs of one revolution.
 _MAX_LEG_DEG = 360
 
+# What Stage passes the hooks for timeout=None. The base rejects timeouts <= 0,
+# so no caller's value can collide with it.
+_DEFAULT_TIMEOUT = -1.0
+
 # How often a move waiting for its OK checks for stop().
 _POLL_S = 0.05
 
@@ -581,8 +585,9 @@ class Foldio360(Stage):
     # -- stage hooks --------------------------------------------------------------
 
     def _timeout(self, timeout: float | None) -> float:
-        # None reaches the hooks as inf, meaning "derive from the timing model".
-        return math.inf if timeout is None else super()._timeout(timeout)
+        # None reaches the hooks as a sentinel meaning "derive from the timing
+        # model"; math.inf still means "no limit", as the guide promises.
+        return _DEFAULT_TIMEOUT if timeout is None else super()._timeout(timeout)
 
     def _move_to(self, targets: Mapping[str, float], timeout: float) -> None:
         self._check_idle()
@@ -810,13 +815,16 @@ class Foldio360(Stage):
 
     def _turn(self, degrees: int, start: int, timeout: float) -> None:
         """Turn by a signed whole-degree offset, in legs of at most 360°."""
-        deadline = None if math.isinf(timeout) else time.monotonic() + timeout
+        default = timeout == _DEFAULT_TIMEOUT
+        deadline = time.monotonic() + timeout
         remaining = degrees
         position = start
         while remaining:
             leg = max(-_MAX_LEG_DEG, min(_MAX_LEG_DEG, remaining))
-            if deadline is None:
+            if default:
                 limit = watchdog_seconds(leg, self._speed_level)
+            elif math.isinf(timeout):
+                limit = math.inf
             else:
                 limit = deadline - time.monotonic()
                 if limit <= 0:

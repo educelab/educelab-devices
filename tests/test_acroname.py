@@ -18,7 +18,7 @@ from educelab.devices.errors import (
     NotConnected,
 )
 from educelab.devices.hubs import acroname
-from educelab.devices.hubs.acroname import AcronameHub
+from educelab.devices.hubs.acroname import AcronameHub, PortSpeed
 from fakes.brainstem import FakeBrainstem, FakeUnit
 
 
@@ -209,7 +209,7 @@ def test_power_cycle_disables_waits_and_enables(hub, unit, monkeypatch):
     sleeps = []
     monkeypatch.setattr(time, "sleep", sleeps.append)
     hub.power_cycle(5, off_time=2.5)
-    assert [c for c in unit.calls if c[1] == (5,)] == [
+    assert [c for c in unit.calls if c[1] == (5,) and c[0].startswith("set")] == [
         ("setPortDisable", (5,)),
         ("setPortEnable", (5,)),
     ]
@@ -309,3 +309,143 @@ def test_hub_found_without_serial_number_is_the_one_reopened(sdk, unit):
     sdk.units.insert(0, FakeUnit(OTHER_SERIAL))
     with hub:
         assert hub.info.serial_number == "0x1234ABCD"
+
+
+# Port speed.
+
+USB2 = fakes.brainstem.USB2_DATA_ENABLED
+USB3 = fakes.brainstem.USB3_DATA_ENABLED
+VBUS = fakes.brainstem.VBUS_ENABLED
+
+
+def lines(unit, port):
+    return unit.port_state[port] & (VBUS | USB2 | USB3)
+
+
+def test_ports_default_to_usb3(hub):
+    assert all(hub.port_speed(p) is PortSpeed.USB3 for p in hub.ports)
+
+
+@pytest.mark.parametrize(
+    ("speed", "expected"),
+    [
+        (PortSpeed.USB2, VBUS | USB2),
+        (PortSpeed.DATA_OFF, VBUS),
+        (PortSpeed.USB3, VBUS | USB2 | USB3),
+        ("usb2", VBUS | USB2),
+    ],
+)
+def test_set_port_speed_switches_data_lines_only(hub, unit, speed, expected):
+    hub.set_port_speed(2, speed)
+    assert lines(unit, 2) == expected
+    assert hub.port_speed(2) == PortSpeed(speed)
+    assert not any(name.startswith(("setPort", "setPower")) for name, _ in unit.calls)
+
+
+def test_restoring_usb3_reenables_both_data_lines(hub, unit):
+    hub.set_port_speed(2, PortSpeed.DATA_OFF)
+    hub.set_port_speed(2, PortSpeed.USB3)
+    assert lines(unit, 2) == VBUS | USB2 | USB3
+
+
+@pytest.mark.parametrize(
+    ("speed", "expected"),
+    [
+        (PortSpeed.USB2, VBUS | USB2),
+        (PortSpeed.DATA_OFF, VBUS),
+        (PortSpeed.USB3, VBUS | USB2 | USB3),
+    ],
+)
+def test_power_on_keeps_the_port_speed(hub, unit, speed, expected, monkeypatch):
+    monkeypatch.setattr(time, "sleep", lambda seconds: None)
+    hub.set_port_speed(4, speed)
+    hub.power_off(4)
+    assert lines(unit, 4) == 0
+    hub.power_on(4)
+    assert lines(unit, 4) == expected
+    hub.power_cycle(4)
+    assert lines(unit, 4) == expected
+
+
+def test_speed_set_on_an_unpowered_port_applies_at_power_on(hub, unit):
+    hub.power_off(1)
+    hub.set_port_speed(1, PortSpeed.USB2)
+    assert lines(unit, 1) == 0
+    assert hub.port_speed(1) is PortSpeed.USB2
+    hub.power_on(1)
+    assert lines(unit, 1) == VBUS | USB2
+
+
+@pytest.mark.parametrize(
+    ("state", "speed"),
+    [
+        (VBUS | USB2 | USB3, PortSpeed.USB3),
+        (VBUS | USB2, PortSpeed.USB2),
+        (VBUS, PortSpeed.DATA_OFF),
+        (0, PortSpeed.USB3),
+    ],
+)
+def test_open_reads_each_ports_speed_from_the_hub(sdk, unit, state, speed):
+    unit.port_state[5] = state
+    with AcronameHub(SERIAL, sdk=sdk) as hub:
+        assert hub.port_speed(5) is speed
+        hub.power_on(5)
+        assert hub.port_speed(5) is speed
+
+
+def test_reopening_forgets_speeds_set_while_off(sdk, unit):
+    with AcronameHub(SERIAL, sdk=sdk) as hub:
+        hub.power_off(3)
+        hub.set_port_speed(3, PortSpeed.USB2)
+    with AcronameHub(SERIAL, sdk=sdk) as hub:
+        assert hub.port_speed(3) is PortSpeed.USB3
+
+
+@pytest.mark.parametrize(
+    ("device", "speed", "connected"),
+    [
+        ("usb3", PortSpeed.USB3, PortSpeed.USB3),
+        ("usb3", PortSpeed.USB2, PortSpeed.USB2),
+        ("usb3", PortSpeed.DATA_OFF, None),
+        ("usb2", PortSpeed.USB3, PortSpeed.USB2),
+    ],
+)
+def test_connected_speed_reads_the_negotiated_speed(
+    hub, unit, device, speed, connected
+):
+    unit.devices[6] = device
+    hub.set_port_speed(6, speed)
+    assert hub.connected_speed(6) == connected
+
+
+def test_connected_speed_with_nothing_attached_is_none(hub):
+    assert hub.connected_speed(0) is None
+
+
+def test_unknown_speed_raises_value_error(hub, unit):
+    with pytest.raises(ValueError):
+        hub.set_port_speed(0, "usb4")
+    assert lines(unit, 0) == VBUS | USB2 | USB3
+
+
+@pytest.mark.parametrize("method", ["port_speed", "connected_speed"])
+def test_speed_methods_reject_unknown_ports(hub, method):
+    with pytest.raises(KeyError):
+        getattr(hub, method)(8)
+
+
+def test_set_port_speed_rejects_unknown_ports(hub):
+    with pytest.raises(KeyError):
+        hub.set_port_speed(8, PortSpeed.USB2)
+
+
+def test_speed_methods_need_an_open_hub(sdk):
+    with pytest.raises(NotConnected):
+        AcronameHub(SERIAL, sdk=sdk).port_speed(0)
+
+
+def test_failed_speed_change_is_a_device_error(hub, unit):
+    unit.failures["setSuperSpeedDataDisable"] = fakes.brainstem.TIMEOUT
+    with pytest.raises(DeviceTimeout, match="port 2"):
+        hub.set_port_speed(2, PortSpeed.USB2)
+    assert hub.port_speed(2) is PortSpeed.USB3

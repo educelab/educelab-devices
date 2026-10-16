@@ -6,6 +6,7 @@ See ``docs/hardware/acroname-usbhub3p.md``.
 import logging
 import math
 import numbers
+from enum import StrEnum
 from types import ModuleType
 from typing import Any
 
@@ -22,7 +23,7 @@ from educelab.devices.errors import (
 from educelab.devices.hubs.base import Hub
 from educelab.devices.settings import Setting
 
-__all__ = ["AcronameHub"]
+__all__ = ["AcronameHub", "PortSpeed"]
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +32,12 @@ MODEL = "USBHub3p"
 
 # brainstem.stem.USBHub3p.NUMBER_OF_DOWNSTREAM_USB, numbered from 0.
 DOWNSTREAM_PORTS = 8
-# brainstem.stem.USBHub3p.aUSBHUB3P_USB_VBUS_ENABLED: port state bit for power.
+# Port state bits, from the aUSBHUB3P_* constants on brainstem.stem.USBHub3p.
 VBUS_ENABLED_BIT = 0
+USB2_DATA_ENABLED_BIT = 1
+USB3_DATA_ENABLED_BIT = 3
+SPEED_USB2_BIT = 11
+SPEED_USB3_BIT = 12
 # The SDK documents the enumeration delay in 100 ms increments (assumed; see
 # HARDWARE_DOC).
 ENUMERATION_DELAY_STEP_S = 0.1
@@ -91,6 +96,17 @@ _DESCRIPTIONS = (
 )
 
 
+class PortSpeed(StrEnum):
+    """The fastest USB data speed a port allows."""
+
+    USB3 = "usb3"
+    """SuperSpeed and Hi-Speed data lines enabled. The hub's default."""
+    USB2 = "usb2"
+    """Hi-Speed data lines only, so a USB 3 device connects at USB 2."""
+    DATA_OFF = "data-off"
+    """No data lines: the port supplies power only, e.g. for charging."""
+
+
 def load_sdk() -> ModuleType:
     """Import the BrainStem SDK.
 
@@ -140,6 +156,7 @@ class AcronameHub(Hub):
         self._sdk = sdk
         self._stem: Any = None
         self._firmware_version: str | None = None
+        self._speeds: dict[int, PortSpeed] = {}
 
     @classmethod
     def discover(cls) -> list[DeviceInfo]:
@@ -195,6 +212,56 @@ class AcronameHub(Hub):
             "set the enumeration delay", self._usb.setEnumerationDelay(delay_ms)
         )
 
+    @synchronized
+    def set_port_speed(self, port: int, speed: PortSpeed | str) -> None:
+        """Limit ``port`` to ``speed``, switching only its data lines.
+
+        A device already attached may keep its current connection until it
+        re-enumerates; call `power_cycle()` on the port to make it reconnect at
+        the new speed. The limit lasts while the hub is open, including across
+        `power_off()` and `power_on()`, and isn't saved to the hub's flash. On
+        an unpowered port it applies at the next `power_on()`.
+
+        Raises:
+            KeyError: The hub has no such port.
+            ValueError: ``speed`` isn't a `PortSpeed`.
+        """
+        port = self._port(port)
+        speed = PortSpeed(speed)
+        if self._is_powered(port):
+            self._apply_speed(port, speed)
+        self._speeds[port] = speed
+
+    @synchronized
+    def port_speed(self, port: int) -> PortSpeed:
+        """The fastest speed ``port`` allows.
+
+        This is the limit set since `open()`, or what the hub reported at
+        `open()`. A port that was unpowered at `open()` reports `PortSpeed.USB3`,
+        since its data lines say nothing about its limit (see the hardware doc).
+
+        Raises:
+            KeyError: The hub has no such port.
+        """
+        return self._speeds[self._port(port)]
+
+    @synchronized
+    def connected_speed(self, port: int) -> PortSpeed | None:
+        """The speed the device on ``port`` connected at, or ``None`` if none has.
+
+        Low- and full-speed devices report `PortSpeed.USB2`.
+
+        Raises:
+            KeyError: The hub has no such port.
+        """
+        port = self._port(port)
+        state = self._get(f"read port {port}", self._usb.getPortState, port)
+        if state & (1 << SPEED_USB3_BIT):
+            return PortSpeed.USB3
+        if state & (1 << SPEED_USB2_BIT):
+            return PortSpeed.USB2
+        return None
+
     def __repr__(self) -> str:
         serial = _format_or_none(self._serial_number)
         return f"<AcronameHub {serial}>" if serial else "<AcronameHub>"
@@ -219,6 +286,7 @@ class AcronameHub(Hub):
             self._firmware_version = ".".join(
                 str(n) for n in sdk.version.unpack_version(packed)
             )
+            self._speeds = {port: self._read_speed(port) for port in self.ports}
         except BaseException:
             try:
                 self._disconnect()
@@ -234,6 +302,7 @@ class AcronameHub(Hub):
     def _disconnect(self) -> None:
         stem, self._stem = self._stem, None
         self._firmware_version = None
+        self._speeds = {}
         if stem is None:
             return
         code = stem.disconnect()
@@ -245,10 +314,45 @@ class AcronameHub(Hub):
 
     def _set_power(self, port: int, on: bool) -> None:
         logger.debug("%r port %d %s", self, port, "on" if on else "off")
-        if on:
-            self._check(f"enable port {port}", self._usb.setPortEnable(port))
-        else:
+        if not on:
             self._check(f"disable port {port}", self._usb.setPortDisable(port))
+            return
+        speed = self._speeds[port]
+        if speed is PortSpeed.USB3:
+            self._check(f"enable port {port}", self._usb.setPortEnable(port))
+            return
+        # A full enable would turn on every data line and lift the limit.
+        self._check(f"power port {port}", self._usb.setPowerEnable(port))
+        self._apply_speed(port, speed)
+
+    def _apply_speed(self, port: int, speed: PortSpeed) -> None:
+        logger.debug("%r port %d data lines for %s", self, port, speed)
+        usb = self._usb
+        action = f"set port {port} to {speed}"
+        # Disable before enabling, so the port never briefly allows more.
+        if speed is not PortSpeed.USB3:
+            self._check(action, usb.setSuperSpeedDataDisable(port))
+        if speed is PortSpeed.DATA_OFF:
+            self._check(action, usb.setHiSpeedDataDisable(port))
+        else:
+            self._check(action, usb.setHiSpeedDataEnable(port))
+        if speed is PortSpeed.USB3:
+            self._check(action, usb.setSuperSpeedDataEnable(port))
+
+    def _read_speed(self, port: int) -> PortSpeed:
+        state = self._get(f"read port {port}", self._usb.getPortState, port)
+        if not state & (1 << VBUS_ENABLED_BIT):
+            # Powering a port off clears its data lines too.
+            return PortSpeed.USB3
+        usb2 = state & (1 << USB2_DATA_ENABLED_BIT)
+        usb3 = state & (1 << USB3_DATA_ENABLED_BIT)
+        if usb2 and not usb3:
+            return PortSpeed.USB2
+        if not usb2 and not usb3:
+            return PortSpeed.DATA_OFF
+        if not usb2:
+            logger.debug("%r port %d has SuperSpeed lines only", self, port)
+        return PortSpeed.USB3
 
     def _is_powered(self, port: int) -> bool:
         state = self._get(f"read port {port}", self._usb.getPortState, port)

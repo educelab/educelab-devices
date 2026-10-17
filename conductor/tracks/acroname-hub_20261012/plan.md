@@ -139,7 +139,15 @@ hub.connected_speed(port) -> PortSpeed | None   # what the attached device
       still at USB 2.
     - The fake now models the fallback.
 
-    Reconnect after a power cycle: re-run pending.
+  - Reconnect tests (`-k "reconnects or raising_to_usb3"`), 2026-10-16: 3 passed
+    in 31.46 s.
+    - After `power_cycle()` (default 1 s off time), the device reconnected at USB 3
+      in 3.4–3.6 s, and at USB 2 in 3.8 s with a USB2 limit, so the limit survives
+      the cycle.
+    - The precondition's power-cycle recovery worked: the device was at USB 2 after
+      3.1 s and at USB 3 3.6 s after the cycle.
+    - Raising to USB3 without a cycle again left the device at USB 2, for 5.1 s.
+    - Task 3.4 is done.
 
 ### Verification
 

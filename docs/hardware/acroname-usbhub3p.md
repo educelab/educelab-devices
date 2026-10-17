@@ -203,11 +203,14 @@ about 245 mA, 2026-10-16 (hardware tests):
   is that a USB 3 device retries SuperSpeed only for a short while after losing it,
   and then waits for a power cycle (**assumed**, from the USB 3 spec's SS.Disabled
   state). Don't rely on it: power-cycle after raising to `USB3`.
+- **A power cycle brings it back.** After `power_cycle()`, the device reconnected at
+  USB 3 in 3.4–3.6 s, including from a fallen-back USB 2 connection with USB 3
+  already re-enabled. A port limited to `USB2` reconnected at USB 2 in 3.8 s, so the
+  limit survives the cycle. Times are counted from when `power_cycle()` returns,
+  after the default 1 s off time (`Hub.power_cycle_off_time`). **Verified** on the
+  same device and port, 2026-10-16.
 
 **Unknown**:
-- how long a device takes to reconnect after the driver's `power_cycle()`. Not yet
-  measured, because the 2026-10-16 run's reconnect tests didn't get past their
-  precondition (see [Manual check](#manual-check));
 - whether data-line settings survive a hub reset or power loss;
 - whether the hub accepts data-line changes on an unpowered port (the driver
   avoids them).
@@ -231,8 +234,10 @@ the maximum is.
 - **Power-cycle off time**: the `Hub` default of 1 s, the same as `pgs-scan`'s reset
   script. It's a convention, not a measured requirement; a device that holds charge
   may need longer.
-- **Re-enumeration**: how long an attached device takes to come back after
-  `power_on()` depends on the device and the host, not on the hub. Not measured.
+- **Re-enumeration**: one USB 3 device on port 7 of `0x1A43352C` reached the hub's
+  "connected" state 3.4–3.8 s after `power_cycle()` returned, with the default
+  1 s off time (**verified**, 2026-10-16). That's when the hub reports the link; the
+  host may take longer to enumerate. Expect it to vary with the device.
 
 ## State and recovery
 
@@ -346,7 +351,7 @@ The maintainer re-ran the 17 tests with a USB 3 device on port 7,
   for 15.1 s, drawing about 245 mA. That's the finding above, not a bug.
 - Errors: both `test_device_reconnects_after_a_power_cycle` cases. The failed test
   left the device at USB 2, and the `usb3_device` precondition waited 15.1 s for USB 3
-  before giving up. So reconnecting after a power cycle is still untested.
+  before giving up. Reconnecting after a power cycle was tested in the next run (below).
 
 Since then:
 - The failed test became `test_raising_to_usb3_without_a_power_cycle_leaves_the_device_at_usb2`.
@@ -356,6 +361,22 @@ Since then:
   device is still at USB 2 after that, it fails saying the device may not be USB 3,
   or may be on a USB 2 cable.
 
-Not yet run: the reconnect tests, and the checks the tests don't cover
+#### Reconnect tests
+
+`-k "reconnects or raising_to_usb3"` with the same device on port 7: 3 passed in
+31.46 s.
+
+- `test_raising_to_usb3_without_a_power_cycle_leaves_the_device_at_usb2`:
+  - The precondition found the device still at USB 2 from the earlier run after
+    3.1 s, power-cycled, and saw USB 3 3.6 s later. So the recovery path works on
+    hardware.
+  - The test limited the port to USB 2 (0.8 s), raised it to USB 3 without a cycle,
+    and the device stayed at USB 2 for the 5.1 s watched.
+  - Cleanup power-cycled, and the device was at USB 3 in 3.6 s.
+- `test_device_reconnects_after_a_power_cycle[usb3]`: reconnected at USB 3 in 3.4 s.
+- `test_device_reconnects_after_a_power_cycle[usb2]`: limited to USB 2 (0.8 s), then
+  reconnected at USB 2 in 3.8 s.
+
+Not yet run: the checks the tests don't cover
 (whether the enumeration delay takes effect without a save, port numbering on the
 case, behavior after a hub power loss).

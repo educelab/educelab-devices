@@ -168,23 +168,9 @@ setting `pixel_format` ends acquisition, changes the format, and begins again.
 
 ### Settings
 
-`open()` changes only what acquisition needs: `StreamBufferHandlingMode`,
-`AcquisitionMode`, `TriggerMode`, and `PixelFormat` if the current format is one the driver
-can't shape into arrays. It never changes exposure, gain, or the throughput limit, so
-those keep whatever the camera last had (the first rig run found gain at 48 dB). A
-consumer that needs known values sets them after opening.
-
-| Setting | Node | Notes |
-|---|---|---|
-| `exposure_time` | `ExposureTime` (µs) | Seconds. Read-only while `ExposureAuto` isn't `Off` |
-| `gain` | `Gain` (dB) | Read-only while `GainAuto` isn't `Off` |
-| `ExposureAuto`, `GainAuto` | same | `Off` or `Continuous`; `Once` is left out because it reverts to `Off` by itself |
-| `pixel_format` | `PixelFormat` | Mono8, Mono16, RGB8, 8/16-bit Bayer; pauses acquisition to change |
-| `throughput_limit` | `DeviceLinkThroughputLimit` | Spinnaker only. MB/s, see below |
-| `current_throughput` | `DeviceLinkCurrentThroughput` | Read-only, MB/s |
-| `resulting_frame_rate` | `AcquisitionResultingFrameRate` | Read-only, frames/s |
-
-Each is listed only if the camera has a readable node.
+Every setting, its node, and its unit are in the table under
+[Differences from PySpin and SpinView](#differences-from-pyspin-and-spinview). Each is
+listed only if the camera has a readable node.
 
 **`throughput_limit`** caps the bandwidth the camera streams over USB, so several
 cameras can share one link (see USB topology under Timing). In SDK 4.4.0 the node is a
@@ -279,6 +265,83 @@ makes each capture proportionally slower.
 pixels right by 8, and subsamples so the longest side is at most 1280 pixels. That
 assumes 16-bit formats use the full range (**unknown**: Blackfly S sensors are 10–12
 bit, and whether `Mono16` data is left-aligned decides how dark previews look).
+
+## Differences from PySpin and SpinView
+
+The driver is not a thin wrapper. This section lists where it differs from driving the
+camera through PySpin or SpinView. If you need raw node access, or something listed under
+Not exposed, use PySpin directly; the driver doesn't hide the camera from other programs
+once it is closed.
+
+### Setting names and units
+
+| Driver setting | Node | Driver unit → node unit | Differences |
+|---|---|---|---|
+| `exposure_time` | `ExposureTime` | s → µs (× 10^6) | Read-only while `ExposureAuto` isn't `Off` |
+| `gain` | `Gain` | dB → dB | Read-only while `GainAuto` isn't `Off` |
+| `ExposureAuto`, `GainAuto` | same | symbol → symbol | Choices are `Off` and `Continuous`; `Once` is left out |
+| `pixel_format` | `PixelFormat` | symbol → symbol | Only Mono8, Mono16, RGB8 and 8/16-bit Bayer; changing it pauses acquisition |
+| `throughput_limit` | `DeviceLinkThroughputLimit` | MB/s → bytes/s (× 10^6; bytes assumed) | Reads `None` while `DeviceLinkThroughputLimitMode` is Off; writing sets the mode On first ([Settings](#settings)) |
+| `current_throughput` | `DeviceLinkCurrentThroughput` | MB/s ← bytes/s (÷ 10^6) | Read-only |
+| `resulting_frame_rate` | `AcquisitionResultingFrameRate` | Hz → Hz | Read-only |
+
+`exposure_time` and `gain` are canonical names shared by every camera. The other three
+are Spinnaker-only names, with units chosen so they read alike, not the native node names
+(decided 2026-10-16).
+
+### Behaviour
+
+- **`open()` changes the camera:** `StreamBufferHandlingMode=NewestOnly`,
+  `AcquisitionMode=Continuous`, `TriggerMode=Off`, and `PixelFormat` if the current
+  format isn't one of the driver's (RGB8 if offered, else the first supported). It never
+  changes exposure, gain, or the throughput limit; they keep what the camera last had.
+- **Always acquiring:** `BeginAcquisition()` at `open()`, `EndAcquisition()` at `close()`,
+  free-running with newest-only buffering ([Acquisition](#acquisition)).
+- **Pauses for some writes:** `pixel_format`, and `throughput_limit` when its node isn't
+  writable while acquiring, end acquisition, write, and begin again.
+- **Validated, snapped and clamped:** values are checked against the setting's range
+  before anything is sent (`ValueError`, `TypeError`). Inside the range, `throughput_limit`
+  snaps to the node's increment, and floats are clamped to the node's limits after unit
+  conversion, where GenICam would reject an off-increment or out-of-range value.
+- **Host-time timestamps:** `Frame.timestamp` is the device timestamp plus a measured
+  offset, read from `Timestamp` or else `TimestampLatchValue`, not the raw counter, which
+  is in metadata as `device_timestamp_ns` ([Timestamps](#timestamps)).
+- **`not_before`:** stale frames are dropped and the next one taken, re-measuring the
+  offset every 5 stale frames, until the timeout ([Capturing a frame](#capturing-a-frame)).
+- **Incomplete frames dropped,** except `SPINNAKER_IMAGE_STATUS_MISSING_TRAILER`, which is
+  accepted and flagged as `missing_trailer`.
+- **Pixels copied,** and every image buffer released, before a frame is returned.
+  `preview_frame()` is 8-bit and subsampled to at most 1280 px.
+- **Errors:** every `SpinnakerException` becomes a `DeviceError` with no `__cause__` or
+  `__context__` ([Hazards](#hazards)):
+
+  | PySpin | Driver |
+  |---|---|
+  | `SPINNAKER_ERR_TIMEOUT` (-1011) | `DeviceTimeout` |
+  | `SPINNAKER_ERR_ACCESS_DENIED` (-1005) from `Init()` | `DeviceBusy` |
+  | any error writing a setting | `CommandRejected` |
+  | no camera with the serial | `DeviceNotFound`, listing the attached serials |
+  | anything else | `DeviceError` |
+
+- **One `System` per process,** shared by every handle and camera, released by the last
+  to close ([Transport](#transport-the-pyspin-system)).
+- **Minimum SDK:** 4.4.0, checked at `open()`; older raises `ImportError`
+  ([Versions](#versions)).
+
+### Not exposed
+
+- Frame rate: `AcquisitionFrameRateEnable`, `AcquisitionFrameRate`.
+- Turning `DeviceLinkThroughputLimitMode` off (set the maximum limit instead).
+- `ExposureAuto`/`GainAuto` `Once`, auto-exposure and auto-gain limits.
+- Triggering: `TriggerMode`, `TriggerSource`, `TriggerSoftware`, hardware lines. The
+  driver forces `TriggerMode=Off`.
+- Image geometry and processing: `Width`, `Height`, offsets, binning, black level, gamma,
+  white balance, PySpin's `ImageProcessor` conversions, and other pixel formats such as
+  packed 12-bit.
+- Buffer handling other than newest-only, single-frame or multi-frame acquisition,
+  chunk data, user sets, events and callbacks, and GigE settings.
+- Raw timestamps on demand (`TimestampLatch`); only the offset is exposed, as
+  `timestamp_offset` and `measure_timestamp_offset()`.
 
 ## Timing
 

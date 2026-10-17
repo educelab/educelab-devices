@@ -211,6 +211,8 @@ on every camera. Other settings use the camera's own names. Gain and ISO are bot
 canonical but are not interchangeable: converting between them needs a camera's base ISO,
 so each camera exposes whichever it has natively. Features only one camera has so far,
 such as binning or a DSLR's image size, also use native names.
+A driver may instead give a device-specific feature a descriptive name and unit, if its
+hardware doc maps the name to the native node and gives the conversion.
 
 Numeric arguments can be Python numbers or numpy scalars (e.g. values from `np.linspace`).
 

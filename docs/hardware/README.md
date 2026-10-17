@@ -16,7 +16,7 @@ hardware doc reflects what the change taught us (workflow.md).
 | Nikon Z7 II (gphoto2) | File camera, Focus drive | planned (`gphoto2-camera` track) | not yet written |
 | XLC1, XLC2 | Light | planned (`xlc-xcarve` track) | not yet written |
 | X-Carve (GRBL) | Stage | planned (`xlc-xcarve` track) | not yet written |
-| Spinnaker cameras | Frame camera | planned (`spinnaker-camera` track) | not yet written |
+| Spinnaker cameras | Frame camera | in progress (`spinnaker-camera` track) | [spinnaker.md](spinnaker.md) |
 | Acroname USB hub | Hub | planned (`acroname-hub` track) | not yet written |
 
 Add a row when a doc is created, and link it from the Doc column.

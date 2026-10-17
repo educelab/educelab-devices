@@ -24,6 +24,8 @@ dependencies = ["numpy>=1.26"]
 
 # Each driver track adds its vendor SDK as an extra named for its backend.
 [project.optional-dependencies]
+acroname = ["brainstem>=2.12"]
+all = ["educelab-devices[acroname]"]
 
 [project.scripts]
 el-devices = "educelab.devices.app.cli:main"

@@ -53,7 +53,8 @@ A small driver: fake brainstem seam, driver, then docs, CLI, and hardware check.
 
 ### Verification
 
-- [ ] Maintainer confirms port power-cycling on a hub.
+- [x] Maintainer confirms port power-cycling on a hub.
+  - Approved 2026-10-17, after the 7 hardware tests passed and a device reconnected 3.4–3.8 s after `power_cycle()`.
 
 ## Phase 3: Port speed
 
@@ -151,8 +152,9 @@ hub.connected_speed(port) -> PortSpeed | None   # what the attached device
 
 ### Verification
 
-- [ ] Maintainer confirms a USB 3 device enumerates at USB 2 when limited, at USB 3
-  after restoring, and not at all with data off.
+- [x] Maintainer confirms a USB 3 device enumerates at USB 2 when limited, at USB 3
+  after restoring and power-cycling, and not at all with data off.
+  - Approved 2026-10-17. Raising to USB 3 needs a power cycle; the docs and CLI say so.
 
 ## Final Verification
 

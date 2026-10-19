@@ -168,3 +168,38 @@ def test_throughput_limit_on_a_camera_without_one_fails(monkeypatch, capsys):
     assert main(["spinnaker", "--throughput-limit", "80"]) == 1
     assert "has no DeviceLinkThroughputLimit" in capsys.readouterr().err
     assert pyspin.system.instances == 0
+
+
+@pytest.mark.parametrize(
+    "option",
+    [["--exposure", "60"], ["--gain", "99"], ["--throughput-limit", "900"]],
+)
+def test_out_of_range_settings_fail_with_the_range(pyspin, capsys, option):
+    assert main(["spinnaker", "--serial", MONO, "--frames", "1", *option]) == 1
+    captured = capsys.readouterr()
+    lines = captured.err.strip().splitlines()
+    assert len(lines) == 1
+    assert lines[0].startswith(f"el-devices: {MONO}: ")
+    assert "is above" in lines[0]
+    assert "(valid: " in lines[0]
+    assert "Traceback" not in captured.err
+    assert pyspin.system.instances == 0
+
+
+def test_exposure_min_is_read_after_the_pixel_format(pyspin, capsys, monkeypatch):
+    from educelab.devices.cameras import PIXEL_FORMAT
+    from educelab.devices.cameras.spinnaker import SpinnakerCamera
+
+    fake = pyspin.system.cameras[0]
+    original = SpinnakerCamera.set_setting
+
+    def set_setting(self, name, value):
+        original(self, name, value)
+        if name == PIXEL_FORMAT and value == "Mono16":
+            fake.nodes["ExposureTime"].minimum = 25.0
+
+    monkeypatch.setattr(SpinnakerCamera, "set_setting", set_setting)
+    args = ["--serial", MONO, "--frames", "1", "--exposure", "min"]
+    assert main(["spinnaker", *args, "--pixel-format", "Mono16"]) == 0
+    assert "Mono16, exposure 0.025 ms (Off)" in capsys.readouterr().out
+    assert fake.nodes["ExposureTime"]._value == 25.0

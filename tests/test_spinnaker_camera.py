@@ -496,6 +496,26 @@ def test_no_frame_in_time_raises_device_timeout(camera, fake, monkeypatch):
     assert info.value.__context__ is None
 
 
+def test_timeout_before_any_frame_hints_at_another_program(camera, monkeypatch):
+    # On macOS, SpinView streaming from the camera doesn't stop Init(); grabs
+    # just time out (-1011).
+    def no_frame(self, timeout=0):
+        raise SpinnakerException("timed out", -1011)
+
+    monkeypatch.setattr(CameraPtr, "GetNextImage", no_frame)
+    with pytest.raises(DeviceTimeout, match=r"timed out.*\(another program") as info:
+        camera.capture_frame()
+    assert info.value.__context__ is None
+
+
+def test_timeout_after_a_frame_has_no_hint(camera, fake):
+    camera.capture_frame()
+    fake.buffer_count = 0
+    with pytest.raises(DeviceTimeout) as info:
+        camera.capture_frame()
+    assert "another program" not in str(info.value)
+
+
 def test_grab_timeout_is_the_time_left(camera, monkeypatch, pyspin):
     seen = []
     original = CameraPtr.GetNextImage

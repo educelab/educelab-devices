@@ -85,8 +85,12 @@ _US_PER_S = 1e6
 THROUGHPUT_LIMIT = "throughput_limit"
 """Spinnaker-only setting: the cap on the camera's USB bandwidth, in MB/s."""
 # MB here is 10^6 bytes. DeviceLinkThroughputLimit counts bytes per second
-# (assumed from its SFNC unit, Bps; see the hardware doc).
+# (verified on the CM3-U3-50S5M; see the hardware doc).
 _BYTES_PER_MB = 1e6
+
+# Added to a grab timeout on a camera that hasn't sent a frame since open: on
+# macOS, SpinView streaming from the camera shows up this way, not as -1005.
+_NO_FRAME_HINT = "another program (e.g. SpinView) may be streaming from this camera"
 
 
 # The only SDK the driver's PySpin names have been checked against, and the first
@@ -353,6 +357,7 @@ class SpinnakerCamera(FrameCamera):
         self._firmware: str | None = None
         self._timestamp_node: str | None = None
         self._timestamp_offset: float | None = None
+        self._delivered = False
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__} {self._serial}>"
@@ -417,6 +422,7 @@ class SpinnakerCamera(FrameCamera):
             self._model = self._read_string("DeviceModelName") or self._model
             self._firmware = self._read_string("DeviceFirmwareVersion")
             self._configure()
+            self._delivered = False
             self._call("begin acquisition", lambda: self._cam.BeginAcquisition())
             self._measure_timestamp_offset()
         except BaseException:
@@ -709,9 +715,7 @@ class SpinnakerCamera(FrameCamera):
                 grab_ms = self._pyspin.EVENT_TIMEOUT_INFINITE
             else:
                 grab_ms = max(1, math.ceil(remaining * 1000))
-            image = self._call(
-                "get a frame", functools.partial(self._cam.GetNextImage, grab_ms)
-            )
+            image = self._next_image(grab_ms)
             try:
                 taken = self._call(
                     "read a frame", functools.partial(self._take, image, not_before)
@@ -744,6 +748,20 @@ class SpinnakerCamera(FrameCamera):
                 logger.info("%r: %d stale frames; re-measuring offset", self, stale)
                 self._measure_timestamp_offset()
                 remeasured = True
+
+    def _next_image(self, grab_ms: int) -> Any:
+        try:
+            image = self._call(
+                "get a frame", functools.partial(self._cam.GetNextImage, grab_ms)
+            )
+        except DeviceTimeout as exc:
+            if self._delivered:
+                raise
+            error = DeviceTimeout(f"{exc} ({_NO_FRAME_HINT})")
+        else:
+            self._delivered = True
+            return image
+        raise error
 
     def _take(self, image: Any, not_before: datetime | None) -> "_Taken | str":
         """Copy a frame out of its buffer, or say why it won't do."""

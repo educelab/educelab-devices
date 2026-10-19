@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from educelab.devices.cameras import Frame, Setting
     from educelab.devices.cameras.spinnaker import SpinnakerCamera
+    from educelab.devices.settings import SettingValue
 
 DEFAULT_FRAMES = 20
 DEFAULT_TIMEOUT_S = 5.0
@@ -41,8 +42,9 @@ def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") 
     )
     parser.add_argument(
         "--exposure",
-        type=_positive,
-        help="exposure time in seconds, with auto exposure off (default: leave it)",
+        type=_exposure,
+        help="exposure time in seconds, or 'min' for the camera's shortest, with auto "
+        "exposure off (default: leave it)",
     )
     parser.add_argument(
         "--gain",
@@ -73,6 +75,10 @@ def _count(text: str) -> int:
     return value
 
 
+def _exposure(text: str) -> float | str:
+    return "min" if text.strip().lower() == "min" else _positive(text)
+
+
 def _positive(text: str) -> float:
     try:
         value = float(text)
@@ -97,7 +103,6 @@ class _Results:
 
 
 def run(args: argparse.Namespace) -> int:
-    from educelab.devices.cameras import EXPOSURE_TIME, GAIN, PIXEL_FORMAT
     from educelab.devices.cameras.spinnaker import SpinnakerCamera, SpinnakerSystem
 
     try:
@@ -120,19 +125,10 @@ def run(args: argparse.Namespace) -> int:
         for camera in cameras:
             camera.open()
             opened.append(camera)
-            if args.pixel_format:
-                camera.set_setting(PIXEL_FORMAT, args.pixel_format)
-            if args.exposure:
-                camera.set_setting("ExposureAuto", "Off")
-                camera.set_setting(EXPOSURE_TIME, args.exposure)
-            if args.gain is not None:
-                camera.set_setting("GainAuto", "Off")
-                camera.set_setting(GAIN, args.gain)
-            if args.throughput_limit is not None:
-                problem = _set_throughput_limit(camera, args.throughput_limit)
-                if problem:
-                    print(f"el-devices: {problem}", file=sys.stderr)
-                    return 1
+            problem = _set_up(camera, args)
+            if problem:
+                print(f"el-devices: {problem}", file=sys.stderr)
+                return 1
             _describe(camera)
         results = _benchmark(opened, args.frames, args.timeout)
     finally:
@@ -163,17 +159,54 @@ def _describe(camera: "SpinnakerCamera") -> None:
     )
 
 
-def _set_throughput_limit(camera: "SpinnakerCamera", mb_per_s: float) -> str | None:
-    """Set the camera's throughput limit; returns what went wrong, if anything."""
+def _set_up(camera: "SpinnakerCamera", args: argparse.Namespace) -> str | None:
+    """Apply the requested settings; returns what went wrong, if anything.
+
+    The throughput limit goes before exposure, because it lowers the frame rate,
+    which raises the longest exposure the camera allows.
+    """
+    from educelab.devices.cameras import EXPOSURE_TIME, GAIN, PIXEL_FORMAT
     from educelab.devices.cameras.spinnaker import THROUGHPUT_LIMIT
 
-    serial = camera.info.serial_number
-    if THROUGHPUT_LIMIT not in camera.settings():
-        return f"{serial} has no DeviceLinkThroughputLimit, so it can't be capped"
+    if args.pixel_format and (
+        problem := _apply(camera, PIXEL_FORMAT, args.pixel_format)
+    ):
+        return problem
+    if args.throughput_limit is not None:
+        if THROUGHPUT_LIMIT not in camera.settings():
+            return (
+                f"{camera.info.serial_number} has no DeviceLinkThroughputLimit, "
+                "so it can't be capped"
+            )
+        if problem := _apply(camera, THROUGHPUT_LIMIT, args.throughput_limit):
+            return problem
+    if args.exposure is not None:
+        camera.set_setting("ExposureAuto", "Off")
+        exposure = args.exposure
+        if exposure == "min":
+            exposure = camera.settings()[EXPOSURE_TIME].minimum
+            if exposure is None:
+                return f"{camera.info.serial_number} reports no minimum exposure"
+        if problem := _apply(camera, EXPOSURE_TIME, exposure):
+            return problem
+    if args.gain is not None:
+        camera.set_setting("GainAuto", "Off")
+        if problem := _apply(camera, GAIN, args.gain):
+            return problem
+    return None
+
+
+def _apply(camera: "SpinnakerCamera", name: str, value: "SettingValue") -> str | None:
+    """Write one setting; on a bad value, say which camera and what it accepts."""
     try:
-        camera.set_setting(THROUGHPUT_LIMIT, mb_per_s)
+        camera.set_setting(name, value)
     except ValueError as exc:
-        return f"{serial}: {exc}"
+        setting = camera.settings().get(name)
+        problem = f"{camera.info.serial_number}: {exc}"
+        if setting and setting.minimum is not None and setting.maximum is not None:
+            unit = f" {setting.unit}" if setting.unit else ""
+            problem += f" (valid: {setting.minimum:g} to {setting.maximum:g}{unit})"
+        return problem
     return None
 
 

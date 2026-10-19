@@ -16,6 +16,7 @@ from educelab.devices.cameras import EXPOSURE_TIME, PIXEL_FORMAT
 from educelab.devices.cameras.spinnaker import (
     RETRIES_BEFORE_REMEASURE,
     THROUGHPUT_LIMIT,
+    TRIGGER,
     SpinnakerCamera,
     SpinnakerSystem,
 )
@@ -106,7 +107,7 @@ def test_frame_honors_not_before_and_is_recent(camera):
     ready = datetime.now(UTC)
     frame = camera.capture_frame(not_before=ready)
     age = (frame.timestamp - ready).total_seconds()
-    print(f"frame age {age * 1000:.1f} ms, metadata {dict(frame.metadata)}")
+    print(f"exposure start {age * 1000:.1f} ms, metadata {dict(frame.metadata)}")
     assert 0 <= age < MAX_FRAME_AGE_S + camera.setting(EXPOSURE_TIME).value
 
 
@@ -193,6 +194,24 @@ def test_throughput_limit_round_trips_and_is_restored(camera):
         if before.value is not None:
             camera.set_setting(THROUGHPUT_LIMIT, before.value)
     assert camera.setting(THROUGHPUT_LIMIT).value == before.value
+
+
+def test_software_trigger_captures_a_fresh_frame(restore):
+    camera = restore
+    if TRIGGER not in camera.settings():
+        pytest.skip("this camera has no software trigger")
+    camera.set_setting(TRIGGER, "Software")
+    try:
+        for _ in range(20):
+            ready = datetime.now(UTC)
+            frame = camera.capture_frame(not_before=ready, timeout=5.0)
+            start = (frame.timestamp - ready).total_seconds()
+            assert 0 <= start < MAX_FRAME_AGE_S
+        print(
+            f"exposure start {start * 1000:.1f} ms after the request, {frame.metadata}"
+        )
+    finally:
+        camera.set_setting(TRIGGER, "Off")
 
 
 def test_preview_is_small_and_eight_bit(camera):

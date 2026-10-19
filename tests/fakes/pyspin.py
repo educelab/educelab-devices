@@ -493,8 +493,9 @@ class FrameSpec:
 
     Attributes:
         timestamp_ns: Device timestamp. A frame with one is already waiting in a
-            buffer and needs no trigger. ``None`` makes a fresh frame, stamped
-            when it is triggered (or retrieved, outside trigger mode).
+            buffer and needs no trigger. ``None`` makes a fresh frame whose
+            exposure starts when it is triggered (or retrieved, outside trigger
+            mode), stamped at the end of that exposure, as real cameras do.
         status: Image status; anything but ``SPINNAKER_IMAGE_STATUS_NO_ERROR`` is incomplete.
     """
 
@@ -682,7 +683,7 @@ class FakeCamera:
             self, "ExposureAuto", auto_mode, _ENUMS["ExposureAuto"]
         )
         self.gain_auto = EnumNode(self, "GainAuto", auto_mode, _ENUMS["GainAuto"])
-        exposure = FloatNode(
+        self.exposure = exposure = FloatNode(
             self,
             "ExposureTime",
             10_000.0,
@@ -876,7 +877,7 @@ class FakeCamera:
         spec = self.queue.popleft() if self.queue else FrameSpec()
         timestamp = spec.timestamp_ns
         if timestamp is None:
-            timestamp = fresh_timestamp
+            timestamp = fresh_timestamp + round(self.exposure._value * 1000)
         self.frames_grabbed += 1
         image = FakeImage(
             self,

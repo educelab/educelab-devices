@@ -47,6 +47,7 @@ __all__ = [
     "RETRIES_BEFORE_REMEASURE",
     "THROUGHPUT_LIMIT",
     "TIMESTAMP_SAMPLES",
+    "TRIGGER",
     "SpinnakerCamera",
     "SpinnakerSystem",
     "load_pyspin",
@@ -87,6 +88,16 @@ THROUGHPUT_LIMIT = "throughput_limit"
 # MB here is 10^6 bytes. DeviceLinkThroughputLimit counts bytes per second
 # (verified on the CM3-U3-50S5M; see the hardware doc).
 _BYTES_PER_MB = 1e6
+
+TRIGGER = "trigger"
+"""Spinnaker-only setting: ``"Off"`` to free-run, ``"Software"`` to expose a frame
+only when a capture asks for one."""
+_TRIGGER_MODES = ("Off", "Software")
+# How far before a software trigger a frame's exposure may seem to start and still
+# count as triggered by it: room for error in the timestamp offset.
+_TRIGGER_TOLERANCE_S = 0.001
+# More than any stream's buffer pool, so discarding waiting frames always ends.
+_MAX_DISCARDED = 100
 
 # Added to a grab timeout on a camera that hasn't sent a frame since open: on
 # macOS, SpinView streaming from the camera shows up this way, not as -1005.
@@ -335,8 +346,13 @@ class SpinnakerCamera(FrameCamera):
     timestamp counter and the host clock, and starts free-running acquisition
     that keeps only the newest frame, which is the fastest way to capture.
     ``close()`` stops acquiring and de-initializes it. Changing
-    ``pixel_format`` pauses acquisition briefly, since cameras only accept it
-    while stopped.
+    ``pixel_format`` or ``trigger`` pauses acquisition briefly, since cameras
+    only accept them while stopped. With ``trigger`` set to ``"Software"``,
+    each capture fires a trigger (or collects one fired by `trigger()`) and
+    returns that frame, so nothing streams between captures.
+
+    A frame's ``timestamp`` is the start of its exposure, in host time. The
+    raw device counter, ``device_timestamp_ns`` in its metadata, marks the end.
 
     Every PySpin error becomes a `DeviceError`. Those errors are deliberately
     not chained to the original ``SpinnakerException``, whose traceback would
@@ -358,6 +374,8 @@ class SpinnakerCamera(FrameCamera):
         self._timestamp_node: str | None = None
         self._timestamp_offset: float | None = None
         self._delivered = False
+        self._software_trigger = False
+        self._fired_at: float | None = None
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__} {self._serial}>"
@@ -396,6 +414,19 @@ class SpinnakerCamera(FrameCamera):
         return self._timestamp_offset
 
     @synchronized
+    def trigger(self) -> None:
+        """Fire a software trigger now, for the next capture to collect.
+
+        Only in ``trigger`` mode ``"Software"``. Lets a caller start several
+        cameras' exposures together before collecting their frames; without it,
+        each capture fires its own trigger.
+        """
+        if not self._software_trigger:
+            raise DeviceError(f"{self!r} isn't in software-trigger mode")
+        self._discard_waiting_frames()
+        self._fired_at = self._fire()
+
+    @synchronized
     def measure_timestamp_offset(self) -> float | None:
         """Measure `timestamp_offset` again, e.g. after the host clock jumps.
 
@@ -423,6 +454,8 @@ class SpinnakerCamera(FrameCamera):
             self._firmware = self._read_string("DeviceFirmwareVersion")
             self._configure()
             self._delivered = False
+            self._software_trigger = False
+            self._fired_at = None
             self._call("begin acquisition", lambda: self._cam.BeginAcquisition())
             self._measure_timestamp_offset()
         except BaseException:
@@ -528,6 +561,7 @@ class SpinnakerCamera(FrameCamera):
                 "PixelFormat", _PIXEL_FORMATS, name=PIXEL_FORMAT, writable=True
             ),
             self._throughput_limit_setting(),
+            self._trigger_setting(),
             self._read_only_number(
                 "current_throughput",
                 "DeviceLinkCurrentThroughput",
@@ -564,6 +598,8 @@ class SpinnakerCamera(FrameCamera):
                 self._set_enum("PixelFormat", str(value), kind=CommandRejected)
         elif name == THROUGHPUT_LIMIT:
             self._set_throughput_limit(float(value))
+        elif name == TRIGGER:
+            self._set_trigger(str(value))
         else:
             self._set_enum(name, str(value), kind=CommandRejected)
 
@@ -618,6 +654,46 @@ class SpinnakerCamera(FrameCamera):
                     f"{self!r} won't accept DeviceLinkThroughputLimit, even stopped"
                 )
             write()
+
+    def _trigger_setting(self) -> Setting | None:
+        mode = self._node("TriggerMode", "CEnumerationPtr")
+        source = self._node("TriggerSource", "CEnumerationPtr")
+        readable = self._pyspin.IsReadable
+        if not (readable(mode) and readable(source)):
+            return None
+        if self._raw_node("TriggerSoftware") is None:
+            return None
+        value: str | None = None
+        if self._enum_symbol("TriggerMode") == "Off":
+            value = "Off"
+        elif self._enum_symbol("TriggerSource") == "Software" and (
+            self._trigger_selector() in (None, "FrameStart")
+        ):
+            value = "Software"
+        # Any other state (e.g. a hardware line) reads None; writing leaves it.
+        return Setting(TRIGGER, value, choices=_TRIGGER_MODES)
+
+    def _trigger_selector(self) -> str | None:
+        node = self._node("TriggerSelector", "CEnumerationPtr")
+        if not self._pyspin.IsReadable(node):
+            return None
+        return self._enum_symbol("TriggerSelector")
+
+    def _set_trigger(self, value: str) -> None:
+        # TriggerSource is only writable while TriggerMode is Off (Spinnaker's
+        # Trigger example); the mode itself is switched with acquisition stopped.
+        with self._acquisition_paused():
+            self._set_enum("TriggerMode", "Off", kind=CommandRejected)
+            self._software_trigger = False
+            self._fired_at = None
+            if value == "Software":
+                if self._trigger_selector() not in (None, "FrameStart"):
+                    self._set_enum(
+                        "TriggerSelector", "FrameStart", kind=CommandRejected
+                    )
+                self._set_enum("TriggerSource", "Software", kind=CommandRejected)
+                self._set_enum("TriggerMode", "On", kind=CommandRejected)
+                self._software_trigger = True
 
     def _read_only_number(
         self, name: str, node_name: str, cast: str, unit: str, scale: float = 1.0
@@ -702,6 +778,17 @@ class SpinnakerCamera(FrameCamera):
                 # No frame from before not_before would do, so don't grab any.
                 time.sleep(wait)
         exposure = self._read_float("ExposureTime") / _US_PER_S
+        if self._software_trigger:
+            fired_at, self._fired_at = self._fired_at, None
+            if fired_at is None or (
+                not_before is not None and fired_at < not_before.timestamp()
+            ):
+                self._discard_waiting_frames()
+                fired_at = self._fire()
+            if self._timestamp_offset is not None:
+                # Any frame whose exposure began before the trigger is stale.
+                floor = datetime.fromtimestamp(fired_at - _TRIGGER_TOLERANCE_S, UTC)
+                not_before = floor if not_before is None else max(not_before, floor)
         stale = incomplete = 0
         remeasured = False
         while True:
@@ -718,7 +805,8 @@ class SpinnakerCamera(FrameCamera):
             image = self._next_image(grab_ms)
             try:
                 taken = self._call(
-                    "read a frame", functools.partial(self._take, image, not_before)
+                    "read a frame",
+                    functools.partial(self._take, image, not_before, exposure),
                 )
             finally:
                 self._call("release a frame", image.Release)
@@ -740,6 +828,9 @@ class SpinnakerCamera(FrameCamera):
                     taken.timestamp,
                     metadata,
                 )
+            if self._software_trigger:
+                # The frame this capture triggered may never come: ask again.
+                self._fire()
             if taken == "incomplete":
                 incomplete += 1
                 continue
@@ -763,8 +854,36 @@ class SpinnakerCamera(FrameCamera):
             return image
         raise error
 
-    def _take(self, image: Any, not_before: datetime | None) -> "_Taken | str":
-        """Copy a frame out of its buffer, or say why it won't do."""
+    def _fire(self) -> float:
+        """Execute ``TriggerSoftware``; returns the host time just before."""
+        node = self._node("TriggerSoftware", "CCommandPtr")
+        fired_at = time.time()
+        self._call("fire a software trigger", node.Execute)
+        return fired_at
+
+    def _discard_waiting_frames(self) -> None:
+        """Release frames already buffered, so a trigger's frame is the next one."""
+        for _ in range(_MAX_DISCARDED):
+            try:
+                image = self._call(
+                    "discard a waiting frame",
+                    functools.partial(
+                        self._cam.GetNextImage, self._pyspin.EVENT_TIMEOUT_NONE
+                    ),
+                )
+            except DeviceTimeout:
+                return
+            self._call("release a frame", image.Release)
+            logger.debug("%r: discarded a frame from before the trigger", self)
+
+    def _take(
+        self, image: Any, not_before: datetime | None, exposure: float
+    ) -> "_Taken | str":
+        """Copy a frame out of its buffer, or say why it won't do.
+
+        The device timestamp marks the end of exposure (hardware doc), so the
+        frame's timestamp is that minus ``exposure``, the start.
+        """
         missing_trailer = False
         if image.IsIncomplete():
             status = image.GetImageStatus()
@@ -779,9 +898,9 @@ class SpinnakerCamera(FrameCamera):
             missing_trailer = True
         device_ns = int(image.GetTimeStamp())
         if self._timestamp_offset is None:
-            host_time = time.time()
+            host_time = time.time() - exposure
         else:
-            host_time = self._timestamp_offset + device_ns / 1e9
+            host_time = self._timestamp_offset + device_ns / 1e9 - exposure
         timestamp = datetime.fromtimestamp(host_time, UTC)
         if not_before is not None and timestamp < not_before:
             logger.debug("%r: dropping a frame from %s", self, timestamp)

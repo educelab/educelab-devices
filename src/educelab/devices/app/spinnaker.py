@@ -2,12 +2,15 @@
 
 import argparse
 import statistics
+import struct
 import sys
 import threading
 import time
+import zlib
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 # Imported where it's used, so other subcommands don't load the driver.
@@ -27,7 +30,8 @@ def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") 
         description="List the attached Spinnaker cameras, then open them all at once "
         "(so they all stream, as on a rig) and capture frames from every camera "
         "together, each no older than the moment it was requested. Reports capture "
-        "latency, frame age, dropped frames, and the bandwidth each camera streams.",
+        "latency, when exposure started, dropped frames, and the bandwidth each camera "
+        "streams.",
     )
     parser.add_argument(
         "--serial",
@@ -58,6 +62,20 @@ def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") 
         metavar="MBPS",
         help="cap each camera's USB bandwidth at this many MB/s (10^6 bytes), e.g. "
         "80 for five cameras sharing one USB 3 link (default: leave it)",
+    )
+    parser.add_argument(
+        "--trigger",
+        choices=("off", "software"),
+        default="off",
+        help="'software' exposes a frame only when a capture asks for one, firing "
+        "every camera's trigger together (default: off, free-running)",
+    )
+    parser.add_argument(
+        "--save-missing-trailer",
+        type=Path,
+        metavar="DIR",
+        help="save frames accepted with a missing trailer as PNGs in DIR, with one "
+        "complete frame per camera for comparison",
     )
     parser.add_argument(
         "--timeout",
@@ -94,8 +112,11 @@ class _Results:
     """One camera's captures."""
 
     latencies_ms: list[float] = field(default_factory=list)
-    ages_ms: list[float] = field(default_factory=list)
-    frames: list["Frame"] = field(default_factory=list)
+    starts_ms: list[float] = field(default_factory=list)
+    # (frame ID, device timestamp in ns), for the streaming rate; pixels aren't kept.
+    stamps: list[tuple[int, int]] = field(default_factory=list)
+    frame_bytes: int = 0
+    saved: int = 0
     stale: int = 0
     incomplete: int = 0
     missing_trailer: int = 0
@@ -130,7 +151,15 @@ def run(args: argparse.Namespace) -> int:
                 print(f"el-devices: {problem}", file=sys.stderr)
                 return 1
             _describe(camera)
-        results = _benchmark(opened, args.frames, args.timeout)
+        if args.save_missing_trailer:
+            args.save_missing_trailer.mkdir(parents=True, exist_ok=True)
+        results = _benchmark(
+            opened,
+            args.frames,
+            args.timeout,
+            trigger=args.trigger == "software",
+            save_dir=args.save_missing_trailer,
+        )
     finally:
         for camera in reversed(opened):
             camera.close()
@@ -154,6 +183,7 @@ def _describe(camera: "SpinnakerCamera") -> None:
         f"{settings[PIXEL_FORMAT].value}, exposure {exposure_text} "
         f"({settings['ExposureAuto'].value}), gain {gain} dB, "
         f"{_throughput_text(settings)}, "
+        f"trigger {settings['trigger'].value if 'trigger' in settings else 'none'}, "
         f"timestamp node {camera.timestamp_node}, "
         f"offset {'none' if offset is None else f'{offset:.6f} s'}"
     )
@@ -166,8 +196,13 @@ def _set_up(camera: "SpinnakerCamera", args: argparse.Namespace) -> str | None:
     which raises the longest exposure the camera allows.
     """
     from educelab.devices.cameras import EXPOSURE_TIME, GAIN, PIXEL_FORMAT
-    from educelab.devices.cameras.spinnaker import THROUGHPUT_LIMIT
+    from educelab.devices.cameras.spinnaker import THROUGHPUT_LIMIT, TRIGGER
 
+    if args.trigger == "software":
+        if TRIGGER not in camera.settings():
+            return f"{camera.info.serial_number} has no software trigger"
+        if problem := _apply(camera, TRIGGER, "Software"):
+            return problem
     if args.pixel_format and (
         problem := _apply(camera, PIXEL_FORMAT, args.pixel_format)
     ):
@@ -227,12 +262,21 @@ def _throughput_text(settings: Mapping[str, "Setting"]) -> str:
 
 
 def _benchmark(
-    cameras: list["SpinnakerCamera"], frames: int, timeout: float
+    cameras: list["SpinnakerCamera"],
+    frames: int,
+    timeout: float,
+    *,
+    trigger: bool = False,
+    save_dir: Path | None = None,
 ) -> dict["SpinnakerCamera", _Results]:
-    """Capture from every camera at once, ``frames`` times, as a rig would."""
+    """Capture from every camera at once, ``frames`` times, as a rig would.
+
+    With ``trigger``, every camera's software trigger is fired first, then the
+    frames are collected.
+    """
     results = {camera: _Results() for camera in cameras}
 
-    def capture(camera: "SpinnakerCamera", requested: datetime) -> None:
+    def capture(camera: "SpinnakerCamera", requested: datetime, index: int) -> None:
         result = results[camera]
         start = time.perf_counter()
         try:
@@ -243,19 +287,34 @@ def _benchmark(
             result.failures.append(f"{type(exc).__name__}: {exc}")
             return
         result.latencies_ms.append((time.perf_counter() - start) * 1000)
-        result.ages_ms.append((frame.timestamp - requested).total_seconds() * 1000)
-        result.frames.append(frame)
+        result.starts_ms.append((frame.timestamp - requested).total_seconds() * 1000)
+        result.stamps.append(
+            (frame.metadata["frame_id"], frame.metadata["device_timestamp_ns"])
+        )
+        result.frame_bytes = frame.pixels.nbytes
         result.stale += frame.metadata["stale_frames"]
         result.incomplete += frame.metadata["incomplete_frames"]
-        result.missing_trailer += bool(frame.metadata["missing_trailer"])
+        missing = bool(frame.metadata["missing_trailer"])
+        result.missing_trailer += missing
+        if save_dir is not None and (missing or not result.saved):
+            name = f"missing-trailer-{index:04d}" if missing else "complete"
+            _write_png(save_dir / f"{camera.info.serial_number}-{name}.png", frame)
+            result.saved += 1
 
     print(f"Capturing {frames} frame(s) from {len(cameras)} camera(s) at once...")
     trial_ms = []
-    for _ in range(frames):
+    for index in range(frames):
         requested = datetime.now(UTC)
         start = time.perf_counter()
+        if trigger:
+            for camera in cameras:
+                try:
+                    camera.trigger()
+                except Exception as exc:  # noqa: BLE001
+                    # The capture fires its own trigger, or reports the failure.
+                    print(f"{camera.info.serial_number}: trigger failed: {exc}")
         threads = [
-            threading.Thread(target=capture, args=(camera, requested))
+            threading.Thread(target=capture, args=(camera, requested, index))
             for camera in cameras
         ]
         for thread in threads:
@@ -270,15 +329,17 @@ def _benchmark(
 def _report(camera: "SpinnakerCamera", result: _Results, frames: int) -> int:
     """Print one camera's results; returns the number of failed captures."""
     serial = camera.info.serial_number
-    print(f"{serial}: {len(result.frames)}/{frames} captured")
+    print(f"{serial}: {len(result.stamps)}/{frames} captured")
     if result.latencies_ms:
         print(f"  latency {_stats(result.latencies_ms)}")
-        print(f"  frame age {_stats(result.ages_ms)} (timestamp minus request)")
+        print(f"  exposure start {_stats(result.starts_ms)} after the request")
     print(
         f"  dropped {result.stale} stale, {result.incomplete} incomplete; "
         f"{result.missing_trailer} accepted with a missing trailer"
     )
-    streamed = _streaming_rate(result.frames)
+    if result.saved:
+        print(f"  saved {result.saved} frame(s)")
+    streamed = _streaming_rate(result.stamps, result.frame_bytes)
     if streamed:
         fps, mb_per_s = streamed
         print(f"  streaming ~{fps:.1f} frames/s, ~{mb_per_s:.1f} MB/s over USB")
@@ -287,23 +348,48 @@ def _report(camera: "SpinnakerCamera", result: _Results, frames: int) -> int:
     return len(result.failures)
 
 
-def _streaming_rate(frames: list["Frame"]) -> tuple[float, float] | None:
+def _streaming_rate(
+    stamps: list[tuple[int, int]], frame_bytes: int
+) -> tuple[float, float] | None:
     """Frames per second and MB/s the camera sent, from frame IDs and timestamps.
 
     Frame IDs count every frame the camera streamed, including the ones newest-only
     buffering discarded (assumed; see docs/hardware/spinnaker.md).
     """
-    if len(frames) < 2:
+    if len(stamps) < 2:
         return None
-    first, last = frames[0], frames[-1]
-    elapsed = (
-        (last.metadata["device_timestamp_ns"]) - (first.metadata["device_timestamp_ns"])
-    )
-    sent = last.metadata["frame_id"] - first.metadata["frame_id"]
+    (first_id, first_ns), (last_id, last_ns) = min(stamps), max(stamps)
+    elapsed, sent = last_ns - first_ns, last_id - first_id
     if elapsed <= 0 or sent <= 0:
         return None
     fps = sent / (elapsed / 1e9)
-    return fps, fps * last.pixels.nbytes / 1e6
+    return fps, fps * frame_bytes / 1e6
+
+
+def _write_png(path: Path, frame: "Frame") -> None:
+    """Save a frame as an 8- or 16-bit grayscale or RGB PNG; Bayer frames stay raw."""
+    import numpy as np
+
+    pixels = frame.pixels
+    if pixels.ndim == 2:
+        pixels = pixels[:, :, np.newaxis]
+    height, width, channels = pixels.shape
+    depth = 16 if pixels.dtype == np.uint16 else 8
+    rows = pixels.astype(">u2" if depth == 16 else np.uint8).reshape(height, -1)
+    raw = np.hstack([np.zeros((height, 1), np.uint8), rows.view(np.uint8)])
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    color = {1: 0, 3: 2}[channels]
+    header = struct.pack(">IIBBBBB", width, height, depth, color, 0, 0, 0)
+    path.write_bytes(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(raw.tobytes()))
+        + chunk(b"IEND", b"")
+    )
 
 
 def _stats(values_ms: list[float]) -> str:

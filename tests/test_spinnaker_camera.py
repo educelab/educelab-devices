@@ -13,7 +13,11 @@ from contracts import FrameCameraContract
 from educelab.devices import DeviceInfo
 from educelab.devices.app.cli import main
 from educelab.devices.cameras import EXPOSURE_TIME, GAIN, PIXEL_FORMAT, spinnaker
-from educelab.devices.cameras.spinnaker import THROUGHPUT_LIMIT, SpinnakerCamera
+from educelab.devices.cameras.spinnaker import (
+    THROUGHPUT_LIMIT,
+    TRIGGER,
+    SpinnakerCamera,
+)
 from educelab.devices.errors import (
     CommandRejected,
     DeviceBusy,
@@ -211,6 +215,7 @@ def test_settings_cover_exposure_gain_format_auto_modes_and_throughput(camera):
         "GainAuto",
         PIXEL_FORMAT,
         THROUGHPUT_LIMIT,
+        TRIGGER,
         "current_throughput",
         "resulting_frame_rate",
     }
@@ -395,6 +400,25 @@ def test_capture_metadata(camera, fake):
     assert metadata["stale_frames"] == 0
     assert metadata["incomplete_frames"] == 0
     assert metadata["missing_trailer"] is False
+
+
+def test_frame_timestamp_is_the_start_of_exposure(camera, fake):
+    # The camera stamps the end of exposure; the driver reports the start.
+    end_ns = fake.device_time_ns()
+    fake.queue_frames(FrameSpec(timestamp_ns=end_ns))
+    frame = camera.capture_frame()
+    start = camera.timestamp_offset + end_ns / 1e9 - 0.01
+    assert frame.timestamp.timestamp() == pytest.approx(start, abs=1e-6)
+    assert frame.metadata["device_timestamp_ns"] == end_ns
+
+
+def test_a_frame_exposed_partly_before_not_before_is_stale(camera, fake):
+    # Its exposure ends 5 ms after the request but began 5 ms before it.
+    fake.queue_frames(FrameSpec(timestamp_ns=fake.device_time_ns() + 5_000_000))
+    request = datetime.now(UTC)
+    frame = camera.capture_frame(not_before=request)
+    assert frame.metadata["stale_frames"] == 1
+    assert frame.timestamp >= request
 
 
 def test_capture_rejects_frames_older_than_not_before(camera, fake):
@@ -726,3 +750,131 @@ def test_current_throughput_and_frame_rate_are_read_only(camera, fake):
     assert rate.value == pytest.approx(fake.MAX_FRAME_RATE)
     with pytest.raises(ValueError, match="read-only"):
         camera.set_setting("resulting_frame_rate", 10.0)
+
+
+# --- Software trigger ---------------------------------------------------------
+
+
+@pytest.fixture
+def triggered(camera):
+    camera.set_setting(TRIGGER, "Software")
+    return camera
+
+
+def test_trigger_is_off_after_open(camera):
+    setting = camera.setting(TRIGGER)
+    assert setting.value == "Off"
+    assert setting.choices == ("Off", "Software")
+
+
+def test_software_trigger_sets_the_trigger_nodes(triggered, fake):
+    assert fake.trigger_mode.symbolic == "On"
+    assert fake.trigger_source.symbolic == "Software"
+    assert fake.trigger_selector.symbolic == "FrameStart"
+    assert fake.streaming
+    assert triggered.setting(TRIGGER).value == "Software"
+
+
+def test_a_trigger_left_on_a_hardware_line_reads_none(camera, fake, pyspin):
+    with camera._acquisition_paused():
+        fake.trigger_source.SetValue(pyspin.TriggerSource_Line0)
+        fake.trigger_mode.SetValue(pyspin.TriggerMode_On)
+    assert camera.setting(TRIGGER).value is None
+
+
+def test_trigger_off_free_runs_again(triggered, fake):
+    triggered.set_setting(TRIGGER, "Off")
+    assert fake.trigger_mode.symbolic == "Off"
+    triggered.capture_frame()
+    assert fake.trigger_calls == 0
+
+
+def test_reopening_turns_the_trigger_off(pyspin, fake):
+    with SpinnakerCamera(MONO, pyspin=pyspin) as camera:
+        camera.set_setting(TRIGGER, "Software")
+    with SpinnakerCamera(MONO, pyspin=pyspin) as camera:
+        assert camera.setting(TRIGGER).value == "Off"
+        camera.capture_frame()
+    assert fake.trigger_calls == 0
+
+
+def test_a_triggered_capture_fires_once_and_returns_that_frame(triggered, fake):
+    request = datetime.now(UTC)
+    frame = triggered.capture_frame(not_before=request)
+    assert fake.trigger_calls == 1
+    assert frame.timestamp >= request
+    assert frame.metadata["retries"] == 0
+
+
+def test_frames_waiting_before_a_trigger_are_discarded(triggered, fake):
+    fake.queue_frames(stale(fake), stale(fake, 0.5))
+    frame = triggered.capture_frame()
+    assert fake.frames_grabbed == 3
+    assert frame.metadata["frame_id"] == 3
+    assert frame.metadata["stale_frames"] == 0
+    assert fake.held == []
+
+
+def test_a_stale_frame_arriving_after_the_trigger_is_not_returned(
+    triggered, fake, monkeypatch
+):
+    # E.g. a frame from an earlier, timed-out capture, still in flight.
+    discard = SpinnakerCamera._discard_waiting_frames
+    monkeypatch.setattr(
+        SpinnakerCamera,
+        "_discard_waiting_frames",
+        lambda self: (discard(self), fake.queue_frames(stale(fake))),
+    )
+    request = datetime.now(UTC)
+    frame = triggered.capture_frame()
+    assert frame.timestamp >= request
+    assert frame.metadata["stale_frames"] == 1
+
+
+def test_an_incomplete_triggered_frame_is_triggered_again(triggered, fake):
+    fake.queue_frames(FrameSpec(status=SPINNAKER_IMAGE_STATUS_DATA_INCOMPLETE))
+    frame = triggered.capture_frame()
+    assert frame.metadata["incomplete_frames"] == 1
+    assert fake.trigger_calls == 2
+    assert fake.held == []
+
+
+def test_trigger_then_capture_collects_without_firing_again(triggered, fake):
+    triggered.trigger()
+    triggered.capture_frame()
+    assert fake.trigger_calls == 1
+
+
+def test_a_trigger_fired_before_not_before_is_fired_again(triggered, fake):
+    triggered.trigger()
+    later = datetime.now(UTC) + timedelta(seconds=0.02)
+    frame = triggered.capture_frame(not_before=later, timeout=1.0)
+    assert fake.trigger_calls == 2
+    assert frame.timestamp >= later
+
+
+def test_trigger_outside_software_trigger_mode_raises(camera):
+    with pytest.raises(DeviceError, match="software-trigger"):
+        camera.trigger()
+
+
+def test_an_unanswered_trigger_times_out(triggered, fake):
+    fake.respond_to_triggers = False
+    with pytest.raises(DeviceTimeout):
+        triggered.capture_frame(timeout=0.05)
+    assert fake.held == []
+
+
+def test_preview_in_software_trigger_mode_fires_a_trigger(triggered, fake):
+    triggered.preview_frame()
+    assert fake.trigger_calls == 1
+
+
+class TestSpinnakerCameraContractSoftwareTrigger(TestSpinnakerCameraContract):
+    """The same rules with every capture software-triggered."""
+
+    @pytest.fixture
+    def device(self, make_device):
+        with make_device() as camera:
+            camera.set_setting(TRIGGER, "Software")
+            yield camera

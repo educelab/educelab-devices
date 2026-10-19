@@ -159,13 +159,42 @@ check.** A camera acquires continuously from `open()` to `close()`, as in `pgs-s
 3. `close()`: `EndAcquisition()`, then `DeInit()`.
 
 With `NewestOnly`, the first frame a capture gets is often one exposed before the
-request, so rejecting stale frames is the main mechanism, not a safeguard. A software
-trigger per capture was considered and rejected: it pays for exposure, readout, and
-transfer on every capture. The cost of free-running is USB bandwidth while several
-cameras stream at once; the rig check measures that and the per-capture latency.
+request, so rejecting stale frames is the main mechanism, not a safeguard. The cost of
+free-running is USB bandwidth while several cameras stream at once (see USB topology
+under Timing).
 
 `PixelFormat` is read-only while acquiring (assumed, standard GenICam behavior), so
 setting `pixel_format` ends acquisition, changes the format, and begins again.
+
+#### Software trigger (opt-in)
+
+**Decided 2026-10-19:** free-running stays the default, and the `trigger` setting
+switches a camera to software triggering, so nothing streams between captures. Whether
+it beats free-running on a shared link is for rig step 10 to measure.
+
+- **Switching:** `trigger = "Software"` ends acquisition, sets `TriggerMode=Off`,
+  `TriggerSelector=FrameStart` (if it isn't already), `TriggerSource=Software`, then
+  `TriggerMode=On`, and begins again, as Spinnaker's Trigger example does
+  (`TriggerSource` is only writable while the mode is Off). `"Off"` sets
+  `TriggerMode=Off`. `open()` always starts free-running. Node names and enum entries
+  checked against PySpin 4.4.0.246 by introspection (2026-10-19); not yet on a rig.
+- **Each capture:** releases any frames already waiting in the buffer (with
+  `GetNextImage(EVENT_TIMEOUT_NONE)` until it times out; that an empty buffer raises
+  `-1011` at once is assumed), executes
+  `TriggerSoftware`, and takes the next frame. A frame whose exposure began more than
+  1 ms (`_TRIGGER_TOLERANCE_S`, room for offset error) before the trigger, such as one
+  from an earlier capture that timed out, counts as stale, so no frame from before the
+  trigger is returned. After a stale or incomplete frame it fires again. `not_before` is
+  still honoured: the trigger fires after any wait for it.
+- **Several cameras:** `camera.trigger()` fires now and the next capture collects that
+  frame, so a caller can fire every camera before collecting (as `el-devices spinnaker
+  --trigger software` does). If that trigger is older than the capture's `not_before`,
+  the capture fires again.
+- `TriggerActivation` only applies to hardware lines, and `TriggerOverlap` is left as
+  the camera has it. With overlap Off, a trigger during readout is ignored; a capture
+  waits for its frame before the next one fires, so that only matters after a retry.
+- With the start-of-exposure timestamp (Timestamps), a triggered frame's `timestamp` is
+  after the trigger by the camera's trigger latency.
 
 ### Settings
 
@@ -234,13 +263,18 @@ checking that camera's node names, since older models may use other names.
   `TimestampLatchValue`. `el-devices spinnaker` prints which (`timestamp_node`). The
   Chameleon3 CM3-U3-50S5M has `Timestamp` (verified on unit 20305113, firmware
   1.12.3.00, 2026-10-16); other models unknown.
-- **The image timestamp marks the end of exposure** (verified on the CM3-U3-50S5M,
-  firmware 1.12.3.00, 2026-10-19; other models unknown). One camera, Mono16, uncapped at
-  19 frames/s: latency minus frame age was 56.7 ms at 1 ms exposure and 57.4 ms at
-  45 ms. A timestamp at the start would have added the ~44 ms difference. So a frame
-  whose exposure began before `not_before` but ended after it passes. Until the driver
-  decides otherwise, rig code that needs light from after the request (after moving a
-  stage or changing a light) should add the exposure time to `not_before`.
+- **The camera's image timestamp marks the end of exposure** (verified on the
+  CM3-U3-50S5M, firmware 1.12.3.00, 2026-10-19; other models unknown). One camera,
+  Mono16, uncapped at 19 frames/s: latency minus frame age (then measured from the raw
+  timestamp) was 56.7 ms at 1 ms exposure and 57.4 ms at 45 ms. A timestamp at the start
+  would have added the ~44 ms difference.
+- **`Frame.timestamp` is the start of exposure** (decided 2026-10-19): the device
+  timestamp plus the offset, minus the `ExposureTime` read at the start of the capture.
+  So `not_before` rejects any frame whose exposure began before it, which is what a rig
+  wants after moving a stage or changing a light. The raw end-of-exposure counter stays
+  in the metadata as `device_timestamp_ns`. Under auto exposure, the exposure read may
+  differ slightly from the one the frame used. Without a timestamp offset, the start is
+  estimated as host time on arrival minus the exposure.
 
 ### Capturing a frame
 
@@ -262,18 +296,19 @@ Every buffer is released whatever the outcome. It keeps taking frames until one 
 or the timeout runs out (`DeviceTimeout`), so the timeout is the bound on retries. After
 every 5 stale frames (`RETRIES_BEFORE_REMEASURE`, `pgs-scan`'s limit) it re-measures the
 offset. The metadata reports `retries`, `stale_frames`, `incomplete_frames`, and
-`timestamp_remeasured`. `Frame.timestamp` is the offset-corrected image timestamp; see
-Timestamps for which moment that is.
+`timestamp_remeasured`. `Frame.timestamp` is the start of exposure (Timestamps).
 
-**Expect one stale frame per capture.** With newest-only buffering, the frame being
-exposed or read out when `not_before` is set carries an earlier timestamp, so it is
+**Expect one stale frame per capture** when free-running. With newest-only buffering,
+the frame being exposed or read out when `not_before` is set carries an earlier
+timestamp, so it is
 dropped and the next one taken: a capture costs about two frame periods. On the
 CM3-U3-50S5M at ~35.7 frames/s (28 ms per frame), back-to-back captures took a median
 55.9 ms, and 49 of 50 dropped exactly one stale frame; the one that didn't was the
 first (verified 2026-10-16). Fewer frames per second, e.g. to share USB bandwidth,
 makes each capture proportionally slower.
 
-`preview_frame()` takes the newest frame the same way (no `not_before`), shifts 16-bit
+`preview_frame()` takes the newest frame the same way (no `not_before`; in
+software-trigger mode it fires a trigger), shifts 16-bit
 pixels right by 8, and subsamples so the longest side is at most 1280 pixels. That
 assumes 16-bit formats use the full range (**unknown**: Blackfly S sensors are 10–12
 bit, and whether `Mono16` data is left-aligned decides how dark previews look).
@@ -296,8 +331,9 @@ once it is closed.
 | `throughput_limit` | `DeviceLinkThroughputLimit` | MB/s → bytes/s (× 10^6) | Reads `None` while `DeviceLinkThroughputLimitMode` is Off; writing sets the mode On first ([Settings](#settings)) |
 | `current_throughput` | `DeviceLinkCurrentThroughput` | MB/s ← bytes/s (÷ 10^6) | Read-only |
 | `resulting_frame_rate` | `AcquisitionResultingFrameRate` | Hz → Hz | Read-only |
+| `trigger` | `TriggerMode`, `TriggerSource`, `TriggerSelector` | `Off` → `TriggerMode=Off`; `Software` → `TriggerSelector=FrameStart`, `TriggerSource=Software`, `TriggerMode=On` | Reads `None` for any other trigger setup (e.g. a hardware line); changing it pauses acquisition ([Software trigger](#software-trigger-opt-in)) |
 
-`exposure_time` and `gain` are canonical names shared by every camera. The other three
+`exposure_time` and `gain` are canonical names shared by every camera. The others
 are Spinnaker-only names, with units chosen so they read alike, not the native node names
 (decided 2026-10-16).
 
@@ -308,16 +344,20 @@ are Spinnaker-only names, with units chosen so they read alike, not the native n
   format isn't one of the driver's (RGB8 if offered, else the first supported). It never
   changes exposure, gain, or the throughput limit; they keep what the camera last had.
 - **Always acquiring:** `BeginAcquisition()` at `open()`, `EndAcquisition()` at `close()`,
-  free-running with newest-only buffering ([Acquisition](#acquisition)).
-- **Pauses for some writes:** `pixel_format`, and `throughput_limit` when its node isn't
+  free-running with newest-only buffering ([Acquisition](#acquisition)), unless
+  `trigger` is `Software`; then each capture fires `TriggerSoftware`, or `trigger()`
+  fires it ahead.
+- **Pauses for some writes:** `pixel_format`, `trigger`, and `throughput_limit` when its node isn't
   writable while acquiring, end acquisition, write, and begin again.
 - **Validated, snapped and clamped:** values are checked against the setting's range
   before anything is sent (`ValueError`, `TypeError`). Inside the range, `throughput_limit`
   snaps to the node's increment, and floats are clamped to the node's limits after unit
   conversion, where GenICam would reject an off-increment or out-of-range value.
-- **Host-time timestamps:** `Frame.timestamp` is the device timestamp plus a measured
-  offset, read from `Timestamp` or else `TimestampLatchValue`, not the raw counter, which
-  is in metadata as `device_timestamp_ns` ([Timestamps](#timestamps)).
+- **Host-time, start-of-exposure timestamps:** `Frame.timestamp` is the device
+  timestamp plus a measured offset (read from `Timestamp` or else
+  `TimestampLatchValue`), minus the exposure time, so it marks when exposure began. The
+  raw counter, which marks the end of exposure, is in metadata as `device_timestamp_ns`
+  ([Timestamps](#timestamps)).
 - **`not_before`:** stale frames are dropped and the next one taken, re-measuring the
   offset every 5 stale frames, until the timeout ([Capturing a frame](#capturing-a-frame)).
 - **Incomplete frames dropped,** except `SPINNAKER_IMAGE_STATUS_MISSING_TRAILER`, which is
@@ -346,8 +386,9 @@ are Spinnaker-only names, with units chosen so they read alike, not the native n
   the longest exposure ([Settings](#settings)).
 - Turning `DeviceLinkThroughputLimitMode` off (set the maximum limit instead).
 - `ExposureAuto`/`GainAuto` `Once`, auto-exposure and auto-gain limits.
-- Triggering: `TriggerMode`, `TriggerSource`, `TriggerSoftware`, hardware lines. The
-  driver forces `TriggerMode=Off`.
+- Triggering other than software triggering of single frames: hardware lines,
+  `TriggerActivation`, `TriggerOverlap`, `TriggerDelay`, and other selectors. `open()`
+  sets `TriggerMode=Off`.
 - Image geometry and processing: `Width`, `Height`, offsets, binning, black level, gamma,
   white balance, PySpin's `ImageProcessor` conversions, and other pixel formats such as
   packed 12-bit.
@@ -362,7 +403,7 @@ are Spinnaker-only names, with units chosen so they read alike, not the native n
   the caller passes one. `pgs-scan` `dev` allowed a rig capture 2 s. Each
   `GetNextImage()` waits for whatever time is left (`EVENT_TIMEOUT_INFINITE` for
   `math.inf`). Measured latency comes from the rig check.
-- **Streaming bandwidth:** every camera free-runs, so each sends its full frame rate
+- **Streaming bandwidth:** every free-running camera sends its full frame rate
   over USB whether or not anyone captures. `el-devices spinnaker` estimates it from frame
   IDs and device timestamps (frames per second times frame size). That assumes
   `GetFrameID()` counts every frame the camera sent, including the ones newest-only
@@ -384,10 +425,10 @@ are Spinnaker-only names, with units chosen so they read alike, not the native n
   - A camera that negotiates USB 2 (bad cable or port) streams far less, about 40 MB/s
     and 4 frames/s in Mono16, caps at 50.24 MB/s, and makes every all-camera capture wait
     for it (~499 ms).
-  - **Software trigger,** which moves data only on request, would take about N × frame
-    size / 400 MB/s plus the exposure: for four cameras at Mono16 (10 MB), about
-    100 ms + exposure, against the 159–167 ms measured free-running uncapped. The driver
-    stays free-running until the maintainer decides (open since 2026-10-16).
+  - **Software trigger** (`trigger = "Software"`, decided 2026-10-19 as an opt-in)
+    moves data only on request, so it should take about N × frame size / 400 MB/s plus
+    the exposure: for four cameras at Mono16 (10 MB), about 100 ms + exposure, against
+    the 159–167 ms measured free-running uncapped. Rig step 10 measures it.
   - The Acroname hub track is adding per-port USB 2 and USB 3 limits. They don't help
     here: forcing a port to USB 2 caps a camera far below 80 MB/s.
 - **Error codes:** the driver maps `SPINNAKER_ERR_TIMEOUT` (`-1011`) to `DeviceTimeout`
@@ -434,10 +475,20 @@ are Spinnaker-only names, with units chosen so they read alike, not the native n
 `el-devices spinnaker` lists the cameras and the SDK version, then opens every camera at
 once (so they all stream, as on a rig) and captures from all of them together, each
 capture with `not_before` set to the moment it was requested. Per camera it reports
-capture latency (request to frame returned), frame age (frame timestamp minus request),
-stale and incomplete frames dropped, frames accepted with a missing trailer, and the
-frame rate and MB/s the camera streams. `--frames 0` only lists. It exits 1 if any capture
-failed.
+capture latency (request to frame returned), when exposure started relative to the
+request (`Frame.timestamp` minus request; runs before 2026-10-19 printed "frame age",
+measured from the end of exposure), stale and incomplete frames dropped, frames
+accepted with a missing trailer, and the frame rate and MB/s the camera streams.
+`--frames 0` only lists. It exits 1 if any capture failed, and reports a setting out
+of range as one line naming the camera and the valid range.
+
+- `--exposure min` sets each camera's shortest exposure for the chosen pixel format.
+- `--trigger software` switches every camera to software triggering, and each round
+  fires every camera's trigger before collecting the frames.
+- `--save-missing-trailer DIR` writes each frame accepted with a missing trailer to
+  `DIR/<serial>-missing-trailer-<capture>.png`, plus one complete frame per camera,
+  `DIR/<serial>-complete.png`, to compare against. PNGs are 8- or 16-bit grayscale (or
+  RGB), written without extra dependencies; Bayer frames are saved raw, as grayscale.
 
 ```bash
 el-devices spinnaker                       # every camera, 20 captures each
@@ -469,10 +520,9 @@ spin-4-min-80.log`), so a rerun doesn't overwrite an earlier one.
 3. **One camera at a time.** For each camera:
    `el-devices spinnaker --serial <serial> --frames 50 --exposure 0.01`, adding
    `--pixel-format RGB8` on color models. Record firmware, the timestamp node, the
-   latency and frame-age medians, the dropped counts, and the streaming frame rate and
+   latency and exposure-start medians, the dropped counts, and the streaming frame rate and
    MB/s.
-4. **All cameras together: the measurement that decides free-running versus software
-   triggering** (open since 2026-10-16; see USB topology under Timing). Always pass
+4. **All cameras together, free-running** (see USB topology under Timing). Always pass
    `--gain`, so a gain left on a camera doesn't skew the comparison.
    1. Unthrottled: `el-devices spinnaker --frames 100 --pixel-format Mono16 --gain 10
       --exposure min` (the settings of `pgs-scan`'s `utils/system_check.py`), then again
@@ -487,8 +537,7 @@ spin-4-min-80.log`), so a rerun doesn't overwrite an earlier one.
       that.
    3. Compare the "all cameras per capture" medians with the estimate for software
       triggering: the number of cameras × the frame size over ~400 MB/s, plus the
-      exposure time (4 × 10 MB at Mono16 is about 100 ms). Record both in Last run for
-      the maintainer's decision.
+      exposure time (4 × 10 MB at Mono16 is about 100 ms). Step 10 measures it.
    Rising latency, incomplete frames, or failed captures with every camera streaming
    mean the USB link is saturated.
 5. **USB bandwidth.** Add up the per-camera MB/s from step 4 per USB controller, and
@@ -504,29 +553,54 @@ spin-4-min-80.log`), so a rerun doesn't overwrite an earlier one.
    maximum exposure is capped by the frame rate (52 ms at 19 frames/s on the
    CM3-U3-50S5M), so 0.5 s is refused; the full throughput limit undoes any cap left
    from step 4, so the frame rate and readout stay the same in both runs, and gain 0
-   keeps the 45 ms frames from saturating. Latency minus frame age is readout and
-   transfer time if the timestamp marks the end of exposure, and that plus the exposure
-   time if it marks the start: a jump of about 44 ms between the runs means start.
+   keeps the 45 ms frames from saturating. The driver assumes the camera stamps the end
+   of exposure and subtracts the exposure, so latency minus the exposure-start median
+   is exposure plus readout and transfer: it should rise by about 44 ms between the
+   runs. About 88 ms means the camera stamps the start, and the driver is wrong for
+   that model. (The 2026-10-19 run used the old "frame age", from the raw timestamp,
+   where no jump meant end of exposure.)
 7. **Hardware tests.** For one camera of each model:
    `SPINNAKER_SERIAL=<serial> pytest -m hardware -s -v tests/test_spinnaker_hardware.py`.
-   `-s` shows the printed timestamp node, offset spread, frame age, the stale and
+   `-s` shows the printed timestamp node, offset spread, exposure start, the stale and
    incomplete counts over 300 captures, and the throughput limit's range and the
-   resulting frame rate, which settles whether the limit is in bytes or bits.
+   resulting frame rate, which settles whether the limit is in bytes or bits, and a
+   software-triggered capture.
 8. **Another program holding a camera.** Open the camera in SpinView, run
    `el-devices spinnaker --serial <serial> --frames 1`, and record the error. On macOS
    the camera opens and the capture times out (`-1011`) after the 5 s timeout. Close
    SpinView.
-9. **Missing trailers.** If any run reported frames "accepted with a missing trailer",
-   say how often, and whether those frames looked right. That settles whether accepting
-   them is safe. `el-devices spinnaker` doesn't save images, so this needs a script or
-   `pgs-scan`.
+9. **Missing trailers.** Rerun the uncapped 20 ms run from step 4, which had the most
+   missing trailers, saving them:
+   `el-devices spinnaker --serial <s1> --serial <s2> ... --frames 100 --pixel-format
+   Mono16 --gain 10 --exposure 0.02 --save-missing-trailer missing-trailer 2>&1 | tee
+   spin-9-missing-trailer.log`. Open the PNGs next to each camera's
+   `-complete.png` and look for torn, shifted, or partly blank rows, especially at the
+   bottom of the frame. Record how many were saved and whether they looked right. That
+   settles whether accepting them is safe. The PNGs hold the raw 16-bit values; if
+   they look nearly black, the data is right-aligned (see `preview_frame()` above),
+   so stretch the contrast in the viewer.
+10. **Software trigger versus free-running.** With the same four cameras on USB 3,
+    Mono16, gain 10, 100 captures, run each of these with its own log, adding
+    `--trigger software` to the free-running runs of step 4:
+    - `--exposure min --trigger software` (`spin-10-trig-min.log`)
+    - `--exposure 0.02 --trigger software` (`spin-10-trig-20ms.log`)
+    - `--exposure min --trigger software --throughput-limit 80`
+      (`spin-10-trig-min-80.log`)
+    - `--exposure 0.02 --trigger software --throughput-limit 80`
+      (`spin-10-trig-20ms-80.log`)
+
+    Rerun step 4's four free-running runs in the same session for a fair comparison.
+    Record per camera the latency and exposure-start medians, incomplete, missing
+    trailer and failed counts, and the "all cameras per capture" median, against the
+    ~100 ms + exposure estimate. Exposure start in trigger mode should be a few
+    milliseconds at most (trigger latency).
 
 Settled for the CM3-U3-50S5M (2026-10-19): the throughput limit is in bytes and the model
-has it, the timestamp node is `Timestamp`, the timestamp marks the end of exposure, and
-another program streaming shows up as `-1011`, not `-1005`. Still open: the same facts for
-other models, the frame-ID assumption (step 5), whether frames with missing trailers are
-good (step 9), and whether software triggering beats free-running on a shared link (the
-maintainer's decision).
+has it, the timestamp node is `Timestamp`, the camera's timestamp marks the end of
+exposure (so the driver subtracts the exposure), and another program streaming shows up
+as `-1011`, not `-1005`. Still open: the same facts for other models, the frame-ID
+assumption (step 5), whether frames with missing trailers are good (step 9), and how
+software triggering compares with free-running on a shared link (step 10).
 
 ### Last run
 
@@ -534,6 +608,8 @@ maintainer's decision).
 Python 3.12. Five Chameleon3 CM3-U3-50S5M, firmware 1.12.3.00, all on one Acroname
 USBHub3p (serial 0x1A43352C, one upstream link). Raw logs: `spin-4-*.log`,
 `spin-6b-*.log`, `spin-7-tests.log`, `spin-8-busy.log`.
+"Frame age" in these runs is the raw (end-of-exposure) timestamp minus the request; the
+driver now reports the start of exposure instead.
 
 - **USB 2 camera:** 20305114, on hub port 3, negotiated USB 2 only, and a power cycle
   (`el-devices hub cycle 3`) didn't bring it back to USB 3 (a bad cable is suspected).

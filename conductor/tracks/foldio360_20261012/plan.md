@@ -131,7 +131,7 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
     - `run(24)` steps +15° each, so `run` turns clockwise. Open question settled.
     - 90° at speeds 1/2/3 measured 12.707/9.701/6.573 s against 12.467/9.413/6.271 s predicted, 0.24–0.30 s over. Recommendation: keep the model and the timeouts. The excess matches the two counter reads around each `move_by` call (start position and arrival check), which the hardware test's timer includes and the watchdog doesn't time. The watchdog leaves seconds of margin either way. `move_to` 20° took 3.06 s, `move_by` 380° at speed 3 took 26.70 s, and a 2 s jog at speed 1 covered 15°.
     - Halo levels 1.0/0.5/0.25/0.0 read back; the paced 21-step ramp landed its last level.
-  - Follow-up for the maintainer: `test_stop_leaves_the_halo_alone` was added after this run. Re-run it with `FOLDIO360_ADDRESS=<uuid> .venv/bin/pytest -m hardware tests/test_foldio360_hardware.py -k halo_alone -s`.
+  - `test_stop_leaves_the_halo_alone`, added after this run, passed on hardware on 2026-10-19.
 - [ ] Task 5.3: With the maintainer, add a README pointer to `educelab-devices` in `~/source/foldio360` and archive it.
 
 ### Verification

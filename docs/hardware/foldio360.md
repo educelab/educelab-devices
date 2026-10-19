@@ -588,9 +588,9 @@ How `Foldio360` maps the protocol onto the `Stage` role:
   300 ms, discarding whatever OKs the cancel produced (one or two: whether a cancelled
   `rotate` still sends its own OK is **unknown**, see [cancel](#cancel)), re-reads the
   counter, and raises `PositionError`. `stop()` only cancels motion: it never sends
-  `set_bright`, so the halo stays at its level. Whether the firmware's own `cancel`
-  changes the halo is not recorded anywhere; `test_stop_leaves_the_halo_alone` checks it
-  on hardware.
+  `set_bright`, so the halo stays at its level. The firmware's own `cancel` leaves the
+  halo alone too (**verified** 2026-10-19 by `test_stop_leaves_the_halo_alone`, firmware
+  `V1.0.2_1712M02669`).
 - **Stray replies.** Acks nobody waits for (a cancel sent during another command, a
   reply that arrived after its timeout) are counted.
   The next command first waits for the link to go quiet and discards them, and a query
@@ -722,8 +722,8 @@ turntable connected to another host doesn't advertise, so it isn't listed.
   landed its last level.
 - `CW` turned the platter clockwise.
 - Nothing surprising beyond the ~0.27 s per-move overhead under [Timing](#timing).
-- `test_stop_leaves_the_halo_alone` was added after this run and hasn't run on hardware
-  yet.
+- `test_stop_leaves_the_halo_alone` was added after this run; it passed on its own on
+  2026-10-19 (same unit and firmware).
 
 ## Capture provenance
 

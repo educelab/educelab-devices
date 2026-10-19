@@ -4,8 +4,9 @@ Machine-vision cameras driven through Teledyne FLIR's Spinnaker SDK and its Pyth
 bindings, PySpin. The lab uses them in the `pgs-scan` rigs (several cameras capturing
 together). Driver: `educelab.devices.cameras.spinnaker`.
 
-> Nothing here has been checked on a rig yet. The rig check (see Manual check) settles
-> the facts marked **unknown** and confirms or corrects the ones marked assumed.
+> Checked on one rig of Chameleon3 CM3-U3-50S5M cameras (2026-10-16 and 2026-10-19; see
+> Last run). Facts marked **unknown** or assumed are still open; the rig check (Manual
+> check) settles them.
 
 ## Identity
 
@@ -178,12 +179,9 @@ cameras can share one link (see USB topology under Timing). In SDK 4.4.0 the nod
 streamed out by the device", in Spinnaker's `Camera.h`.
 
 - **Units:** the setting is in MB/s, where MB is 10^6 bytes, as in `el-devices
-  spinnaker`'s reports. The driver treats the node as **bytes** per second: the header
-  says "bps", but SFNC gives the unit as Bps, and a USB 3 camera's limits only make sense
-  in bytes. That is **assumed**. The hardware test
-  `test_throughput_limit_round_trips_and_is_restored` settles it by comparing
-  `resulting_frame_rate` with the limit divided by the frame size; bits would give an
-  eighth of that.
+  spinnaker`'s reports. The node counts **bytes** per second, although the header says
+  "bps" (verified on the CM3-U3-50S5M, 2026-10-19: capped at 80.384 MB/s, each camera
+  streamed 8.0 frames/s of 10 MB Mono16 frames, 80.4 MB/s; bits would give an eighth).
 - **Range and rounding:** `minimum`, `maximum`, and `step` come from the node's
   `GetMin()`, `GetMax()`, and `GetInc()`. A written value goes to the nearest
   `minimum + k * step` (half a step rounds to the even `k`, as Python's `round()` does),
@@ -198,14 +196,28 @@ streamed out by the device", in Spinnaker's `Camera.h`.
 - **While acquiring:** the driver writes the limit straight away if the node is
   writable, and otherwise pauses acquisition around the write, as for `pixel_format`.
   Whether any rig camera needs that is unverified.
-- **Does the Chameleon3 have it?** Unknown. The node is SFNC, and the 4.4.0 headers list
-  it, but older models may not implement it. If a camera lacks it, the setting isn't
-  listed, and `el-devices spinnaker --throughput-limit` fails naming the camera.
+- **Does the Chameleon3 have it?** Yes (CM3-U3-50S5M, firmware 1.12.3.00, verified
+  2026-10-19): 10.048 to 190.912 MB/s in steps of 10.048 on a USB 3 link. On a USB 2
+  link the maximum drops to 50.24 MB/s. Other models are unknown; if a camera lacks the
+  node, the setting isn't listed, and `el-devices spinnaker --throughput-limit` fails
+  naming the camera.
 
 A frame-rate setting (`AcquisitionFrameRateEnable` and `AcquisitionFrameRate` in the
 4.4.0 headers) is not exposed. The throughput limit covers the bandwidth problem without
 it. It would be worth adding if a rig camera lacks `DeviceLinkThroughputLimit`, after
 checking that camera's node names, since older models may use other names.
+
+**Exposure limits** (CM3-U3-50S5M, verified 2026-10-19):
+
+- The **maximum exposure is limited by the frame rate**: 52.27 ms at ~19 frames/s in
+  Mono16, and a 0.5 s exposure was rejected with `ValueError`. The driver doesn't expose
+  the frame-rate nodes (see [Not exposed](#not-exposed)), so a longer exposure needs a
+  lower frame rate set elsewhere, e.g. in SpinView. A lower `throughput_limit` also
+  lowers the frame rate; re-read `exposure_time` after changing it.
+- The **minimum exposure depends on the pixel format**: 13.35 µs in the format the
+  camera was in before the run, and from about 25 µs to 0.126 ms reported in Mono16 (the
+  shortest-exposure runs set 0.126 ms and 0.119 ms). `el-devices spinnaker --exposure
+  min` sets each camera's minimum for the chosen pixel format.
 
 ### Timestamps
 
@@ -222,14 +234,13 @@ checking that camera's node names, since older models may use other names.
   `TimestampLatchValue`. `el-devices spinnaker` prints which (`timestamp_node`). The
   Chameleon3 CM3-U3-50S5M has `Timestamp` (verified on unit 20305113, firmware
   1.12.3.00, 2026-10-16); other models unknown.
-- **Unknown:** whether the image timestamp marks the start or the end of exposure. If
-  it is the start, `not_before` rejects any frame whose exposure began before the
-  request, which is what a rig wants after moving a stage or changing a light. If it is
-  the end, a frame exposed partly before the request passes, and rig code should add the
-  exposure time to `not_before`. Manual check step 6 settles it. The first rig run is
-  suggestive but not conclusive: on the CM3-U3-50S5M at 10 ms exposure, a frame arrived
-  about 31 ms after its timestamp (latency minus frame age), roughly one sensor readout
-  at its ~35 fps, which fits a timestamp at the end of exposure better than at the start.
+- **The image timestamp marks the end of exposure** (verified on the CM3-U3-50S5M,
+  firmware 1.12.3.00, 2026-10-19; other models unknown). One camera, Mono16, uncapped at
+  19 frames/s: latency minus frame age was 56.7 ms at 1 ms exposure and 57.4 ms at
+  45 ms. A timestamp at the start would have added the ~44 ms difference. So a frame
+  whose exposure began before `not_before` but ended after it passes. Until the driver
+  decides otherwise, rig code that needs light from after the request (after moving a
+  stage or changing a light) should add the exposure time to `not_before`.
 
 ### Capturing a frame
 
@@ -241,8 +252,9 @@ frame and checks it:
 1. **Incomplete** (`IsIncomplete()`): dropped, except status
    `SPINNAKER_IMAGE_STATUS_MISSING_TRAILER` (`IMAGE_MISSING_TRAILER` before 3.0),
    which is accepted as complete and flagged as `missing_trailer` in the frame's metadata,
-   as `pgs-scan` `dev` does (**assumed** harmless until the rig check looks at those
-   frames).
+   as `pgs-scan` `dev` does. They appear when the USB link is saturated (up to 59 of
+   100 captures on one camera, 2026-10-19) and not when every camera is capped at
+   80 MB/s. Whether those frames are good is **unknown**: nobody has looked at one yet.
 2. **Stale** (offset-corrected timestamp before `not_before`): dropped.
 3. Otherwise the pixels are copied out of the buffer.
 
@@ -277,11 +289,11 @@ once it is closed.
 
 | Driver setting | Node | Driver unit → node unit | Differences |
 |---|---|---|---|
-| `exposure_time` | `ExposureTime` | s → µs (× 10^6) | Read-only while `ExposureAuto` isn't `Off` |
+| `exposure_time` | `ExposureTime` | s → µs (× 10^6) | Read-only while `ExposureAuto` isn't `Off`; range depends on pixel format and frame rate ([Settings](#settings)) |
 | `gain` | `Gain` | dB → dB | Read-only while `GainAuto` isn't `Off` |
 | `ExposureAuto`, `GainAuto` | same | symbol → symbol | Choices are `Off` and `Continuous`; `Once` is left out |
 | `pixel_format` | `PixelFormat` | symbol → symbol | Only Mono8, Mono16, RGB8 and 8/16-bit Bayer; changing it pauses acquisition |
-| `throughput_limit` | `DeviceLinkThroughputLimit` | MB/s → bytes/s (× 10^6; bytes assumed) | Reads `None` while `DeviceLinkThroughputLimitMode` is Off; writing sets the mode On first ([Settings](#settings)) |
+| `throughput_limit` | `DeviceLinkThroughputLimit` | MB/s → bytes/s (× 10^6) | Reads `None` while `DeviceLinkThroughputLimitMode` is Off; writing sets the mode On first ([Settings](#settings)) |
 | `current_throughput` | `DeviceLinkCurrentThroughput` | MB/s ← bytes/s (÷ 10^6) | Read-only |
 | `resulting_frame_rate` | `AcquisitionResultingFrameRate` | Hz → Hz | Read-only |
 
@@ -317,7 +329,7 @@ are Spinnaker-only names, with units chosen so they read alike, not the native n
 
   | PySpin | Driver |
   |---|---|
-  | `SPINNAKER_ERR_TIMEOUT` (-1011) | `DeviceTimeout` |
+  | `SPINNAKER_ERR_TIMEOUT` (-1011) | `DeviceTimeout`; before the camera's first frame, the message adds that another program (e.g. SpinView) may be streaming from it |
   | `SPINNAKER_ERR_ACCESS_DENIED` (-1005) from `Init()` | `DeviceBusy` |
   | any error writing a setting | `CommandRejected` |
   | no camera with the serial | `DeviceNotFound`, listing the attached serials |
@@ -330,7 +342,8 @@ are Spinnaker-only names, with units chosen so they read alike, not the native n
 
 ### Not exposed
 
-- Frame rate: `AcquisitionFrameRateEnable`, `AcquisitionFrameRate`.
+- Frame rate: `AcquisitionFrameRateEnable`, `AcquisitionFrameRate`. The frame rate caps
+  the longest exposure ([Settings](#settings)).
 - Turning `DeviceLinkThroughputLimitMode` off (set the maximum limit instead).
 - `ExposureAuto`/`GainAuto` `Once`, auto-exposure and auto-gain limits.
 - Triggering: `TriggerMode`, `TriggerSource`, `TriggerSoftware`, hardware lines. The
@@ -353,33 +366,38 @@ are Spinnaker-only names, with units chosen so they read alike, not the native n
   over USB whether or not anyone captures. `el-devices spinnaker` estimates it from frame
   IDs and device timestamps (frames per second times frame size). That assumes
   `GetFrameID()` counts every frame the camera sent, including the ones newest-only
-  buffering discarded. The first rig run supports it: one CM3-U3-50S5M reported ~35.7
+  buffering discarded. The rig runs support it: one CM3-U3-50S5M reported ~35.7
   frames/s and ~179 MB/s at Mono8 2448×2048 (5.0 MB per frame), which matches the
-  model's ~35 fps maximum. SpinView's stream statistics would confirm it (step 5).
+  model's ~35 fps maximum, and the estimates matched the throughput limit (190.8 MB/s
+  uncapped against 190.912, 80.4 capped against 80.384). SpinView's stream statistics
+  would confirm it (step 5, not run).
 - **USB topology on the first rig** (verified 2026-10-16): all five cameras go through
   one Acroname USBHub3p, so they share one upstream USB 3 link of 5 Gbit/s, about
-  400 MB/s usable (assumed, the usual figure for USB 3.0). Five cameras at ~179 MB/s
-  need ~900 MB/s, more than twice that, and the multi-camera run hit incomplete frames
-  (see Last run).
-  - **Per-camera budget,** sharing the link evenly: about 80 MB/s each, which at Mono8
-    full resolution (5.0 MB) is about 16 frames/s, and about 8 frames/s at Mono16.
-    Capture latency then grows to about two of those frame periods (~125 ms at Mono8).
-  - **Settings that get there:** `throughput_limit` = 80 (MB/s) on each camera, e.g.
-    `el-devices spinnaker --throughput-limit 80`, or from `pgs-scan` per scan. That
-    assumes the Chameleon3 has `DeviceLinkThroughputLimit` (Settings, above); if it
-    doesn't, set a frame rate of about 16 in SpinView instead.
-  - The alternatives are spreading the cameras across USB controllers, or capturing by
-    software trigger, which moves data only on request: 5 frames × 5 MB at ~400 MB/s is
-    about 63 ms per rig capture plus exposure. Software triggering was rejected for
-    single-camera speed (decision 2026-10-15); it may win on a shared link. The driver
-    stays free-running, and the choice stays open until step 4 measures throttled
-    free-running latency (decided 2026-10-16).
+  400 MB/s usable (assumed, the usual figure for USB 3.0).
+  - **Saturated with four cameras uncapped** (2026-10-19, Mono16): each streamed
+    9.5 frames/s, 95.4 MB/s, about 380 MB/s in all, and two cameras had frames with
+    missing trailers. A camera alone streams 190.8 MB/s.
+  - **Capping each camera at 80 MB/s** (`throughput_limit` = 80, e.g. `el-devices
+    spinnaker --throughput-limit 80`) removed the missing trailers but slowed each camera
+    to 8.0 frames/s, adding about 90 ms per capture: the "all cameras per capture" median
+    went from 158.5–166.9 ms to 249.3–249.4 ms.
+  - A camera that negotiates USB 2 (bad cable or port) streams far less, about 40 MB/s
+    and 4 frames/s in Mono16, caps at 50.24 MB/s, and makes every all-camera capture wait
+    for it (~499 ms).
+  - **Software trigger,** which moves data only on request, would take about N × frame
+    size / 400 MB/s plus the exposure: for four cameras at Mono16 (10 MB), about
+    100 ms + exposure, against the 159–167 ms measured free-running uncapped. The driver
+    stays free-running until the maintainer decides (open since 2026-10-16).
   - The Acroname hub track is adding per-port USB 2 and USB 3 limits. They don't help
     here: forcing a port to USB 2 caps a camera far below 80 MB/s.
 - **Error codes:** the driver maps `SPINNAKER_ERR_TIMEOUT` (`-1011`) to `DeviceTimeout`
   and `SPINNAKER_ERR_ACCESS_DENIED` (`-1005`) from `Init()` to `DeviceBusy`. The names and
-  values are verified in PySpin 4.4.0.246; that another process holding a camera (e.g.
-  SpinView) makes `Init()` fail with `-1005` is still assumed (step 8).
+  values are verified in PySpin 4.4.0.246.
+- **Another program streaming from the camera** (macOS, SpinView, verified 2026-10-19):
+  `Init()` does **not** fail. The camera opens, and the first capture times out with
+  `-1011` ("Failed waiting for EventData on NEW_BUFFER_DATA event"), so the driver raises
+  `DeviceTimeout`, with a hint about another program when the camera hasn't sent a frame
+  since it was opened. When `-1005` occurs is unknown.
 
 ## State and recovery
 
@@ -437,6 +455,10 @@ Run these on a multi-camera `pgs-scan` rig with Python 3.12, with `pgs-scan` clo
 would hold the cameras). Record the results in **Last run** below, with the date, host
 OS, SDK version, and each camera's model, serial, and firmware.
 
+On every run, pin `--pixel-format` and `--gain`, since the cameras keep whatever the last
+program left, and send each run to its own log file (e.g. `... 2>&1 | tee
+spin-4-min-80.log`), so a rerun doesn't overwrite an earlier one.
+
 1. **Install.** In a checkout of this repo: `python3.12 -m venv .venv`,
    `.venv/bin/pip install -e . --group dev`, then the PySpin wheel matching the
    installed SDK (Installing PySpin above). Note which USB controller or hub each camera
@@ -453,8 +475,8 @@ OS, SDK version, and each camera's model, serial, and firmware.
    triggering** (open since 2026-10-16; see USB topology under Timing). Always pass
    `--gain`, so a gain left on a camera doesn't skew the comparison.
    1. Unthrottled: `el-devices spinnaker --frames 100 --pixel-format Mono16 --gain 10
-      --exposure <the shortest exposure the rig uses>` (the settings of `pgs-scan`'s
-      `utils/system_check.py`), then again at the rig's usual exposure. Record each
+      --exposure min` (the settings of `pgs-scan`'s `utils/system_check.py`), then again
+      at the rig's usual exposure. Record each
       camera's latency median and its incomplete and failed counts, plus the "all
       cameras per capture" median.
    2. Throttled: repeat both runs with `--throughput-limit 80` added, which caps every
@@ -463,9 +485,10 @@ OS, SDK version, and each camera's model, serial, and firmware.
       command says a camera has no `DeviceLinkThroughputLimit`, set its frame rate to
       about 16 in SpinView instead, close SpinView, rerun without the option, and note
       that.
-   3. Compare the throttled "all cameras per capture" median with the estimate for
-      software triggering: about 63 ms (5 frames × 5 MB over ~400 MB/s) plus the
-      exposure time. Record both in Last run for the maintainer's decision.
+   3. Compare the "all cameras per capture" medians with the estimate for software
+      triggering: the number of cameras × the frame size over ~400 MB/s, plus the
+      exposure time (4 × 10 MB at Mono16 is about 100 ms). Record both in Last run for
+      the maintainer's decision.
    Rising latency, incomplete frames, or failed captures with every camera streaming
    mean the USB link is saturated.
 5. **USB bandwidth.** Add up the per-camera MB/s from step 4 per USB controller, and
@@ -475,29 +498,86 @@ OS, SDK version, and each camera's model, serial, and firmware.
    corrects the frame-ID assumption under Timing. If the throttled run in step 4 still
    dropped frames, lower `--throughput-limit` (e.g. 70, then 60), rerun it, and record
    what worked.
-6. **Which moment the timestamp marks.** For one camera, run step 3 with `--exposure
-   0.001` and again with `--exposure 0.5`. Latency minus frame age is roughly readout
-   and transfer time if the timestamp marks the end of exposure, and that plus the
-   exposure time if it marks the start. A jump of about 500 ms between the two runs means
-   start of exposure.
+6. **Which moment the timestamp marks.** For one camera of each model, run
+   `el-devices spinnaker --serial <serial> --frames 50 --pixel-format Mono16 --gain 0
+   --throughput-limit 190` with `--exposure 0.001`, then with `--exposure 0.045`. The
+   maximum exposure is capped by the frame rate (52 ms at 19 frames/s on the
+   CM3-U3-50S5M), so 0.5 s is refused; the full throughput limit undoes any cap left
+   from step 4, so the frame rate and readout stay the same in both runs, and gain 0
+   keeps the 45 ms frames from saturating. Latency minus frame age is readout and
+   transfer time if the timestamp marks the end of exposure, and that plus the exposure
+   time if it marks the start: a jump of about 44 ms between the runs means start.
 7. **Hardware tests.** For one camera of each model:
    `SPINNAKER_SERIAL=<serial> pytest -m hardware -s -v tests/test_spinnaker_hardware.py`.
    `-s` shows the printed timestamp node, offset spread, frame age, the stale and
    incomplete counts over 300 captures, and the throughput limit's range and the
    resulting frame rate, which settles whether the limit is in bytes or bits.
 8. **Another program holding a camera.** Open the camera in SpinView, run
-   `el-devices spinnaker --serial <serial> --frames 1`, and record the error. The driver
-   expects `DeviceBusy` from error code `-1005`. Close SpinView.
+   `el-devices spinnaker --serial <serial> --frames 1`, and record the error. On macOS
+   the camera opens and the capture times out (`-1011`) after the 5 s timeout. Close
+   SpinView.
 9. **Missing trailers.** If any run reported frames "accepted with a missing trailer",
    say how often, and whether those frames looked right. That settles whether accepting
-   them is safe.
+   them is safe. `el-devices spinnaker` doesn't save images, so this needs a script or
+   `pgs-scan`.
 
-Settle in this doc: the throughput limit's unit and whether each model has it, the
-timestamp node per model, start or end of exposure, the frame-ID
-assumption, the `-1005` and `-1011` codes, how often missing trailers occur, and whether
-continuous acquisition fits the rig's USB bandwidth.
+Settled for the CM3-U3-50S5M (2026-10-19): the throughput limit is in bytes and the model
+has it, the timestamp node is `Timestamp`, the timestamp marks the end of exposure, and
+another program streaming shows up as `-1011`, not `-1005`. Still open: the same facts for
+other models, the frame-ID assumption (step 5), whether frames with missing trailers are
+good (step 9), and whether software triggering beats free-running on a shared link (the
+maintainer's decision).
 
 ### Last run
+
+**2026-10-19**, macOS (Apple Silicon), Spinnaker SDK 4.4.0.246, PySpin 4.4.0.246 on
+Python 3.12. Five Chameleon3 CM3-U3-50S5M, firmware 1.12.3.00, all on one Acroname
+USBHub3p (serial 0x1A43352C, one upstream link). Raw logs: `spin-4-*.log`,
+`spin-6b-*.log`, `spin-7-tests.log`, `spin-8-busy.log`.
+
+- **USB 2 camera:** 20305114, on hub port 3, negotiated USB 2 only, and a power cycle
+  (`el-devices hub cycle 3`) didn't bring it back to USB 3 (a bad cable is suspected).
+  Its throughput limit maximum was 50.24 MB/s against 190.912 on USB 3. It was left out
+  of the reruns.
+- **Step 4, five cameras** (logs overwritten; numbers from the session), Mono16, gain 10:
+  - minimum exposure: 20305114 streamed 4.0 frames/s, 40.2 MB/s, latency median
+    498.6 ms; the other four ~9.5 frames/s, 95.4 MB/s each. All cameras per capture:
+    median 498.9 ms, set by the USB 2 camera. Missing trailers: 61 on 20298479, 4 on
+    20305122;
+  - 20 ms: all cameras per capture median 499.0 ms; 11 missing trailers on 20298479;
+  - `--throughput-limit 80` was refused: "20305114: throughput_limit=80.0 is above
+    50.24".
+- **Step 4, four cameras on USB 3** (20305113, 20305122, 20298452, 20298479), Mono16,
+  gain 10, 100 captures each. No incomplete frames and no failures in any run.
+
+  | Run | Per camera | Latency medians | All cameras per capture | Missing trailers |
+  |---|---|---|---|---|
+  | Minimum exposure (0.126 ms), uncapped | 9.5 frames/s, 95.4 MB/s | 108.1–134.9 ms | median 158.5 ms | 1 on 20298479 |
+  | 20 ms, uncapped | 9.5 frames/s, 95.4 MB/s | 106.8–166.6 ms | median 166.9 ms | 58 on 20298452, 59 on 20298479 |
+  | Minimum exposure (0.119 ms), capped at 80 (80.384 MB/s) | 8.0 frames/s, 80.4 MB/s | 135.1–248.7 ms | median 249.4 ms | 0 |
+  | 20 ms, capped at 80 | 8.0 frames/s, 80.4 MB/s | 184.3–248.7 ms | median 249.3 ms | 0 |
+
+  Stale frames: about 51 per 100 captures uncapped, about 101 capped. The estimate for
+  software triggering is 4 × 10 MB / ~400 MB/s ≈ 100 ms plus the exposure.
+- **Exposure limits:** see [Settings](#settings). The maximum was 52.27 ms at ~19 frames/s
+  in Mono16; 0.5 s was rejected with `ValueError` (a traceback, before `el-devices
+  spinnaker` reported setting errors on one line).
+- **Step 5:** not run.
+- **Step 6,** 20305113 alone, Mono16, gain 0, uncapped (19.0 frames/s, 190.8 MB/s),
+  50 captures: at 1 ms, latency median 104.9 ms, frame age 48.2 ms, difference 56.7 ms;
+  at 45 ms, 104.8 ms, 47.4 ms, 57.4 ms. No ~44 ms jump, so the timestamp marks the end
+  of exposure.
+- **Step 7,** one camera (serial not logged): 15 of 15 hardware tests passed in 51.1 s. Timestamp node
+  `Timestamp`; offset spread 46 µs over 5 measurements; 300 captures: 300 stale,
+  0 incomplete, 0 re-measured; throughput limit 10.048–190.912 MB/s, step 10.048.
+- **Step 8,** 20305113 open in SpinView: the driver opened the camera (`Init()` didn't
+  fail with `-1005`), then the capture failed after the 5 s timeout with
+  `DeviceTimeout: ... Failed waiting for EventData on NEW_BUFFER_DATA event. (GenTL error
+  code: -1011) [-1011]`.
+- **Step 9:** missing trailers were counted (above), but no frame with one has been
+  looked at, because `el-devices spinnaker` doesn't save images.
+
+### Earlier run
 
 **2026-10-16**, macOS (Apple Silicon), Spinnaker SDK 4.4.0.246, PySpin 4.4.0.246 on
 Python 3.12. Five Chameleon3 CM3-U3-50S5M, firmware 1.12.3.00, all on one Acroname
@@ -524,5 +604,4 @@ USBHub3p (one upstream USB 3 link).
   five cameras streaming, so incomplete frames appeared only then, as expected when
   ~900 MB/s shares a ~400 MB/s link. Fixed: the driver uses 4.4.0's names, a test
   compares the fake with real PySpin, and `el-devices spinnaker` reports any exception
-  in a capture thread as that camera's failure. Rerun step 4.
-- Steps 5–9: not run yet.
+  in a capture thread as that camera's failure. Step 4 was rerun on 2026-10-19.

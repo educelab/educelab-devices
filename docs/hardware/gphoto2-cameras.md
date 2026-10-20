@@ -18,8 +18,9 @@ camera libgphoto2 drives over PTP.
 - `serial_number` and `firmware_version` come from the `serialnumber` and
   `deviceversion` widgets, each read on its own at `open()` (a full config read takes
   2.6 s on the Z7 II, too slow for `open()`). A camera without them, or a failed read,
-  leaves them `None`. On the Z7 II they are `00000000000000000000000003059822` and
-  `V1.62`; how long the two reads take is **unknown** until the next bench run.
+  leaves them `None`. The Z7 II pads its serial with zeros to 32 digits
+  (`…03057001`) and reports firmware `V1.62`. `open()` takes 0.13 s including both
+  reads (2026-10-20, `~/hw-logs/gphoto2-hw-open-linux-1.log`).
 
 ## Transport
 

@@ -2,19 +2,18 @@
   "id": "spinnaker-camera_20261012",
   "title": "Spinnaker Camera",
   "type": "feature",
-  "status": "in_progress",
+  "status": "complete",
   "created": "2026-10-12T00:00:00Z",
-  "updated": "2026-10-16T00:00:00Z",
+  "updated": "2026-10-20T00:00:00Z",
   "phases": {
     "total": 3,
-    "completed": 2
+    "completed": 3
   },
   "tasks": {
     "total": 12,
-    "completed": 11
+    "completed": 12
   },
   "current_phase": 3,
-  "current_task": "3.4",
   "commits": [
     "a7b36f7: Add a fake PySpin module for Spinnaker driver tests",
     "67bd9f2: Import PySpin lazily with an install hint",
@@ -35,6 +34,18 @@
     "ff6dcfc: Finish the Spinnaker hardware doc with the rig check steps",
     "7122413: Record Spinnaker Phase 3 progress",
     "51ba634: Use PySpin 4.4.0's names and require Spinnaker 4.4.0",
-    "c5cc92e: Record the first Spinnaker rig run and fix the install docs"
+    "c5cc92e: Record the first Spinnaker rig run and fix the install docs",
+    "06132d8: Record Spinnaker rig-fix progress",
+    "9aa08f1: Require numpy 2 and leave the triggering choice to a rig measurement",
+    "87e3024: Add a Spinnaker throughput_limit setting",
+    "4bd97b2: List how the Spinnaker driver differs from PySpin and SpinView",
+    "305b704: Allow descriptive setting names when the hardware doc maps them",
+    "311d12e: Report bad Spinnaker settings on one line and add --exposure min",
+    "2504ffe: Record the 2026-10-19 Spinnaker rig run",
+    "4eb017d: Report Spinnaker frame timestamps at the start of exposure and add software triggering",
+    "2d8c600: Fire a missed Spinnaker software trigger again and record the 2026-10-20 rig run",
+    "8db589c: Wait by the free-running frame rate for a missed Spinnaker trigger",
+    "89af548: Prime the Spinnaker software trigger when acquisition starts",
+    "2d0cad4: Record the passing Spinnaker trigger test with priming"
   ]
 }

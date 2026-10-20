@@ -71,7 +71,8 @@ Build a fake PySpin first, then the system/enumeration layer, then the per-camer
 
 ### Verification
 
-- [ ] Maintainer confirms capture timing and reliability on a rig.
+- [x] Maintainer confirms capture timing and reliability on a rig.
+  - Approved 2026-10-20, after the 2026-10-20 rig runs and the passing trigger test with priming. Rig step 5 (frame IDs) stays open in the hardware doc.
   - Decided (2026-10-16): keep continuous free-running acquisition. Whether software triggering is faster on a shared USB link stays open until rig step 4 measures it: rerun with `--gain`, then with `DeviceLinkThroughputLimit` at ~80 MB/s per camera, and compare the per-capture latency with the ~63 ms + exposure estimate for triggering.
   - Decided (2026-10-16): drop numpy 1. numpy's floor is now `>=2`, and the CI `numpy1` job was removed. PySpin 4.4.0's cp312 wheel requires numpy>=2 anyway.
   - Decided (2026-10-16): add a Spinnaker-only `throughput_limit` setting (MB/s, 10^6 bytes) on `DeviceLinkThroughputLimit`, so `pgs-scan` can cap each camera's USB bandwidth per scan instead of relying on what SpinView last left on the camera. The driver doesn't change it at open. Read-only `current_throughput` (MB/s) and `resulting_frame_rate` (Hz) come with it. `el-devices spinnaker --throughput-limit MBPS` sets it, and rig step 4's throttled run uses `--throughput-limit 80`. A frame-rate setting is not built; it's worth adding only if a rig camera lacks the limit node.
@@ -100,10 +101,10 @@ Build a fake PySpin first, then the system/enumeration layer, then the per-camer
 
 ## Final Verification
 
-- [ ] All acceptance criteria met
-- [ ] Tests passing
-- [ ] Documentation updated
-- [ ] Ready for review
+- [x] All acceptance criteria met
+- [x] Tests passing
+- [x] Documentation updated
+- [x] Ready for review
 
 ---
 

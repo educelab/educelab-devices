@@ -66,7 +66,8 @@ Build a fake PySpin first, then the system/enumeration layer, then the per-camer
 - [x] Task 3.1: Write `docs/hardware/spinnaker.md`.
 - [x] Task 3.2: Add the `el-devices spinnaker` subcommand with the benchmark.
 - [x] Task 3.3: Write `@pytest.mark.hardware` tests.
-- [ ] Task 3.4: Run them on a multi-camera `pgs-scan` rig (Python 3.12); record findings.
+- [x] Task 3.4: Run them on a multi-camera `pgs-scan` rig (Python 3.12); record findings.
+  - Done over 2026-10-16, -19 and -20 (hardware doc, Last run and earlier runs). Rig step 5 (frame IDs against SpinView) was never run; the frame-ID assumption stays open.
 
 ### Verification
 
@@ -95,6 +96,7 @@ Build a fake PySpin first, then the system/enumeration layer, then the per-camer
 - Third rig run (2026-10-20), recorded in the hardware doc's Last run, five cameras on USB 3 (20305114 came back on USB 3). Step 10: software triggering took 147–172 ms per capture of all five with no stale frames or missing trailers, against ~250–290 ms free-running. Step 9 was inconclusive: the cameras keep the throughput limit between opens, so it ran capped and no frame had a missing trailer. 15 of 16 hardware tests passed; the software-trigger test timed out when the camera ignored a trigger fired right after the mode switch. Fixed after the run: a triggered capture waits the exposure plus three frame periods, then fires again (`retriggers` in the metadata, counted by `el-devices spinnaker`). The hardware test of 300 captures now also checks for a dtype reference leak, after one run ended with numpy's reference-count message.
 - Reruns (2026-10-20): uncapped triggering took 129 ms per five-camera capture. Missing-trailer frames (192 saved) are intact, so accepting them is safe. The dtype refcount didn't drift over 300 captures. The trigger test got its frame 1.054 s late: the re-fire waited the 1 s fallback, so the CM3-U3-50S5M probably hides `AcquisitionResultingFrameRate` in trigger mode. The driver now falls back to the rate read just before switching, and the test prints both rates.
 - Trigger test rerun (2026-10-20, 20305122): failed again. The CM3-U3-50S5M has no readable `AcquisitionResultingFrameRate` at all, so the fallback did nothing; only the first capture after the switch missed. Replaced with priming: whenever acquisition starts in trigger mode, the driver fires until the camera answers and discards that frame, and a capture's re-fire wait is the exposure plus three times that trigger's turnaround. Three captures began ~100 ms after the request with no re-fire, unexplained.
+- Trigger test with priming (2026-10-20, 20305122): passed. Switch 0.181 s, turnaround 57 ms, all 20 captures 2.2–3.2 ms after the request, no re-fires, no ~100 ms outliers. The first priming trigger was answered, so why the first capture missed without priming is unknown; priming fixes it in practice.
 
 ## Final Verification
 

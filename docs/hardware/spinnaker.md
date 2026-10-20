@@ -198,15 +198,18 @@ another pixel format.
   from an earlier capture that timed out, counts as stale, so no frame from before the
   trigger is returned. After a stale or incomplete frame it fires again. `not_before` is
   still honoured: the trigger fires after any wait for it.
-- **Priming:** a camera ignores triggers for a while after acquisition starts. On the
-  CM3-U3-50S5M, the first capture after switching to `"Software"` got no frame three
-  runs in a row (2026-10-20, hardware test), while 500 captures per camera from
-  `el-devices spinnaker` missed none. Whenever acquisition starts in trigger mode (the
+- **Priming:** on the CM3-U3-50S5M, the first capture after switching to `"Software"`
+  got no frame three runs in a row (2026-10-20, hardware test), while 500 captures per
+  camera from `el-devices spinnaker` missed none. Whenever acquisition starts in trigger mode (the
   switch itself, or a pause for `pixel_format` or `throughput_limit`), the driver fires
   until the camera answers, waiting the exposure plus 1 s (`_PRIME_WAIT_S`) each time,
   and throws the frame away. If no trigger is answered within `capture_timeout`, the
-  setting write raises `DeviceTimeout`. How long the camera takes to become ready is
-  **unknown** (the next hardware test run prints how long the switch took).
+  setting write raises `DeviceTimeout`. With priming, the hardware test passed (2026-10-20,
+  20305122): the switch took 0.181 s with a 57 ms turnaround, and all 20 captures began
+  2.2–3.2 ms after the request with no re-fire. A missed priming trigger would have
+  added a second, so the camera answered the first one. Why the first capture missed
+  without priming is **unknown**: "not ready right after acquisition starts" doesn't fit,
+  since the priming trigger fires just as soon. Priming fixes it in practice.
 - **Missed triggers:** the answered trigger's turnaround (fire to frame) is timed. A
   capture waits the exposure plus three turnarounds (`_RETRIGGER_TURNAROUNDS`) for its
   frame, then fires again, until its timeout runs out. The metadata counts these as
@@ -707,7 +710,10 @@ Reruns the same day, with the throughput limit set to 190.912 MB/s explicitly (l
   once and began 1026.9 ms after the request. The other 19 began 1.2–14.4 ms after it,
   except three at 98.2, 108.4 and 110.4 ms (captures 2, 3 and 6) with no re-fire,
   which is **unexplained**. The driver now primes the trigger when acquisition starts
-  (Priming); not yet rerun.
+  (Priming).
+- **Step 7, trigger test only, with priming** (`spin-7e-trigger.log`), 20305122: passed.
+  Switch 0.181 s, turnaround 57 ms, exposure start 2.2–3.2 ms after the request for all
+  20 captures, no re-fires, and none of 7d's ~100 ms outliers.
 
 ### Run of 2026-10-19
 

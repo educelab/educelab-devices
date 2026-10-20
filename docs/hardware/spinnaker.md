@@ -169,15 +169,19 @@ setting `pixel_format` ends acquisition, changes the format, and begins again.
 #### Software trigger (opt-in)
 
 **Decided 2026-10-19:** free-running stays the default, and the `trigger` setting
-switches a camera to software triggering, so nothing streams between captures. Whether
-it beats free-running on a shared link is for rig step 10 to measure.
+switches a camera to software triggering, so nothing streams between captures.
+**Measured 2026-10-20** (rig step 10, Last run): with four cameras on one link, each
+capture of all four took a median of 147 ms at minimum exposure, against about 250 ms
+free-running, with no stale frames and no missing trailers. Exposure began 4–13 ms
+after the request.
 
 - **Switching:** `trigger = "Software"` ends acquisition, sets `TriggerMode=Off`,
   `TriggerSelector=FrameStart` (if it isn't already), `TriggerSource=Software`, then
   `TriggerMode=On`, and begins again, as Spinnaker's Trigger example does
   (`TriggerSource` is only writable while the mode is Off). `"Off"` sets
   `TriggerMode=Off`. `open()` always starts free-running. Node names and enum entries
-  checked against PySpin 4.4.0.246 by introspection (2026-10-19); not yet on a rig.
+  checked against PySpin 4.4.0.246 by introspection (2026-10-19), and on the
+  CM3-U3-50S5M (2026-10-20).
 - **Each capture:** releases any frames already waiting in the buffer (with
   `GetNextImage(EVENT_TIMEOUT_NONE)` until it times out; that an empty buffer raises
   `-1011` at once is assumed), executes
@@ -186,6 +190,13 @@ it beats free-running on a shared link is for rig step 10 to measure.
   from an earlier capture that timed out, counts as stale, so no frame from before the
   trigger is returned. After a stale or incomplete frame it fires again. `not_before` is
   still honoured: the trigger fires after any wait for it.
+- **Missed triggers:** a camera can ignore a trigger. On the CM3-U3-50S5M, a capture
+  made right after switching to `"Software"` sometimes got no frame and timed out after
+  5 s (2026-10-20, hardware test; that the camera wasn't yet ready is assumed). So a
+  capture waits only the exposure plus three frame periods (`_RETRIGGER_PERIODS`, from
+  `AcquisitionResultingFrameRate`; 1 s if the camera lacks it) for a frame, then fires
+  again, until its timeout runs out. The metadata counts these as `retriggers`. If the
+  first trigger's frame arrives late after all, the next capture discards it.
 - **Several cameras:** `camera.trigger()` fires now and the next capture collects that
   frame, so a caller can fire every camera before collecting (as `el-devices spinnaker
   --trigger software` does). If that trigger is older than the capture's `not_before`,
@@ -216,6 +227,10 @@ streamed out by the device", in Spinnaker's `Camera.h`.
   `minimum + k * step` (half a step rounds to the even `k`, as Python's `round()` does),
   clamped to the range. GenICam integer nodes refuse values off their increment, so the
   driver rounds them itself. `setting.nearest()` gives the value that will be kept.
+- **The camera keeps it:** a limit set in one session is still set when the camera is
+  next opened, until the camera loses power (verified on the CM3-U3-50S5M, 2026-10-20:
+  runs without `--throughput-limit` after one with it reported 80.384 MB/s). `open()`
+  doesn't reset it, so set the limit explicitly whenever it matters.
 - **Limit mode:** SDK 4.4.0 also has `DeviceLinkThroughputLimitMode` (Off/On), which
   "Controls if the DeviceLinkThroughputLimit is active". On a camera that has it, the
   setting reads `None` while the mode is Off, and writing a value turns the mode On
@@ -295,8 +310,8 @@ frame and checks it:
 Every buffer is released whatever the outcome. It keeps taking frames until one passes
 or the timeout runs out (`DeviceTimeout`), so the timeout is the bound on retries. After
 every 5 stale frames (`RETRIES_BEFORE_REMEASURE`, `pgs-scan`'s limit) it re-measures the
-offset. The metadata reports `retries`, `stale_frames`, `incomplete_frames`, and
-`timestamp_remeasured`. `Frame.timestamp` is the start of exposure (Timestamps).
+offset. The metadata reports `retries`, `stale_frames`, `incomplete_frames`,
+`retriggers` (software trigger only), and `timestamp_remeasured`. `Frame.timestamp` is the start of exposure (Timestamps).
 
 **Expect one stale frame per capture** when free-running. With newest-only buffering,
 the frame being exposed or read out when `not_before` is set carries an earlier
@@ -469,6 +484,15 @@ are Spinnaker-only names, with units chosen so they read alike, not the native n
   bounds its retries by the capture timeout, and checks every frame.
 - **Using pixels after `Release()`:** `GetNDArray()` is a view of the SDK's buffer, so the
   driver copies it before releasing (assumed, from `pgs-scan`'s `.copy()`).
+- **numpy reference-count message at exit:** one `el-devices spinnaker` run ended with
+  `*** Reference count error detected: an attempt was made to deallocate the dtype 4 (H)
+  ***` (2026-10-20, after 100 Mono16 captures from four cameras, printed after the
+  report). numpy prints this when something releases a reference to a built-in dtype
+  that it doesn't own, and keeps going. Only one of the eight step 10 runs printed it.
+  `GetNDArray()` and `GetData()` on images made with `Image.Create()` don't leak a dtype
+  reference over 1000 calls (checked 2026-10-20), so the likeliest source is PySpin
+  tearing down at interpreter exit (assumed). The hardware test of 300 captures checks
+  that the dtype's reference count doesn't fall during capture.
 
 ## Manual check
 
@@ -572,8 +596,9 @@ spin-4-min-80.log`), so a rerun doesn't overwrite an earlier one.
 9. **Missing trailers.** Rerun the uncapped 20 ms run from step 4, which had the most
    missing trailers, saving them:
    `el-devices spinnaker --serial <s1> --serial <s2> ... --frames 100 --pixel-format
-   Mono16 --gain 10 --exposure 0.02 --save-missing-trailer missing-trailer 2>&1 | tee
-   spin-9-missing-trailer.log`. Open the PNGs next to each camera's
+   Mono16 --gain 10 --exposure 0.02 --throughput-limit 190.912 --save-missing-trailer
+   missing-trailer 2>&1 | tee spin-9-missing-trailer.log`. Pass the maximum limit
+   explicitly: the cameras keep a lower one from an earlier run. Open the PNGs next to each camera's
    `-complete.png` and look for torn, shifted, or partly blank rows, especially at the
    bottom of the frame. Record how many were saved and whether they looked right. That
    settles whether accepting them is safe. The PNGs hold the raw 16-bit values; if
@@ -598,11 +623,49 @@ spin-4-min-80.log`), so a rerun doesn't overwrite an earlier one.
 Settled for the CM3-U3-50S5M (2026-10-19): the throughput limit is in bytes and the model
 has it, the timestamp node is `Timestamp`, the camera's timestamp marks the end of
 exposure (so the driver subtracts the exposure), and another program streaming shows up
-as `-1011`, not `-1005`. Still open: the same facts for other models, the frame-ID
-assumption (step 5), whether frames with missing trailers are good (step 9), and how
-software triggering compares with free-running on a shared link (step 10).
+as `-1011`, not `-1005`. On a shared link, software triggering beats free-running
+(2026-10-20). Still open: the same facts for other models, the frame-ID assumption
+(step 5), and whether frames with missing trailers are good (step 9).
 
 ### Last run
+
+**2026-10-20**, same host, SDK and cameras as 2026-10-19. 20305114 negotiated USB 3 this
+time (95 MB/s uncapped), so all five cameras shared the hub's one upstream link. Raw
+logs: `spin-6c-*.log`, `spin-7b-tests.log`, `spin-9-missing-trailer.log`,
+`spin-10-*.log`. Mono16, gain 10, 100 captures per camera, no incomplete frames and no
+failed captures in any run.
+
+- **Step 10, software trigger against free-running.** The cameras kept the throughput
+  limit from the run before (see Settings), so both "uncapped" trigger runs were in fact
+  capped at 80.384 MB/s. The free-running runs came first and are as labelled.
+
+  | Run | All cameras per capture | Latency medians | Exposure start medians | Stale | Missing trailers |
+  |---|---|---|---|---|---|
+  | Free, min exposure, uncapped | 249.8 ms (158.4–360.2) | 141.0–189.3 ms | 34.8–55.3 ms | 48–134 | 26–66 per camera |
+  | Free, 20 ms, uncapped | 291.6 ms (185.4–383.0) | 155.2–233.9 ms | 48.6–74.6 ms | 66–162 | 11–60 per camera |
+  | Free, min exposure, 80 MB/s | 249.6 ms (232.9–419.2) | 177.1–244.2 ms | 35.2–113.8 ms | 2–104 | 0 |
+  | Free, 20 ms, 80 MB/s | 249.4 ms (244.5–307.9) | 177.0–248.9 ms | 15.2–102.1 ms | 1–102 | 0 |
+  | Trigger, min exposure, 80 MB/s (two runs) | 146.6 and 147.9 ms (143.5–150.3) | 119.4–136.3 ms | 2.3–10.4 ms | 0 | 0 |
+  | Trigger, 20 ms, 80 MB/s (two runs) | 170.9 and 172.2 ms (165.4–175.8) | 139.7–160.4 ms | 1.8–10.3 ms | 0 | 0 |
+
+  Triggering is about 100 ms faster per capture than free-running, varies by a few
+  milliseconds instead of a hundred or more, and drops no frames, in line with the
+  ~100 ms + exposure estimate. Exposure start climbs about 2 ms per camera in the order
+  the CLI fires them (2.4, 4.6, 6.7, 8.5, 10.4 ms), so each `TriggerSoftware` call takes
+  about 2 ms. Uncapped triggering wasn't measured.
+- **Step 9:** inconclusive. The run inherited the 80 MB/s limit, so no frame had a missing
+  trailer; only the five `-complete.png` reference frames were saved.
+- **Step 6** (again, as `spin-6c`), 20305113 alone, uncapped, 50 captures: exposure start
+  median 48.1 ms after the request at 1 ms exposure and 3.9 ms at 45 ms, so the
+  start-of-exposure timestamp behaves as intended.
+- **Step 7,** 20305113: 15 of 16 hardware tests passed in 56.9 s. Offset spread 37 µs; 300
+  captures: 300 stale, 0 incomplete, 0 re-measured. `test_software_trigger_captures_a_fresh_frame`
+  failed: a capture right after switching to `"Software"` got no frame in 5 s (`-1011`).
+  The driver now fires again when no frame comes (Software trigger, Missed triggers);
+  not yet rerun.
+- One `spin-10-trig-min` run ended with numpy's reference-count message (Hazards).
+
+### Run of 2026-10-19
 
 **2026-10-19**, macOS (Apple Silicon), Spinnaker SDK 4.4.0.246, PySpin 4.4.0.246 on
 Python 3.12. Five Chameleon3 CM3-U3-50S5M, firmware 1.12.3.00, all on one Acroname
@@ -653,7 +716,7 @@ driver now reports the start of exposure instead.
 - **Step 9:** missing trailers were counted (above), but no frame with one has been
   looked at, because `el-devices spinnaker` doesn't save images.
 
-### Earlier run
+### Run of 2026-10-16
 
 **2026-10-16**, macOS (Apple Silicon), Spinnaker SDK 4.4.0.246, PySpin 4.4.0.246 on
 Python 3.12. Five Chameleon3 CM3-U3-50S5M, firmware 1.12.3.00, all on one Acroname

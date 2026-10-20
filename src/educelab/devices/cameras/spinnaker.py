@@ -96,6 +96,10 @@ _TRIGGER_MODES = ("Off", "Software")
 # How far before a software trigger a frame's exposure may seem to start and still
 # count as triggered by it: room for error in the timestamp offset.
 _TRIGGER_TOLERANCE_S = 0.001
+# A camera ignores a trigger it isn't ready for (e.g. one fired just after
+# acquisition starts). A capture fires again when no frame comes within the
+# exposure plus this many frame periods, or 1 s when the frame rate is unknown.
+_RETRIGGER_PERIODS = 3
 # More than any stream's buffer pool, so discarding waiting frames always ends.
 _MAX_DISCARDED = 100
 
@@ -778,7 +782,10 @@ class SpinnakerCamera(FrameCamera):
                 # No frame from before not_before would do, so don't grab any.
                 time.sleep(wait)
         exposure = self._read_float("ExposureTime") / _US_PER_S
+        retrigger_s = math.inf
         if self._software_trigger:
+            rate = self._read_optional_float("AcquisitionResultingFrameRate")
+            retrigger_s = exposure + (_RETRIGGER_PERIODS / rate if rate else 1.0)
             fired_at, self._fired_at = self._fired_at, None
             if fired_at is None or (
                 not_before is not None and fired_at < not_before.timestamp()
@@ -789,20 +796,30 @@ class SpinnakerCamera(FrameCamera):
                 # Any frame whose exposure began before the trigger is stale.
                 floor = datetime.fromtimestamp(fired_at - _TRIGGER_TOLERANCE_S, UTC)
                 not_before = floor if not_before is None else max(not_before, floor)
-        stale = incomplete = 0
+        stale = incomplete = retriggers = 0
         remeasured = False
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise DeviceTimeout(
                     f"{self!r}: no usable frame in {timeout:g} s "
-                    f"({stale} stale, {incomplete} incomplete)"
+                    f"({stale} stale, {incomplete} incomplete, "
+                    f"{retriggers} triggers fired again)"
                 )
-            if math.isinf(remaining):
+            wait = min(remaining, retrigger_s)
+            if math.isinf(wait):
                 grab_ms = self._pyspin.EVENT_TIMEOUT_INFINITE
             else:
-                grab_ms = max(1, math.ceil(remaining * 1000))
-            image = self._next_image(grab_ms)
+                grab_ms = max(1, math.ceil(wait * 1000))
+            try:
+                image = self._next_image(grab_ms)
+            except DeviceTimeout:
+                if wait >= remaining:
+                    raise
+                logger.info("%r: no frame from the trigger; firing again", self)
+                self._fire()
+                retriggers += 1
+                continue
             try:
                 taken = self._call(
                     "read a frame",
@@ -819,6 +836,7 @@ class SpinnakerCamera(FrameCamera):
                     "retries": stale + incomplete,
                     "stale_frames": stale,
                     "incomplete_frames": incomplete,
+                    "retriggers": retriggers,
                     "missing_trailer": taken.missing_trailer,
                     "timestamp_remeasured": remeasured,
                 }

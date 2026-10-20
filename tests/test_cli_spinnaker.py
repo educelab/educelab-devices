@@ -230,6 +230,13 @@ def test_software_trigger_fires_every_camera_before_collecting(
     assert [c.trigger_calls for c in pyspin.system.cameras] == [2, 2]
 
 
+def test_the_report_counts_triggers_fired_again(pyspin, capsys):
+    pyspin.system.cameras[0].ignore_triggers = 1
+    serial = pyspin.system.cameras[0].serial
+    main(["spinnaker", "--serial", serial, "--frames", "2", "--trigger", "software"])
+    assert "fired 1 trigger(s) again" in capsys.readouterr().out
+
+
 def test_the_report_says_when_exposure_started(pyspin, capsys):
     main(["spinnaker", "--serial", MONO, "--frames", "2"])
     assert "exposure start median" in capsys.readouterr().out

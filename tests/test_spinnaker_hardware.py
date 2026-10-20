@@ -6,6 +6,7 @@ changed by a test are put back afterwards.
 """
 
 import os
+import sys
 import threading
 from datetime import UTC, datetime, timedelta
 
@@ -121,14 +122,21 @@ def test_future_not_before_past_the_timeout_raises(camera):
 def test_many_captures_do_not_exhaust_buffers(camera):
     # pgs-scan #83 leaked a buffer per stale frame until GetNextImage blocked.
     stale = incomplete = remeasured = 0
+    dtype = camera.capture_frame().pixels.dtype
+    refs = sys.getrefcount(dtype)
     for _ in range(300):
         frame = camera.capture_frame(not_before=datetime.now(UTC), timeout=5.0)
         stale += frame.metadata["stale_frames"]
         incomplete += frame.metadata["incomplete_frames"]
         remeasured += frame.metadata["timestamp_remeasured"]
+    del frame
+    drift = sys.getrefcount(dtype) - refs
     print(
-        f"300 captures: {stale} stale, {incomplete} incomplete, {remeasured} remeasured"
+        f"300 captures: {stale} stale, {incomplete} incomplete, {remeasured} "
+        f"remeasured; {dtype} refcount drift {drift}"
     )
+    # PySpin dropping a dtype reference per frame would show up as about -300.
+    assert drift > -10
     # Re-measuring every few frames would mean the offset is wrong, not stale frames.
     assert remeasured <= 300 // RETRIES_BEFORE_REMEASURE // 10
 
@@ -201,14 +209,17 @@ def test_software_trigger_captures_a_fresh_frame(restore):
     if TRIGGER not in camera.settings():
         pytest.skip("this camera has no software trigger")
     camera.set_setting(TRIGGER, "Software")
+    retriggers = 0
     try:
         for _ in range(20):
             ready = datetime.now(UTC)
             frame = camera.capture_frame(not_before=ready, timeout=5.0)
             start = (frame.timestamp - ready).total_seconds()
             assert 0 <= start < MAX_FRAME_AGE_S
+            retriggers += frame.metadata["retriggers"]
         print(
-            f"exposure start {start * 1000:.1f} ms after the request, {frame.metadata}"
+            f"exposure start {start * 1000:.1f} ms after the request, "
+            f"{retriggers} triggers fired again in 20 captures, {frame.metadata}"
         )
     finally:
         camera.set_setting(TRIGGER, "Off")

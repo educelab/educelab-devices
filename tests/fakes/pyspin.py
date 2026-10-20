@@ -643,8 +643,12 @@ class FakeCamera:
         self.deinit_calls = 0
         self.latch_calls = 0
         self.trigger_calls = 0
+        self.grab_timeouts: list[int] = []
         self.pending_triggers: deque[int] = deque()
         self.respond_to_triggers = True
+        # Triggers to ignore before answering again, as a real camera ignores
+        # one it isn't ready for.
+        self.ignore_triggers = 0
 
         if formats is None:
             formats = ["Mono8", "Mono16"]
@@ -840,7 +844,9 @@ class FakeCamera:
                 SPINNAKER_ERR_ACCESS_DENIED,
             )
         self.trigger_calls += 1
-        if self.respond_to_triggers:
+        if self.ignore_triggers:
+            self.ignore_triggers -= 1
+        elif self.respond_to_triggers:
             self.pending_triggers.append(self.device_time_ns())
 
     def _require(self, initialized: bool = True) -> None:
@@ -968,7 +974,9 @@ class CameraPtr:
         cam.streaming = False
 
     def GetNextImage(self, grabTimeout: int = EVENT_TIMEOUT_INFINITE) -> FakeImage:
-        return self._cam()._next_image()
+        cam = self._cam()
+        cam.grab_timeouts.append(grabTimeout)
+        return cam._next_image()
 
     def GetNodeMap(self) -> NodeMap:
         return NodeMap(self._cam().nodes)

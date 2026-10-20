@@ -865,6 +865,18 @@ def test_an_unanswered_trigger_times_out(triggered, fake):
     assert fake.held == []
 
 
+def test_a_missed_trigger_is_fired_again(triggered, fake):
+    fake.ignore_triggers = 1
+    frame = triggered.capture_frame(timeout=5.0)
+    assert fake.trigger_calls == 2
+    assert frame.metadata["retriggers"] == 1
+    # Each wait is the exposure plus a few frame periods, not the whole timeout.
+    exposure = triggered.setting(EXPOSURE_TIME).value
+    rate = triggered.setting("resulting_frame_rate").value
+    wait_ms = math.ceil((exposure + spinnaker._RETRIGGER_PERIODS / rate) * 1000)
+    assert fake.grab_timeouts[-2:] == [wait_ms, wait_ms]
+
+
 def test_preview_in_software_trigger_mode_fires_a_trigger(triggered, fake):
     triggered.preview_frame()
     assert fake.trigger_calls == 1

@@ -119,6 +119,7 @@ class _Results:
     saved: int = 0
     stale: int = 0
     incomplete: int = 0
+    retriggers: int = 0
     missing_trailer: int = 0
     failures: list[str] = field(default_factory=list)
 
@@ -294,6 +295,7 @@ def _benchmark(
         result.frame_bytes = frame.pixels.nbytes
         result.stale += frame.metadata["stale_frames"]
         result.incomplete += frame.metadata["incomplete_frames"]
+        result.retriggers += frame.metadata["retriggers"]
         missing = bool(frame.metadata["missing_trailer"])
         result.missing_trailer += missing
         if save_dir is not None and (missing or not result.saved):
@@ -337,6 +339,8 @@ def _report(camera: "SpinnakerCamera", result: _Results, frames: int) -> int:
         f"  dropped {result.stale} stale, {result.incomplete} incomplete; "
         f"{result.missing_trailer} accepted with a missing trailer"
     )
+    if result.retriggers:
+        print(f"  fired {result.retriggers} trigger(s) again after no frame came")
     if result.saved:
         print(f"  saved {result.saved} frame(s)")
     streamed = _streaming_rate(result.stamps, result.frame_bytes)

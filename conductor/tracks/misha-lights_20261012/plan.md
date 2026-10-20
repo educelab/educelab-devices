@@ -84,14 +84,15 @@ Build the shared serial transport and its fake first, then the MISHA driver agai
 
 ### Verification
 
-- [ ] Maintainer confirms the panels behave as documented.
+- [x] Maintainer confirms the panels behave as documented.
+  - Approved 2026-10-20, after both panels passed the hardware tests on firmware 2.0.0.
 
 ## Final Verification
 
-- [ ] All acceptance criteria met
-- [ ] Tests passing
-- [ ] Documentation updated
-- [ ] Ready for review
+- [x] All acceptance criteria met
+- [x] Tests passing
+- [x] Documentation updated
+- [x] Ready for review
 
 ---
 

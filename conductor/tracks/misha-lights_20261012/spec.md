@@ -19,17 +19,19 @@ As a developer of spectral imaging software, I want to light one MISHA band at a
 
 ## Acceptance Criteria
 
-- [ ] Shared serial transport (internal module, lazy `pyserial`): port discovery where **all** given criteria (VID, PID, serial number, description) must match (fixes the `pgs-scan` #84 class of bug), open with DTR-reset settle, line I/O with timeouts, handshake helper, and a scripted fake for tests. `[serial]` extra declared.
-- [ ] `MishaLight` exposes 16 mono channels `"365nm"` … `"940nm"` (365, 385, 395, 420, 450, 470, 500, 530, 560, 590, 615, 630, 660, 730, 850, 940) with wavelength metadata.
-- [ ] Handshake: `ID` → `name,hw,sw`; open fails with `DeviceNotFound` if the name isn't an accepted MISHA name; firmware and hardware versions exposed in `info`.
-- [ ] `set_level(ch, x)` sends `{nm},{round(x*100)}`; `level()` reflects the firmware's turn-everything-off-first behavior (lighting one channel zeroes the others), so the driver overrides `_get_level()`. `all_off()` sends `0,0`; `close()` turns everything off first.
-- [ ] Firmware updated (SW version bumped from 1.0.0): every command is answered with exactly one line, `OK` or `ERR <reason>`; unknown wavelengths return `ERR` instead of silently turning everything off; the `ID` handshake format is unchanged.
-- [ ] The driver waits for `OK` after every command, raises `CommandRejected` on `ERR`, validates wavelengths before sending, and refuses firmware older than the updated version with a `DeviceError` pointing to the reflash steps.
-- [ ] `discover()` probes candidate ports (USB-serial VID whitelist + handshake); its slowness (~4 s per port due to DTR reset) is documented.
-- [ ] Passes the `Light` contract suite on the fake transport; hardware tests marked.
-- [ ] Firmware copied to `firmware/misha/` (`MISHA.ino`, `HashMap.h`, README with flashing steps), with provenance in the commit message, before it is modified.
-- [ ] `docs/hardware/misha.md` written to the hardware-doc conventions.
-- [ ] `el-devices misha` subcommand: handshake, step through channels, all off.
+- [x] Shared serial transport (internal module, lazy `pyserial`): port discovery where **all** given criteria (VID, PID, serial number, description) must match (fixes the `pgs-scan` #84 class of bug), open with DTR-reset settle, line I/O with timeouts, handshake helper, and a scripted fake for tests. `[serial]` extra declared.
+- [x] `MishaLight` exposes 16 mono channels `"365nm"` … `"940nm"` (365, 385, 395, 420, 450, 470, 500, 530, 560, 590, 615, 630, 660, 730, 850, 940) with wavelength metadata.
+- [x] Handshake: `ID` → `name,hw,sw`; open fails with `DeviceNotFound` if the name isn't an accepted MISHA name; firmware and hardware versions exposed in `info`.
+- [x] `set_level(ch, x)` sends `{nm},{round(x*100)}`; `level()` reflects the firmware's turn-everything-off-first behavior (lighting one channel zeroes the others), so the driver overrides `_get_level()`. `all_off()` sends `0,0`; `close()` turns everything off first.
+- [x] Firmware updated (SW version bumped from 1.0.0): every command is answered with exactly one line, `OK` or `ERR <reason>`; unknown wavelengths return `ERR` instead of silently turning everything off; the `ID` handshake format is unchanged.
+- [x] The driver waits for `OK` after every command, raises `CommandRejected` on `ERR`, validates wavelengths before sending, and refuses firmware older than the updated version with a `DeviceError` pointing to the reflash steps.
+- [x] `discover()` probes candidate ports (USB-serial VID whitelist + handshake); its slowness (~4 s per port due to DTR reset) is documented.
+- [x] Passes the `Light` contract suite on the fake transport; hardware tests marked.
+- [x] Firmware copied to `firmware/misha/` (`MISHA.ino`, `HashMap.h`, README with flashing steps), with provenance in the commit message, before it is modified.
+- [x] `docs/hardware/misha.md` written to the hardware-doc conventions.
+- [x] `el-devices misha` subcommand: handshake, step through channels, all off.
+
+Note: `discover()` matches USB descriptors instead of probing ports (Task 3.7, maintainer review 2026-10-13), since opening a port resets the Arduino behind it.
 
 ## Dependencies
 

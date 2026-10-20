@@ -602,8 +602,9 @@ class GPhoto2FocusDrive(FocusDrive):
 
 
 _FOCUS_MODE_HINT = (
-    "Nikon bodies refuse focus moves in manual focus: set the lens to A or A/M "
-    f"and focusmode to AF-S. See {_DOC}#focus-drive."
+    "Nikon bodies refuse focus moves in manual focus, or with a lens that has no "
+    "focus motor: set the lens to A or A/M and focusmode to AF-S. "
+    f"See {_DOC}#focus-drive."
 )
 
 

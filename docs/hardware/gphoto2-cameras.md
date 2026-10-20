@@ -290,8 +290,9 @@ tested on a Sony a6300. Where the Z7 II was checked (2026-10-20, Nikkor Z 24–1
   live view on or off. With `focusmode` `AF-S` and `liveviewaffocus` `Single-servo AF`,
   the same moves work (2026-10-20). The driver doesn't change the focus mode, by
   decision: settings made on the camera are honored, so its `-1` error says to switch
-  to AF instead. The earlier run with a 60 mm lens failed the same way and was probably
-  this, not a lens without a motor. `manualfocusdrive` is listed either way, so
+  to AF instead. A second Z7 II (serial `…03059822`) with a 60 mm lens that has no focus
+  motor also failed every move with `-1`, so `-1` alone can't tell manual focus from a
+  lens that can't drive focus. `manualfocusdrive` is listed either way, so
   `camera.focus` isn't `None` with a lens that can't drive focus.
 - **Live view**: the original code paused live view while seeking a limit, to avoid
   deadlocks. Focus moves here hold the camera's lock, so a preview can't interleave with

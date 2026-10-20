@@ -15,9 +15,11 @@ camera libgphoto2 drives over PTP.
 
 - `DeviceInfo.model` is the model name libgphoto2 identifies, read when the camera
   opens; before that it is `"unknown"`. `address` is the libgphoto2 port.
-- `serial_number` and `firmware_version` are left unset. Both are in the config tree
-  (`serialnumber`, `deviceversion` on Nikon), but reading it at `open()` costs a full
-  config read, whose time on the Z7 II is **unknown** (Task 5.5 decides).
+- `serial_number` and `firmware_version` come from the `serialnumber` and
+  `deviceversion` widgets, each read on its own at `open()` (a full config read takes
+  2.6 s on the Z7 II, too slow for `open()`). A camera without them, or a failed read,
+  leaves them `None`. On the Z7 II they are `00000000000000000000000003059822` and
+  `V1.62`; how long the two reads take is **unknown** until the next bench run.
 
 ## Transport
 
@@ -151,7 +153,8 @@ guide). On the Z7 II a full read takes 2.6 s for 102 settings (2026-10-20).
   Choices are the native choices that parse as numbers, in the camera's order, so pick
   one with `Setting.nearest()`. Writes send the camera's own text for the choice.
 - **Values that aren't numbers** (`Bulb` and `Time` shutter speeds, an `Auto` ISO on
-  some bodies) are left out of the canonical choices. While the camera is set to one,
+  some bodies; on the Z7 II, auto ISO is the separate `isoauto` toggle, so `iso` stays
+  a number) are left out of the canonical choices. While the camera is set to one,
   the canonical setting is still listed with `value` `None`; writing any of its choices
   takes the camera out of that state. The driver can't put the camera into Bulb or Auto;
   do that on the camera. The shutter speed texts above come from libgphoto2's PTP
@@ -277,14 +280,16 @@ tested on a Sony a6300. Where the Z7 II was checked (2026-10-20, Nikkor Z 24–1
   as the widget's range allows until it hits the end stop, and gives up after
   `FOCUS_LIMIT_MAX_STEPS` (1,000,000).
 - **Step size**: on the Z7 II with the 24–120 mm, near to far is about 57,000 steps
-  (57 moves of 1000). A 30-point sweep from far to near gave a smooth sharpness curve
+  (57 moves of 1000), and 57 moves take 42 s with single-widget writes: about 0.15 s per
+  move plus the 0.6 s settle wait. The near limit is reached in 1.4–4.4 s. A 30-point sweep from far to near gave a smooth sharpness curve
   with one peak, so steps look consistent in a direction; whether they match in both
   directions is **unknown**. The a6300's range was never measured.
 - **Manual focus refuses moves.** With `focusmode` at `Manual` (or the lens switched to
   M), every `manualfocusdrive` write on the Z7 II fails with `-1` after about 3.7 s, with
   live view on or off. With `focusmode` `AF-S` and `liveviewaffocus` `Single-servo AF`,
-  the same moves work (2026-10-20). The driver doesn't change the focus mode; its `-1`
-  error says to. The earlier run with a 60 mm lens failed the same way and was probably
+  the same moves work (2026-10-20). The driver doesn't change the focus mode, by
+  decision: settings made on the camera are honored, so its `-1` error says to switch
+  to AF instead. The earlier run with a 60 mm lens failed the same way and was probably
   this, not a lens without a motor. `manualfocusdrive` is listed either way, so
   `camera.focus` isn't `None` with a lens that can't drive focus.
 - **Live view**: the original code paused live view while seeking a limit, to avoid
@@ -327,7 +332,6 @@ Each needs the Z7 II on the bench (Tasks 5.4–5.6):
 
 - The port format on macOS. (On Linux libgphoto2 reports the model as `Nikon Z7_2`, at
   `usb:003,002`.)
-- How long a single-widget focus move takes now that it skips the tree read.
 - The `shutterspeed`, `iso`, and `f-number` choice texts; whether `shutterspeed2`
   exists; and what `Bulb` and `Time` look like.
 - How long a single-widget read of `serialnumber` takes. A full read is 2.6 s, too slow

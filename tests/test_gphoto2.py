@@ -20,6 +20,7 @@ from educelab.devices.cameras._gphoto2 import (
     GP_ERROR_MODEL_NOT_FOUND,
     Event,
     FilePath,
+    Widget,
 )
 from educelab.devices.cameras.base import (
     APERTURE,
@@ -306,6 +307,53 @@ def test_several_widgets_are_written_in_one_tree_round_trip():
     ]
 
 
+def test_open_reads_the_serial_number_and_firmware_alone():
+    attached = FakeCamera(
+        widgets=[
+            *NIKON_WIDGETS,
+            Widget("deviceversion", "Device Version", "text", "V1.62", True),
+        ]
+    )
+    camera = GPhoto2Camera(library=FakeLibrary(attached))
+    with camera:
+        assert (camera.info.serial_number, camera.info.firmware_version) == (
+            "6001234",
+            "V1.62",
+        )
+    assert "config" not in attached.calls
+
+
+def test_identity_is_none_when_the_camera_cannot_say():
+    attached = FakeCamera(
+        widgets=[w for w in NIKON_WIDGETS if w.name != "serialnumber"]
+    )
+    attached.fail_next("value", GP_ERROR)
+    camera = GPhoto2Camera(library=FakeLibrary(attached))
+    with camera:
+        assert camera.info.serial_number is None
+        assert camera.info.firmware_version is None
+
+
+def test_one_widget_value_is_read_alone():
+    camera = ConfigCamera()
+    camera.get_single_config = lambda name: SimpleNamespace(
+        get_type=lambda: 2, get_value=lambda: "3059822"
+    )
+    gp = SimpleNamespace(GPhoto2Error=StubGPhoto2Error, GP_WIDGET_BUTTON=7)
+    assert _gphoto2._LibSession(gp, camera).value("serialnumber") == "3059822"
+    assert camera.calls == []
+
+
+def test_a_missing_widget_value_is_none():
+    camera = ConfigCamera()
+
+    def missing(name):
+        raise StubGPhoto2Error(_gphoto2.GP_ERROR_BAD_PARAMETERS)
+
+    camera.get_single_config = missing
+    assert lib_session(camera).value("serialnumber") is None
+
+
 def test_fakes_fill_the_seam() -> None:
     # Checked by mypy: the fakes must stay interchangeable with the real layer.
     camera: _gphoto2.Session = FakeCamera()
@@ -332,7 +380,10 @@ def test_open_and_close_the_camera_at_a_port():
     with camera:
         assert wanted.is_open and not other.is_open
         assert camera.info == DeviceInfo(
-            backend="gphoto2", model="Nikon Z7_2", address="usb:020,007"
+            backend="gphoto2",
+            model="Nikon Z7_2",
+            address="usb:020,007",
+            serial_number="6001234",
         )
     assert not wanted.is_open
 

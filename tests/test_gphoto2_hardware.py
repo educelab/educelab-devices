@@ -25,10 +25,13 @@ JPEG_MAGIC = b"\xff\xd8"
 @pytest.fixture(scope="module")
 def camera():
     camera = GPhoto2Camera(os.environ.get("GPHOTO2_PORT"))
+    started = time.monotonic()
     try:
         camera.open()
     except (DeviceNotFound, ImportError) as exc:
         pytest.skip(f"no gphoto2 camera: {exc}")
+    # Includes the serial number and firmware reads, for the hardware doc.
+    print(f"\nopened in {time.monotonic() - started:.3f} s")
     yield camera
     camera.close()
 
@@ -64,7 +67,10 @@ def quick_exposure(camera):
 
 def test_identifies_the_camera(camera):
     info = camera.info
-    print(f"\nmodel {info.model!r} at {info.address!r}")
+    print(
+        f"\nmodel {info.model!r} at {info.address!r}, serial "
+        f"{info.serial_number!r}, firmware {info.firmware_version!r}"
+    )
     assert info.model != "unknown"
 
 

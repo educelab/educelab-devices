@@ -139,9 +139,13 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
   - Options: `--port`, `--exposure SECONDS`, `--capture DIR`, `--preview`, `--focus-steps N`. A missing SDK prints the install hint instead of a traceback.
 - [x] Task 5.3: Write `@pytest.mark.hardware` tests (capture RAW and RAW + JPEG, set exposure, preview, focus step and limits).
   - `tests/test_gphoto2_hardware.py` (12 tests) also prints what Tasks 5.4–5.6 need: config-read time, the setting choice texts, preview size and time, aperture choices with and without live view, and the focus range in steps. Running them without a camera (they skip) showed that iterating python-gphoto2 2.6's `CameraList` is deprecated, so `LibGPhoto2.autodetect()` now indexes it.
-- [ ] Task 5.4: Run them on the Z7 II; confirm error codes and settle timing; record findings in the hardware doc.
+- [x] Task 5.4: Run them on the Z7 II; confirm error codes and settle timing; record findings in the hardware doc.
+  - Ran on Linux aarch64, Python 3.14, libgphoto2 2.5.34 (2026-10-20): 12 passed, plus the Bulb test. Fixed on the way: reading the unnamed `other` config section segfaulted python-gphoto2 (`d1fd` has a NULL value), so it is skipped; previews were copied from a freed `CameraFile`; single-widget writes now skip the 2.6 s tree read, taking focus moves from 4 s to about 0.75 s; `el-devices dslr --capture` creates its directory. `-113` end stops confirmed; the camera never reported busy; near to far is about 57,000 steps on the 24–120 mm.
+  - Decided (2026-10-20): settings made on the camera are honored at connect. Focus moves fail with `-1` in manual focus, and the driver refuses with a hint rather than switching the camera to AF-S.
 - [ ] Task 5.5: Measure how long a config read at `open()` takes on the Z7 II, and decide whether `open()` reads the serial number into `DeviceInfo.serial_number`.
-- [ ] Task 5.6: Check whether the Z7 II restricts aperture choices while live view is on; if it does, pause live view around aperture reads and writes.
+  - A full read takes 2.6–2.8 s. Decided (2026-10-20): read `serialnumber` and `deviceversion` one widget at a time at `open()` if that's fast. Implemented; the next bench run times it.
+- [x] Task 5.6: Check whether the Z7 II restricts aperture choices while live view is on; if it does, pause live view around aperture reads and writes.
+  - It doesn't: f/4 to f/45 either way, so live view isn't paused.
 
 ### Verification
 

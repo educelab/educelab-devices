@@ -181,6 +181,11 @@ class FakeCamera:
         self._call("config")
         return dict(self.widgets)
 
+    def value(self, name: str) -> WidgetValue | None:
+        self._call("value")
+        widget = self.widgets.get(name)
+        return None if widget is None else widget.value
+
     def set_config(self, values: Mapping[str, WidgetValue]) -> None:
         self._call("set_config")
         for name, value in values.items():

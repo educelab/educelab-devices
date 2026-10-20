@@ -162,6 +162,13 @@ class Session(Protocol):
         """Read the whole config tree, flattened and keyed by widget name."""
         ...
 
+    def value(self, name: str) -> WidgetValue | None:
+        """Read one widget's value without reading the whole tree.
+
+        ``None`` if the camera has no such widget (or it is a button).
+        """
+        ...
+
     def set_config(self, values: Mapping[str, WidgetValue]) -> None:
         """Change several widgets in one round trip."""
         ...
@@ -331,6 +338,23 @@ class _LibSession:
     def config(self) -> dict[str, Widget]:
         with _translated(self._gp):
             return flatten_config(self._gp, self._camera.get_config())
+
+    def value(self, name: str) -> WidgetValue | None:
+        gp = self._gp
+        with _translated(gp):
+            try:
+                widget = self._camera.get_single_config(name)
+            except gp.GPhoto2Error as exc:
+                if exc.code == GP_ERROR_BAD_PARAMETERS:
+                    return None
+                if exc.code != GP_ERROR_NOT_SUPPORTED:
+                    raise
+                found = flatten_config(gp, self._camera.get_config()).get(name)
+                return None if found is None else found.value
+            if widget.get_type() == gp.GP_WIDGET_BUTTON:
+                return None
+            value: WidgetValue = widget.get_value()
+            return value
 
     def set_config(self, values: Mapping[str, WidgetValue]) -> None:
         with _translated(self._gp):

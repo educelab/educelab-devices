@@ -103,6 +103,10 @@ _OFF_SPELLINGS = frozenset({"off", "0", "disable", "disabled", "false", "no"})
 
 _DOC = "docs/hardware/gphoto2-cameras.md"
 
+# Read one at a time at open(), which is quick; the whole tree takes seconds.
+_SERIAL_WIDGET = "serialnumber"
+_FIRMWARE_WIDGET = "deviceversion"
+
 
 def usb_claimed_hint() -> str:
     """What to do about a claimed USB interface (``-53``) on this host."""
@@ -145,6 +149,8 @@ class GPhoto2Camera(FileCamera):
         self._library = library
         self._session: Session | None = None
         self._model: str | None = None
+        self._serial_number: str | None = None
+        self._firmware_version: str | None = None
         # How to write each setting from the last settings read: the widget and
         # a converter to its native value. Every write validates (and so reads)
         # first, so this is never stale.
@@ -163,7 +169,11 @@ class GPhoto2Camera(FileCamera):
     @property
     def info(self) -> DeviceInfo:
         return DeviceInfo(
-            backend="gphoto2", model=self._model or "unknown", address=self._port
+            backend="gphoto2",
+            model=self._model or "unknown",
+            address=self._port,
+            serial_number=self._serial_number,
+            firmware_version=self._firmware_version,
         )
 
     @property
@@ -231,6 +241,8 @@ class GPhoto2Camera(FileCamera):
                 time.sleep(OPEN_RETRY_DELAY_S)
         self._session = session
         self._model = session.model
+        self._serial_number = self._identity(session, _SERIAL_WIDGET)
+        self._firmware_version = self._identity(session, _FIRMWARE_WIDGET)
         logger.debug("%r opened: %s", self, self._model)
         self._keep_alive_stop = threading.Event()
         self._keep_alive_thread = threading.Thread(
@@ -240,6 +252,17 @@ class GPhoto2Camera(FileCamera):
             daemon=True,
         )
         self._keep_alive_thread.start()
+
+    def _identity(self, session: Session, widget: str) -> str | None:
+        """One identity widget's text, or ``None`` if the camera can't say."""
+        started = time.monotonic()
+        try:
+            value = session.value(widget)
+        except GPhoto2Error as exc:
+            logger.debug("%r could not read %s: %s", self, widget, exc)
+            return None
+        logger.debug("%r read %s in %.3f s", self, widget, time.monotonic() - started)
+        return str(value).strip() or None if value is not None else None
 
     def _keep_alive(self, stop: threading.Event) -> None:
         """Ping the camera whenever it has been idle for an interval.

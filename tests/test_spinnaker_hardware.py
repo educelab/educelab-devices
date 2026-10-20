@@ -8,6 +8,7 @@ changed by a test are put back afterwards.
 import os
 import sys
 import threading
+import time
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
@@ -208,12 +209,11 @@ def test_software_trigger_captures_a_fresh_frame(restore):
     camera = restore
     if TRIGGER not in camera.settings():
         pytest.skip("this camera has no software trigger")
-    rate = camera.settings().get("resulting_frame_rate")
+    started = time.monotonic()
     camera.set_setting(TRIGGER, "Software")
-    triggered_rate = camera.settings().get("resulting_frame_rate")
     print(
-        f"resulting frame rate {rate and rate.value} free-running, "
-        f"{triggered_rate and triggered_rate.value} triggered"
+        f"switching took {time.monotonic() - started:.3f} s; trigger turnaround "
+        f"{camera._trigger_turnaround:.3f} s"
     )
     try:
         starts = []

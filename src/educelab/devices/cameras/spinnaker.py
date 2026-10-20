@@ -96,10 +96,12 @@ _TRIGGER_MODES = ("Off", "Software")
 # How far before a software trigger a frame's exposure may seem to start and still
 # count as triggered by it: room for error in the timestamp offset.
 _TRIGGER_TOLERANCE_S = 0.001
-# A camera ignores a trigger it isn't ready for (e.g. just after acquisition
-# starts), so a capture fires again after the exposure plus this many frame
-# periods: at the free-running rate if trigger mode hides it, else 1 s.
-_RETRIGGER_PERIODS = 3
+# A camera ignores triggers for a while after acquisition starts, so the driver
+# fires until one is answered, waiting the exposure plus this long for each.
+_PRIME_WAIT_S = 1.0
+# A capture fires again if no frame comes within the exposure plus this many
+# times the answered trigger's turnaround (docs/hardware/spinnaker.md).
+_RETRIGGER_TURNAROUNDS = 3
 # More than any stream's buffer pool, so discarding waiting frames always ends.
 _MAX_DISCARDED = 100
 
@@ -380,9 +382,7 @@ class SpinnakerCamera(FrameCamera):
         self._delivered = False
         self._software_trigger = False
         self._fired_at: float | None = None
-        # Read before switching to software trigger, for cameras that hide the
-        # resulting frame rate in trigger mode.
-        self._free_run_rate: float | None = None
+        self._trigger_turnaround: float | None = None
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__} {self._serial}>"
@@ -537,6 +537,44 @@ class SpinnakerCamera(FrameCamera):
             yield
         finally:
             self._call("begin acquisition", lambda: self._cam.BeginAcquisition())
+        if self._software_trigger:
+            self._prime_trigger()
+
+    def _prime_trigger(self) -> None:
+        """Fire until the camera answers, so a capture's trigger isn't ignored.
+
+        Also times the answered trigger's turnaround, which sets how long a
+        capture waits before firing again.
+        """
+        exposure = self._read_float("ExposureTime") / _US_PER_S
+        deadline = time.monotonic() + self.capture_timeout
+        fired = 0
+        while (remaining := deadline - time.monotonic()) > 0:
+            started = time.monotonic()
+            self._fire()
+            fired += 1
+            wait_ms = max(1, math.ceil(min(remaining, exposure + _PRIME_WAIT_S) * 1000))
+            try:
+                image = self._call(
+                    "get a frame", functools.partial(self._cam.GetNextImage, wait_ms)
+                )
+            except DeviceTimeout:
+                continue
+            self._trigger_turnaround = time.monotonic() - started
+            self._call("release a frame", image.Release)
+            self._delivered = True
+            logger.info(
+                "%r answered software trigger %d, in %.3f s",
+                self,
+                fired,
+                self._trigger_turnaround,
+            )
+            self._discard_waiting_frames()
+            return
+        raise DeviceTimeout(
+            f"{self!r} answered none of {fired} software triggers in "
+            f"{self.capture_timeout:g} s"
+        )
 
     def _measure_timestamp_offset(self) -> None:
         latch = self._node("TimestampLatch", "CCommandPtr")
@@ -694,9 +732,6 @@ class SpinnakerCamera(FrameCamera):
             self._software_trigger = False
             self._fired_at = None
             if value == "Software":
-                self._free_run_rate = self._read_optional_float(
-                    "AcquisitionResultingFrameRate"
-                )
                 if self._trigger_selector() not in (None, "FrameStart"):
                     self._set_enum(
                         "TriggerSelector", "FrameStart", kind=CommandRejected
@@ -790,11 +825,12 @@ class SpinnakerCamera(FrameCamera):
         exposure = self._read_float("ExposureTime") / _US_PER_S
         retrigger_s = math.inf
         if self._software_trigger:
-            rate = (
-                self._read_optional_float("AcquisitionResultingFrameRate")
-                or self._free_run_rate
+            turnaround = self._trigger_turnaround
+            retrigger_s = exposure + (
+                _RETRIGGER_TURNAROUNDS * turnaround
+                if turnaround is not None
+                else _PRIME_WAIT_S
             )
-            retrigger_s = exposure + (_RETRIGGER_PERIODS / rate if rate else 1.0)
             fired_at, self._fired_at = self._fired_at, None
             if fired_at is None or (
                 not_before is not None and fired_at < not_before.timestamp()

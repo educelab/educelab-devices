@@ -756,8 +756,12 @@ def test_current_throughput_and_frame_rate_are_read_only(camera, fake):
 
 
 @pytest.fixture
-def triggered(camera):
+def triggered(camera, fake):
     camera.set_setting(TRIGGER, "Software")
+    # Leave out the frame and trigger used to prime the camera.
+    fake.trigger_calls = 0
+    fake.frames_grabbed = 0
+    fake.grab_timeouts.clear()
     return camera
 
 
@@ -792,6 +796,7 @@ def test_trigger_off_free_runs_again(triggered, fake):
 def test_reopening_turns_the_trigger_off(pyspin, fake):
     with SpinnakerCamera(MONO, pyspin=pyspin) as camera:
         camera.set_setting(TRIGGER, "Software")
+    fake.trigger_calls = 0
     with SpinnakerCamera(MONO, pyspin=pyspin) as camera:
         assert camera.setting(TRIGGER).value == "Off"
         camera.capture_frame()
@@ -870,25 +875,34 @@ def test_a_missed_trigger_is_fired_again(triggered, fake):
     frame = triggered.capture_frame(timeout=5.0)
     assert fake.trigger_calls == 2
     assert frame.metadata["retriggers"] == 1
-    # Each wait is the exposure plus a few frame periods, not the whole timeout.
+    # Each wait is the exposure plus a few trigger turnarounds, not the timeout.
     exposure = triggered.setting(EXPOSURE_TIME).value
-    rate = triggered.setting("resulting_frame_rate").value
-    wait_ms = math.ceil((exposure + spinnaker._RETRIGGER_PERIODS / rate) * 1000)
-    assert fake.grab_timeouts[-2:] == [wait_ms, wait_ms]
+    turnaround = triggered._trigger_turnaround
+    wait = exposure + spinnaker._RETRIGGER_TURNAROUNDS * turnaround
+    assert fake.grab_timeouts[-2:] == [math.ceil(wait * 1000)] * 2
 
 
-def test_a_camera_hiding_its_frame_rate_when_triggered_waits_by_the_free_run_rate(
-    camera, fake
-):
-    fake.frame_rate_while_triggered = False
-    rate = camera.setting("resulting_frame_rate").value
+def test_switching_to_software_trigger_fires_until_the_camera_answers(camera, fake):
+    fake.ignore_triggers = 2
     camera.set_setting(TRIGGER, "Software")
-    assert "resulting_frame_rate" not in camera.settings()
+    assert fake.trigger_calls == 3
+    assert fake.held == []
+    frame = camera.capture_frame(timeout=5.0)
+    assert frame.metadata["retriggers"] == 0
+
+
+def test_a_camera_that_never_answers_a_trigger_fails_the_switch(camera, fake):
+    fake.respond_to_triggers = False
+    camera.capture_timeout = 0.05
+    with pytest.raises(DeviceTimeout, match="answered none"):
+        camera.set_setting(TRIGGER, "Software")
+
+
+def test_a_pause_in_trigger_mode_primes_the_trigger_again(triggered, fake):
     fake.ignore_triggers = 1
-    camera.capture_frame(timeout=5.0)
-    exposure = camera.setting(EXPOSURE_TIME).value
-    wait_ms = math.ceil((exposure + spinnaker._RETRIGGER_PERIODS / rate) * 1000)
-    assert fake.grab_timeouts[-2:] == [wait_ms, wait_ms]
+    triggered.set_setting(PIXEL_FORMAT, "Mono16")
+    assert fake.trigger_calls == 2
+    assert triggered.capture_frame(timeout=5.0).metadata["retriggers"] == 0
 
 
 def test_preview_in_software_trigger_mode_fires_a_trigger(triggered, fake):

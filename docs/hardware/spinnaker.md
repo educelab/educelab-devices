@@ -178,7 +178,10 @@ trailers. Exposure began 2–10 ms after the request.
 **Decided 2026-10-20:** which mode to use depends on why a rig pulls frames. For
 capture, use software triggering on a multi-camera rig. For preview or video, keep
 free-running, since a stream of frames is what's wanted. Free-running stays the default:
-a camera alone on its link gains little from triggering.
+a camera alone on its link gains little from triggering. Every measurement behind this
+was in Mono16 (10 MB frames); at Mono8 frames are half the size, so five cameras may fit
+on the link free-running and the gap may narrow. Measure again before deciding for
+another pixel format.
 
 - **Switching:** `trigger = "Software"` ends acquisition, sets `TriggerMode=Off`,
   `TriggerSelector=FrameStart` (if it isn't already), `TriggerSource=Software`, then
@@ -195,16 +198,21 @@ a camera alone on its link gains little from triggering.
   from an earlier capture that timed out, counts as stale, so no frame from before the
   trigger is returned. After a stale or incomplete frame it fires again. `not_before` is
   still honoured: the trigger fires after any wait for it.
-- **Missed triggers:** a camera can ignore a trigger. On the CM3-U3-50S5M, a capture
-  made right after switching to `"Software"` sometimes got no frame and timed out after
-  5 s (2026-10-20, hardware test; that the camera wasn't yet ready is assumed). So a
-  capture waits only the exposure plus three frame periods (`_RETRIGGER_PERIODS`, from
-  `AcquisitionResultingFrameRate`) for a frame, then fires again, until its timeout runs
-  out. If trigger mode hides the frame rate, the rate read just before switching is used,
-  and failing that 1 s. With only the 1 s fallback, a rerun's capture began 1.054 s
-  after the request, so the CM3-U3-50S5M probably hides it (the next hardware test run
-  prints both rates). The metadata counts these as `retriggers`. If the
-  first trigger's frame arrives late after all, the next capture discards it.
+- **Priming:** a camera ignores triggers for a while after acquisition starts. On the
+  CM3-U3-50S5M, the first capture after switching to `"Software"` got no frame three
+  runs in a row (2026-10-20, hardware test), while 500 captures per camera from
+  `el-devices spinnaker` missed none. Whenever acquisition starts in trigger mode (the
+  switch itself, or a pause for `pixel_format` or `throughput_limit`), the driver fires
+  until the camera answers, waiting the exposure plus 1 s (`_PRIME_WAIT_S`) each time,
+  and throws the frame away. If no trigger is answered within `capture_timeout`, the
+  setting write raises `DeviceTimeout`. How long the camera takes to become ready is
+  **unknown** (the next hardware test run prints how long the switch took).
+- **Missed triggers:** the answered trigger's turnaround (fire to frame) is timed. A
+  capture waits the exposure plus three turnarounds (`_RETRIGGER_TURNAROUNDS`) for its
+  frame, then fires again, until its timeout runs out. The metadata counts these as
+  `retriggers`. If the first trigger's frame arrives late after all, the next capture
+  discards it. The wait isn't taken from `AcquisitionResultingFrameRate`: the
+  CM3-U3-50S5M doesn't have it readable, free-running or triggered (2026-10-20).
 - **Several cameras:** `camera.trigger()` fires now and the next capture collects that
   frame, so a caller can fire every camera before collecting (as `el-devices spinnaker
   --trigger software` does). If that trigger is older than the capture's `not_before`,
@@ -357,7 +365,7 @@ once it is closed.
 | `pixel_format` | `PixelFormat` | symbol → symbol | Only Mono8, Mono16, RGB8 and 8/16-bit Bayer; changing it pauses acquisition |
 | `throughput_limit` | `DeviceLinkThroughputLimit` | MB/s → bytes/s (× 10^6) | Reads `None` while `DeviceLinkThroughputLimitMode` is Off; writing sets the mode On first ([Settings](#settings)) |
 | `current_throughput` | `DeviceLinkCurrentThroughput` | MB/s ← bytes/s (÷ 10^6) | Read-only |
-| `resulting_frame_rate` | `AcquisitionResultingFrameRate` | Hz → Hz | Read-only |
+| `resulting_frame_rate` | `AcquisitionResultingFrameRate` | Hz → Hz | Read-only; not on the CM3-U3-50S5M |
 | `trigger` | `TriggerMode`, `TriggerSource`, `TriggerSelector` | `Off` → `TriggerMode=Off`; `Software` → `TriggerSelector=FrameStart`, `TriggerSource=Software`, `TriggerMode=On` | Reads `None` for any other trigger setup (e.g. a hardware line); changing it pauses acquisition ([Software trigger](#software-trigger-opt-in)) |
 
 `exposure_time` and `gain` are canonical names shared by every camera. The others
@@ -693,6 +701,13 @@ Reruns the same day, with the throughput limit set to 190.912 MB/s explicitly (l
   got its frame this time but late (1.054 s after the request, over the 1 s limit):
   the re-fire worked but waited the 1 s fallback (Missed triggers). Not yet rerun with
   the free-running-rate fallback.
+- **Step 7, trigger test only** (`spin-7d-trigger.log`), 20305122: failed again. The
+  camera has no readable `AcquisitionResultingFrameRate`, free-running or triggered, so
+  the rate fallback had nothing to use. The first capture after the switch fired again
+  once and began 1026.9 ms after the request. The other 19 began 1.2–14.4 ms after it,
+  except three at 98.2, 108.4 and 110.4 ms (captures 2, 3 and 6) with no re-fire,
+  which is **unexplained**. The driver now primes the trigger when acquisition starts
+  (Priming); not yet rerun.
 
 ### Run of 2026-10-19
 

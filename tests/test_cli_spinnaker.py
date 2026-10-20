@@ -227,11 +227,13 @@ def test_software_trigger_fires_every_camera_before_collecting(
     assert out.count("trigger Software") == 2
     assert out.count("2/2 captured") == 2
     assert events[:2] == ["trigger", "trigger"]
-    assert [c.trigger_calls for c in pyspin.system.cameras] == [2, 2]
+    # One trigger each primes the camera when the mode is switched.
+    assert [c.trigger_calls for c in pyspin.system.cameras] == [3, 3]
 
 
 def test_the_report_counts_triggers_fired_again(pyspin, capsys):
-    pyspin.system.cameras[0].ignore_triggers = 1
+    # The first trigger primes the camera; the second is the first capture's.
+    pyspin.system.cameras[0].ignored_trigger_calls = {2}
     serial = pyspin.system.cameras[0].serial
     main(["spinnaker", "--serial", serial, "--frames", "2", "--trigger", "software"])
     assert "fired 1 trigger(s) again" in capsys.readouterr().out

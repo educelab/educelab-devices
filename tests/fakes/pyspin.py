@@ -296,7 +296,7 @@ class ComputedNode(Node):
     def __init__(
         self, camera: "FakeCamera", name: str, compute: Callable[[], Any], **kw: Any
     ) -> None:
-        super().__init__(camera, name, access=RO, **kw)
+        super().__init__(camera, name, access=kw.pop("access", RO), **kw)
         self._compute = compute
 
     def GetValue(self) -> Any:
@@ -649,6 +649,8 @@ class FakeCamera:
         # Triggers to ignore before answering again, as a real camera ignores
         # one it isn't ready for.
         self.ignore_triggers = 0
+        # Whether AcquisitionResultingFrameRate stays readable in trigger mode.
+        self.frame_rate_while_triggered = True
 
         if formats is None:
             formats = ["Mono8", "Mono16"]
@@ -811,7 +813,14 @@ class FakeCamera:
         nodes = [
             limit,
             ComputedNode(self, "DeviceLinkCurrentThroughput", current),
-            ComputedNode(self, "AcquisitionResultingFrameRate", frame_rate),
+            ComputedNode(
+                self,
+                "AcquisitionResultingFrameRate",
+                frame_rate,
+                access=lambda: (
+                    RO if self.frame_rate_while_triggered or not self.triggered else NA
+                ),
+            ),
         ]
         if with_mode:
             nodes.append(mode)

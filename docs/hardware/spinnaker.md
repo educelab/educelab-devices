@@ -170,10 +170,15 @@ setting `pixel_format` ends acquisition, changes the format, and begins again.
 
 **Decided 2026-10-19:** free-running stays the default, and the `trigger` setting
 switches a camera to software triggering, so nothing streams between captures.
-**Measured 2026-10-20** (rig step 10, Last run): with four cameras on one link, each
-capture of all four took a median of 147 ms at minimum exposure, against about 250 ms
-free-running, with no stale frames and no missing trailers. Exposure began 4–13 ms
-after the request.
+**Measured 2026-10-20** (rig step 10, Last run): with five cameras on one link, each
+capture of all five took a median of 129 ms at minimum exposure (147 ms capped at
+80 MB/s), against about 250 ms free-running, with no stale frames and no missing
+trailers. Exposure began 2–10 ms after the request.
+
+**Decided 2026-10-20:** which mode to use depends on why a rig pulls frames. For
+capture, use software triggering on a multi-camera rig. For preview or video, keep
+free-running, since a stream of frames is what's wanted. Free-running stays the default:
+a camera alone on its link gains little from triggering.
 
 - **Switching:** `trigger = "Software"` ends acquisition, sets `TriggerMode=Off`,
   `TriggerSelector=FrameStart` (if it isn't already), `TriggerSource=Software`, then
@@ -194,8 +199,11 @@ after the request.
   made right after switching to `"Software"` sometimes got no frame and timed out after
   5 s (2026-10-20, hardware test; that the camera wasn't yet ready is assumed). So a
   capture waits only the exposure plus three frame periods (`_RETRIGGER_PERIODS`, from
-  `AcquisitionResultingFrameRate`; 1 s if the camera lacks it) for a frame, then fires
-  again, until its timeout runs out. The metadata counts these as `retriggers`. If the
+  `AcquisitionResultingFrameRate`) for a frame, then fires again, until its timeout runs
+  out. If trigger mode hides the frame rate, the rate read just before switching is used,
+  and failing that 1 s. With only the 1 s fallback, a rerun's capture began 1.054 s
+  after the request, so the CM3-U3-50S5M probably hides it (the next hardware test run
+  prints both rates). The metadata counts these as `retriggers`. If the
   first trigger's frame arrives late after all, the next capture discards it.
 - **Several cameras:** `camera.trigger()` fires now and the next capture collects that
   frame, so a caller can fire every camera before collecting (as `el-devices spinnaker
@@ -303,7 +311,11 @@ frame and checks it:
    which is accepted as complete and flagged as `missing_trailer` in the frame's metadata,
    as `pgs-scan` `dev` does. They appear when the USB link is saturated (up to 59 of
    100 captures on one camera, 2026-10-19) and not when every camera is capped at
-   80 MB/s. Whether those frames are good is **unknown**: nobody has looked at one yet.
+   80 MB/s. **They are intact** (CM3-U3-50S5M, 2026-10-20, rig step 9: 192 frames from
+   five cameras): no blank or torn rows, and the image matches a complete frame from the
+   same camera. Brightness tracked the scene: four cameras dimmed together by up to 25%
+   at captures 92–96, a smooth gradient that went away by capture 97, so the light
+   changed, not the data.
 2. **Stale** (offset-corrected timestamp before `not_before`): dropped.
 3. Otherwise the pixels are copied out of the buffer.
 
@@ -624,8 +636,8 @@ Settled for the CM3-U3-50S5M (2026-10-19): the throughput limit is in bytes and 
 has it, the timestamp node is `Timestamp`, the camera's timestamp marks the end of
 exposure (so the driver subtracts the exposure), and another program streaming shows up
 as `-1011`, not `-1005`. On a shared link, software triggering beats free-running
-(2026-10-20). Still open: the same facts for other models, the frame-ID assumption
-(step 5), and whether frames with missing trailers are good (step 9).
+(2026-10-20), and frames with missing trailers are intact (2026-10-20). Still open: the
+same facts for other models and the frame-ID assumption (step 5).
 
 ### Last run
 
@@ -662,8 +674,25 @@ failed captures in any run.
   captures: 300 stale, 0 incomplete, 0 re-measured. `test_software_trigger_captures_a_fresh_frame`
   failed: a capture right after switching to `"Software"` got no frame in 5 s (`-1011`).
   The driver now fires again when no frame comes (Software trigger, Missed triggers);
-  not yet rerun.
+  rerun below.
 - One `spin-10-trig-min` run ended with numpy's reference-count message (Hazards).
+
+Reruns the same day, with the throughput limit set to 190.912 MB/s explicitly (logs
+`spin-7c-tests.log`, `spin-9b-missing-trailer.log`, `spin-10b-trig-min-uncapped.log`):
+
+- **Step 10, software trigger, minimum exposure, uncapped:** all cameras per capture
+  median 129.4 ms (127.6–131.7), 0 stale, 0 missing trailers; each camera streamed about
+  7.7 frames/s, 77.4 MB/s.
+- **Step 9, free-running, 20 ms, uncapped, saving missing-trailer frames:** 24, 15, 32,
+  61 and 60 missing trailers on 20305113, 20305114, 20305122, 20298452 and 20298479;
+  all 192 saved frames are intact (Capturing a frame). All cameras per capture: median
+  1322.4 ms, because saving 10 MB PNGs in the capture threads slows each capture; it
+  doesn't reflect capture speed.
+- **Step 7,** 20305113: 15 of 16 passed again. The 300-capture test's dtype refcount
+  drift was 0, so PySpin doesn't leak a dtype reference per frame. The trigger test
+  got its frame this time but late (1.054 s after the request, over the 1 s limit):
+  the re-fire worked but waited the 1 s fallback (Missed triggers). Not yet rerun with
+  the free-running-rate fallback.
 
 ### Run of 2026-10-19
 

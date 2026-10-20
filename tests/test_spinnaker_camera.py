@@ -877,6 +877,20 @@ def test_a_missed_trigger_is_fired_again(triggered, fake):
     assert fake.grab_timeouts[-2:] == [wait_ms, wait_ms]
 
 
+def test_a_camera_hiding_its_frame_rate_when_triggered_waits_by_the_free_run_rate(
+    camera, fake
+):
+    fake.frame_rate_while_triggered = False
+    rate = camera.setting("resulting_frame_rate").value
+    camera.set_setting(TRIGGER, "Software")
+    assert "resulting_frame_rate" not in camera.settings()
+    fake.ignore_triggers = 1
+    camera.capture_frame(timeout=5.0)
+    exposure = camera.setting(EXPOSURE_TIME).value
+    wait_ms = math.ceil((exposure + spinnaker._RETRIGGER_PERIODS / rate) * 1000)
+    assert fake.grab_timeouts[-2:] == [wait_ms, wait_ms]
+
+
 def test_preview_in_software_trigger_mode_fires_a_trigger(triggered, fake):
     triggered.preview_frame()
     assert fake.trigger_calls == 1

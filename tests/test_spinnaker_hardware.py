@@ -208,19 +208,24 @@ def test_software_trigger_captures_a_fresh_frame(restore):
     camera = restore
     if TRIGGER not in camera.settings():
         pytest.skip("this camera has no software trigger")
+    rate = camera.settings().get("resulting_frame_rate")
     camera.set_setting(TRIGGER, "Software")
-    retriggers = 0
+    triggered_rate = camera.settings().get("resulting_frame_rate")
+    print(
+        f"resulting frame rate {rate and rate.value} free-running, "
+        f"{triggered_rate and triggered_rate.value} triggered"
+    )
     try:
+        starts = []
         for _ in range(20):
             ready = datetime.now(UTC)
             frame = camera.capture_frame(not_before=ready, timeout=5.0)
-            start = (frame.timestamp - ready).total_seconds()
-            assert 0 <= start < MAX_FRAME_AGE_S
-            retriggers += frame.metadata["retriggers"]
-        print(
-            f"exposure start {start * 1000:.1f} ms after the request, "
-            f"{retriggers} triggers fired again in 20 captures, {frame.metadata}"
-        )
+            starts.append((frame.timestamp - ready).total_seconds())
+            print(
+                f"exposure start {starts[-1] * 1000:.1f} ms after the request, "
+                f"{frame.metadata['retriggers']} triggers fired again"
+            )
+        assert all(0 <= start < MAX_FRAME_AGE_S for start in starts)
     finally:
         camera.set_setting(TRIGGER, "Off")
 

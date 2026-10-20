@@ -136,14 +136,15 @@ Bring the client and its tests in unchanged and green first, then adapt the publ
 
 ### Verification
 
-- [ ] Maintainer confirms turntable and halo behave as documented.
+- [x] Maintainer confirms turntable and halo behave as documented.
+  - Approved 2026-10-20. Task 5.3 (archiving `~/source/foldio360`) stays open; the maintainer said it doesn't block.
 
 ## Final Verification
 
-- [ ] All acceptance criteria met
-- [ ] Tests passing
-- [ ] Documentation updated
-- [ ] Ready for review
+- [x] All acceptance criteria met
+- [x] Tests passing
+- [x] Documentation updated
+- [x] Ready for review
 
 ---
 

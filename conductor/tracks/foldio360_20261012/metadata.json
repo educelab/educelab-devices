@@ -4,10 +4,10 @@
   "type": "feature",
   "status": "in_progress",
   "created": "2026-10-12T00:00:00Z",
-  "updated": "2026-10-16T00:00:00Z",
+  "updated": "2026-10-20T00:00:00Z",
   "phases": {
     "total": 5,
-    "completed": 4
+    "completed": 5
   },
   "tasks": {
     "total": 16,
@@ -46,6 +46,8 @@
     "d24545e: Record Phase 5 progress for the Foldio360 track",
     "771d9e5: Record that CW turns the Foldio360 clockwise, and pin that stop leaves the halo",
     "f42fe88: Let timeout=math.inf mean no limit on the Foldio360",
-    "136ad8f: Record the Foldio360 hardware run"
+    "136ad8f: Record the Foldio360 hardware run",
+    "e8628cd: Regenerate the Foldio360 commit list after the rebase",
+    "b26e7bb: Record the Foldio360 halo-after-stop hardware run"
   ]
 }

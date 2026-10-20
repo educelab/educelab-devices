@@ -30,7 +30,7 @@ def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") 
         "--capture",
         type=Path,
         metavar="DIR",
-        help="capture once and save every file to this existing directory, "
+        help="capture once and save every file to this directory, created if needed, "
         "under the camera's file names",
     )
     parser.add_argument(
@@ -95,6 +95,7 @@ def _describe(setting: "Setting") -> str:
 
 
 def _capture(camera: "GPhoto2Camera", directory: Path) -> bool:
+    directory.mkdir(parents=True, exist_ok=True)
     files = camera.capture_files()
     for file in files:
         try:

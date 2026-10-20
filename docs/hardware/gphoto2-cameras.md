@@ -130,7 +130,14 @@ shutter, waits out the exposure, and returns the first file the release produced
 
 Settings come from the camera's config tree, which libgphoto2 builds from PTP device
 properties. Every `settings()` call reads the whole tree, so it is a snapshot (see the
-guide). How long a full read takes on the Z7 II is **unknown**; measure it in Phase 5.
+guide). On the Z7 II a full read takes 2.6 s for 102 settings (2026-10-20).
+
+- **Writes.** A write of one widget (a setting, a focus move) reads and writes just
+  that widget through `gp_camera_get_single_config()`/`set_single_config()`, falling
+  back to the whole tree if the camera driver doesn't support it (`-6`). Writes of
+  several widgets at once (turning live view on) use one whole-tree round trip. Before
+  this, every focus move on the Z7 II took about 4 s whatever its size: 2.6 s of that
+  was the tree read.
 
 - **Canonical settings** are read from these widgets, taking the first one the camera
   has, and replace them in the list:
@@ -165,8 +172,9 @@ guide). How long a full read takes on the Z7 II is **unknown**; measure it in Ph
   If another body crashes the same way in a named section, the fix has to be a NULL
   check before reading, not another skipped section.
 - **Aperture and live view**: the prototype paused live view to read or change the
-  aperture, because the choices were restricted while it was on. **unknown** whether this
-  applies to the Z7 II; the driver doesn't do it yet.
+  aperture, because the choices were restricted while it was on. On the Z7 II the
+  choices are the same with live view on and off (f/4 to f/45 on a 60 mm f/4,
+  2026-10-20), so the driver doesn't pause it.
 
 ## Live view
 
@@ -189,9 +197,22 @@ continuous AF off keeps the lens from hunting between frames, and it stays off a
   next `open()`. **assumed**, from the prototype.
 - `close()` turns live view off again if the driver turned it on, so the sensor isn't
   left running. A failure there is logged, not raised.
-- Preview images are JPEG on Nikon and Canon bodies. On the Z7 II they are about 18 KB
-  with `liveviewsize` at `VGA`, with or without `viewfinder` on (2026-10-20). Their
-  pixel size is **unknown** until a decoded preview is recorded.
+- Preview images are JPEG on Nikon and Canon bodies. On the Z7 II, previews come back
+  without `viewfinder` being set, so libgphoto2 starts live view itself.
+- **Z7 II sizes and zoom** (2026-10-20, `~/hw-logs/dslr-liveview-linux-1.log`), both
+  native settings:
+
+  | `liveviewsize` | Frame | JPEG |
+  |---|---|---|
+  | `QVGA` | 320×212 | 4–8 KB |
+  | `VGA` (default) | 640×424 | 13–20 KB |
+  | `XGA` | 1024×680 | 27–40 KB |
+
+  `liveviewzoomarea` (`0`, `512`, `1024`, `2048`) magnifies without changing the frame
+  size: `0` is the whole sensor, `512` the tightest crop, `2048` the loosest. A zoomed
+  XGA frame is the one to score for sharpness. Frames came back every 15–21 ms, which
+  may be repeats rather than new frames; **unknown**. The first preview after `open()`
+  took 6.7 s, including a settings read and live-view start.
 - **Hold the `CameraFile` until its bytes are copied.** `get_data_and_size()` returns a
   view of the file's buffer that doesn't keep the file alive. Copying from a temporary
   (`bytes(camera.capture_preview().get_data_and_size())`) reads freed memory: on Linux
@@ -231,33 +252,41 @@ Canon bodies have a choice-type `manualfocusdrive` (`Near 1`–`3`, `Far 1`–`3
 driver doesn't support yet.
 
 Everything below comes from `usb-dslr-capture-demo` (`origin/ankan:capture-gui.py`),
-tested on a Sony a6300. All of it is **assumed** for the Z7 II until Phase 5 checks it.
+tested on a Sony a6300. Where the Z7 II was checked (2026-10-20, Nikkor Z 24–120 mm,
+`~/hw-logs/dslr-focus-linux-3.log`), the bullet says so.
 
 - **Direction**: positive steps move toward far (infinity).
 - **End stops**: a move into an end stop fails with `-113` (`GP_ERROR_CAMERA_ERROR`). The
   driver raises `FocusLimitReached` for `-113`, choosing near or far from the direction
   of the move. `-113` is libgphoto2's generic camera error, so on a body that reports
   end stops differently, or fails with `-113` for another reason, this would misreport.
-  Confirm the code on the Z7 II.
+  **Z7 II: confirmed** at both stops; a further move into the stop fails again, and a
+  move away from it works.
 - **After an end stop**, the camera queues events about the failed move. The driver
   reads them and waits `FOCUS_LIMIT_RECOVERY_S` (1 s) before the next command, which is
   what kept the a6300 responsive.
 - **Busy**: a move sent while the motor is still turning fails with `-110`
   (`GP_ERROR_CAMERA_BUSY`). The driver retries up to `FOCUS_BUSY_ATTEMPTS` (15) times,
-  `FOCUS_BUSY_WAIT_S` (0.5 s) apart, then raises `DeviceBusy`.
+  `FOCUS_BUSY_WAIT_S` (0.5 s) apart, then raises `DeviceBusy`. **Z7 II:** never busy;
+  libgphoto2 waits for each move to finish before returning, so back-to-back 2000-step
+  moves all worked.
 - **Settle time**: after each write the driver waits 100 ms + 0.5 ms per step, capped at
   3 s (`focus_settle_s()`).
 - **Chunks**: `step(n)` writes at most `FOCUS_CHUNK_STEPS` (1000) steps at a time, and
   never more than the widget's range allows. `drive_to_limit()` writes chunks as large
   as the widget's range allows until it hits the end stop, and gives up after
   `FOCUS_LIMIT_MAX_STEPS` (1,000,000).
-- **Step size**: how many steps span the Z7 II's focus range, and whether a step is the
-  same size in both directions, is **unknown**. The a6300's range was never measured.
-- **A lens without a focus motor still gets a focus drive.** On the Z7 II with a
-  manual-focus lens, `manualfocusdrive` is still listed as a range widget, so
-  `camera.focus` isn't `None`, but every write fails with `-1` (`gp_camera_set_config`
-  logs `set_config ... failed: -1`) (2026-10-20). What a motorized lens returns, and so
-  how the driver should tell the two apart, is **unknown** until one is tested.
+- **Step size**: on the Z7 II with the 24–120 mm, near to far is about 57,000 steps
+  (57 moves of 1000). A 30-point sweep from far to near gave a smooth sharpness curve
+  with one peak, so steps look consistent in a direction; whether they match in both
+  directions is **unknown**. The a6300's range was never measured.
+- **Manual focus refuses moves.** With `focusmode` at `Manual` (or the lens switched to
+  M), every `manualfocusdrive` write on the Z7 II fails with `-1` after about 3.7 s, with
+  live view on or off. With `focusmode` `AF-S` and `liveviewaffocus` `Single-servo AF`,
+  the same moves work (2026-10-20). The driver doesn't change the focus mode; its `-1`
+  error says to. The earlier run with a 60 mm lens failed the same way and was probably
+  this, not a lens without a motor. `manualfocusdrive` is listed either way, so
+  `camera.focus` isn't `None` with a lens that can't drive focus.
 - **Live view**: the original code paused live view while seeking a limit, to avoid
   deadlocks. Focus moves here hold the camera's lock, so a preview can't interleave with
   them; whether the Z7 II still needs live view off is **unknown**.
@@ -298,17 +327,16 @@ Each needs the Z7 II on the bench (Tasks 5.4–5.6):
 
 - The port format on macOS. (On Linux libgphoto2 reports the model as `Nikon Z7_2`, at
   `usb:003,002`.)
+- How long a single-widget focus move takes now that it skips the tree read.
 - The `shutterspeed`, `iso`, and `f-number` choice texts; whether `shutterspeed2`
   exists; and what `Bulb` and `Time` look like.
-- How long a full config read takes (decides the serial number at `open()`).
+- How long a single-widget read of `serialnumber` takes. A full read is 2.6 s, too slow
+  for `open()`, but one widget may be fast enough to fill in `DeviceInfo`.
 - Whether RAW + JPEG's second file is queued by the time the capture returns, or can
   arrive after the 50 ms quiet gap the driver waits for.
 - What `capturetarget` defaults to, and whether files reach the card.
-- Preview size, and whether live view must be on for previews.
-- Whether aperture choices are restricted while live view is on (Task 5.6).
-- Focus: the step count across the range, whether `-113` marks the end stop and `-110`
-  a busy motor, and whether the settle time (100 ms + 0.5 ms per step, capped at 3 s)
-  is enough.
+- Whether the focus settle time (100 ms + 0.5 ms per step, capped at 3 s) is needed at
+  all, since libgphoto2 already waits for each move.
 - Whether the camera needs the keep-alive at all, and how many failed pings an unplug
   produces.
 

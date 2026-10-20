@@ -238,6 +238,74 @@ def test_preview_bytes_are_copied_before_the_file_is_freed():
     assert session.capture_preview() == jpeg
 
 
+class StubGPhoto2Error(Exception):
+    def __init__(self, code):
+        self.code, self.string = code, f"code {code}"
+
+
+class ConfigCamera:
+    """A python-gphoto2 ``Camera`` that records how its config is written."""
+
+    def __init__(self, single=True):
+        self.single = single
+        self.calls = []
+        self.tree = SimpleNamespace(
+            get_child_by_name=lambda name: SimpleNamespace(
+                set_value=lambda value: self.calls.append(("tree value", name, value))
+            )
+        )
+
+    def get_abilities(self):
+        return SimpleNamespace(model="Nikon Z7_2")
+
+    def get_single_config(self, name):
+        if not self.single:
+            raise StubGPhoto2Error(_gphoto2.GP_ERROR_NOT_SUPPORTED)
+        return SimpleNamespace(
+            set_value=lambda value: self.calls.append(("single value", name, value))
+        )
+
+    def set_single_config(self, name, widget):
+        self.calls.append(("set single", name))
+
+    def get_config(self):
+        self.calls.append(("get tree",))
+        return self.tree
+
+    def set_config(self, tree):
+        self.calls.append(("set tree",))
+
+
+def lib_session(camera):
+    return _gphoto2._LibSession(SimpleNamespace(GPhoto2Error=StubGPhoto2Error), camera)
+
+
+def test_one_widget_is_written_without_reading_the_tree():
+    camera = ConfigCamera()
+    lib_session(camera).set_config({"manualfocusdrive": 100.0})
+    assert camera.calls == [
+        ("single value", "manualfocusdrive", 100.0),
+        ("set single", "manualfocusdrive"),
+    ]
+
+
+def test_one_widget_falls_back_to_the_tree_when_unsupported():
+    camera = ConfigCamera(single=False)
+    lib_session(camera).set_config({"iso": "100"})
+    assert camera.calls == [("get tree",), ("tree value", "iso", "100"), ("set tree",)]
+
+
+def test_several_widgets_are_written_in_one_tree_round_trip():
+    camera = ConfigCamera()
+    lib_session(camera).set_config({"viewfinder": 1, "continuousaf": "Off"})
+    assert camera.calls == [
+        ("get tree",),
+        ("tree value", "viewfinder", 1),
+        ("tree value", "continuousaf", "Off"),
+        ("set tree",),
+    ]
+
+
 def test_fakes_fill_the_seam() -> None:
     # Checked by mypy: the fakes must stay interchangeable with the real layer.
     camera: _gphoto2.Session = FakeCamera()
@@ -1075,7 +1143,8 @@ def test_other_focus_errors_raise_and_lose_the_count(focus_waits):
     with pytest.raises(FocusLimitReached):
         focus.step(300)
     attached.fail_next("set_config", GP_ERROR)
-    with pytest.raises(DeviceError, match="focus"):
+    # On the Z7 II a bare -1 meant the camera was in manual focus.
+    with pytest.raises(DeviceError, match="manual focus"):
         focus.step(-100)
     camera.close()
     assert focus.focus_steps is None

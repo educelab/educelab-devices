@@ -16,6 +16,7 @@ import numpy as np
 import numpy.typing as npt
 
 from educelab.devices.cameras._gphoto2 import (
+    GP_ERROR,
     GP_ERROR_CAMERA_BUSY,
     GP_ERROR_CAMERA_ERROR,
     GP_ERROR_IO_USB_CLAIM,
@@ -560,9 +561,10 @@ class GPhoto2FocusDrive(FocusDrive):
                 if exc.code == GP_ERROR_CAMERA_ERROR:
                     self._recover_from_end_stop(session)
                     raise FocusLimitReached("far" if steps > 0 else "near") from exc
-                raise self._camera._error(
-                    exc, f"driving focus {steps:+d} steps"
-                ) from exc
+                error = self._camera._error(exc, f"driving focus {steps:+d} steps")
+                if exc.code == GP_ERROR:
+                    error = DeviceError(f"{error}. {_FOCUS_MODE_HINT}")
+                raise error from exc
         _wait(focus_settle_s(steps))
 
     def _recover_from_end_stop(self, session: Session) -> None:
@@ -574,6 +576,12 @@ class GPhoto2FocusDrive(FocusDrive):
         except DeviceError as exc:
             logger.debug("%r could not drain events after an end stop: %s", self, exc)
         _wait(FOCUS_LIMIT_RECOVERY_S)
+
+
+_FOCUS_MODE_HINT = (
+    "Nikon bodies refuse focus moves in manual focus: set the lens to A or A/M "
+    f"and focusmode to AF-S. See {_DOC}#focus-drive."
+)
 
 
 def focus_settle_s(steps: int) -> float:

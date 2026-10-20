@@ -53,6 +53,13 @@ def test_sets_the_nearest_exposure_and_captures_to_a_directory(
     assert "DSC_0001.NEF" in out
 
 
+def test_creates_the_capture_directory(attach, tmp_path):
+    attach(FakeCamera())
+    directory = tmp_path / "captures" / "run-1"
+    assert main(["dslr", "--capture", str(directory)]) == 0
+    assert [p.name for p in directory.iterdir()] == ["DSC_0001.NEF"]
+
+
 def test_refuses_to_overwrite_a_capture(attach, capsys, tmp_path):
     attach(FakeCamera())
     (tmp_path / "DSC_0001.NEF").write_bytes(b"earlier")

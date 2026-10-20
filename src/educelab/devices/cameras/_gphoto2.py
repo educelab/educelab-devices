@@ -24,6 +24,7 @@ __all__ = [
     "GP_ERROR_IO_USB_CLAIM",
     "GP_ERROR_IO_USB_FIND",
     "GP_ERROR_MODEL_NOT_FOUND",
+    "GP_ERROR_NOT_SUPPORTED",
     "GP_ERROR_TIMEOUT",
     "LIBGPHOTO2_LOGGER",
     "UNREAD_SECTIONS",
@@ -43,6 +44,7 @@ __all__ = [
 # gphoto2-result.h). What each means on real bodies: docs/hardware/gphoto2-cameras.md.
 GP_ERROR = -1
 GP_ERROR_BAD_PARAMETERS = -2
+GP_ERROR_NOT_SUPPORTED = -6
 GP_ERROR_TIMEOUT = -10
 GP_ERROR_IO_USB_FIND = -52
 GP_ERROR_IO_USB_CLAIM = -53
@@ -332,10 +334,26 @@ class _LibSession:
 
     def set_config(self, values: Mapping[str, WidgetValue]) -> None:
         with _translated(self._gp):
+            # Reading the whole tree takes 2.6 s on the Z7 II, so one widget is
+            # read and written alone where the camera driver supports it.
+            if len(values) == 1 and self._set_single(*next(iter(values.items()))):
+                return
             config = self._camera.get_config()
             for name, value in values.items():
                 config.get_child_by_name(name).set_value(value)
             self._camera.set_config(config)
+
+    def _set_single(self, name: str, value: WidgetValue) -> bool:
+        """Write one widget without reading the tree; false if unsupported."""
+        try:
+            widget = self._camera.get_single_config(name)
+        except self._gp.GPhoto2Error as exc:
+            if exc.code == GP_ERROR_NOT_SUPPORTED:
+                return False
+            raise
+        widget.set_value(value)
+        self._camera.set_single_config(name, widget)
+        return True
 
     def capture_preview(self) -> bytes:
         with _translated(self._gp):

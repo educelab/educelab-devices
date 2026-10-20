@@ -223,6 +223,20 @@ level and shutter speed, comparing the frame-to-frame spread of the mean against
 ## Manual check
 
 `el-devices misha` identifies the panel, steps through every band, and turns everything
-off. Results from real hardware go here.
+off. The hardware tests (`pytest -m hardware tests/test_misha_hardware.py`) use the one
+panel attached, or `MISHA_SERIAL_NUMBER` to pick one, and light bands at 25%.
 
-Not yet run on hardware with firmware 2.0.0.
+### Last run
+
+**2026-10-20**, macOS (Apple Silicon), Python 3.14. Two panels, both firmware 2.0.0,
+hardware 1.1: `MISHA-2108d7a8` and `MISHA-e6a00ad8`. Raw logs: `misha-1-check.log`,
+`misha-2-tests*.log`.
+
+- `el-devices misha` on `MISHA-2108d7a8` (`/dev/cu.usbserial-MISHA_2108d7a8`): nothing
+  lit when opened, every band from 365 to 940 nm acknowledged at 25%, nothing lit after
+  all off.
+- Hardware tests: 25 of 25 passed on each panel, about 23 s per run. That covers
+  identification on current firmware, every band lit alone and turned off, lighting a
+  band turning off the lit one, changing the lit band's level, zeroing an unlit band,
+  all off, `ERR` for an unknown wavelength, an intensity over 100 and a malformed
+  command (each changing nothing), and a reopened panel resetting dark.

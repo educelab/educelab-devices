@@ -213,6 +213,31 @@ def test_other_section_is_never_read():
     assert list(_gphoto2.flatten_config(t, root)) == ["iso"]
 
 
+class FreedFile:
+    """A python-gphoto2 ``CameraFile`` whose buffer is scribbled on when freed."""
+
+    def __init__(self, data: bytes) -> None:
+        self.buffer = bytearray(data)
+
+    def get_data_and_size(self):
+        return memoryview(self.buffer)
+
+    def __del__(self):
+        self.buffer[:4] = b"\x00" * 4
+
+
+def test_preview_bytes_are_copied_before_the_file_is_freed():
+    jpeg = b"\xff\xd8\xff\xdb" + b"x" * 16 + b"\xff\xd9"
+    camera = SimpleNamespace(
+        get_abilities=lambda: SimpleNamespace(model="Nikon Z7_2"),
+        capture_preview=lambda: FreedFile(jpeg),
+    )
+    gp = SimpleNamespace(GPhoto2Error=RuntimeError)
+    session = _gphoto2._LibSession(gp, camera)
+
+    assert session.capture_preview() == jpeg
+
+
 def test_fakes_fill_the_seam() -> None:
     # Checked by mypy: the fakes must stay interchangeable with the real layer.
     camera: _gphoto2.Session = FakeCamera()

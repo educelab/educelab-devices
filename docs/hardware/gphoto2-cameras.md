@@ -189,8 +189,14 @@ continuous AF off keeps the lens from hunting between frames, and it stays off a
   next `open()`. **assumed**, from the prototype.
 - `close()` turns live view off again if the driver turned it on, so the sensor isn't
   left running. A failure there is logged, not raised.
-- Preview images are JPEG on Nikon and Canon bodies. Their size on the Z7 II is
-  **unknown**; record it in Phase 5.
+- Preview images are JPEG on Nikon and Canon bodies. On the Z7 II they are about 18 KB
+  with `liveviewsize` at `VGA`, with or without `viewfinder` on (2026-10-20). Their
+  pixel size is **unknown** until a decoded preview is recorded.
+- **Hold the `CameraFile` until its bytes are copied.** `get_data_and_size()` returns a
+  view of the file's buffer that doesn't keep the file alive. Copying from a temporary
+  (`bytes(camera.capture_preview().get_data_and_size())`) reads freed memory: on Linux
+  aarch64 the first 32 bytes of every Z7 II preview were glibc heap pointers, and Pillow
+  couldn't decode them (2026-10-20, `~/hw-logs/dslr-preview-linux-1.log`).
 
 ## Keep-alive
 
@@ -247,6 +253,11 @@ tested on a Sony a6300. All of it is **assumed** for the Z7 II until Phase 5 che
   `FOCUS_LIMIT_MAX_STEPS` (1,000,000).
 - **Step size**: how many steps span the Z7 II's focus range, and whether a step is the
   same size in both directions, is **unknown**. The a6300's range was never measured.
+- **A lens without a focus motor still gets a focus drive.** On the Z7 II with a
+  manual-focus lens, `manualfocusdrive` is still listed as a range widget, so
+  `camera.focus` isn't `None`, but every write fails with `-1` (`gp_camera_set_config`
+  logs `set_config ... failed: -1`) (2026-10-20). What a motorized lens returns, and so
+  how the driver should tell the two apart, is **unknown** until one is tested.
 - **Live view**: the original code paused live view while seeking a limit, to avoid
   deadlocks. Focus moves here hold the camera's lock, so a preview can't interleave with
   them; whether the Z7 II still needs live view off is **unknown**.

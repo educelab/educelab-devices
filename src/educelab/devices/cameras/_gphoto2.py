@@ -339,7 +339,10 @@ class _LibSession:
 
     def capture_preview(self) -> bytes:
         with _translated(self._gp):
-            return bytes(self._camera.capture_preview().get_data_and_size())
+            # The buffer belongs to the CameraFile, so hold it until it's copied:
+            # a temporary is freed first and the copy starts with heap garbage.
+            file = self._camera.capture_preview()
+            return bytes(file.get_data_and_size())
 
 
 # Sections that are never read. ``other`` holds the PTP properties libgphoto2

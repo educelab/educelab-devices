@@ -191,6 +191,28 @@ def test_config_tree_is_flattened_by_name():
     assert widgets["manualfocusdrive"].section == "actions"
 
 
+class ExplodingWidget(StubWidget):
+    def get_value(self):
+        raise AssertionError("an unread section's widget was read")
+
+
+def test_other_section_is_never_read():
+    t = WIDGET_TYPES
+    iso = StubWidget(t.GP_WIDGET_RADIO, "iso", "100", choices=["100"])
+    # On the Z7 II, reading d1fd's NULL value crashes python-gphoto2.
+    unnamed = ExplodingWidget(t.GP_WIDGET_TEXT, "d1fd", None)
+    root = StubWidget(
+        t.GP_WIDGET_WINDOW,
+        "main",
+        children=[
+            StubWidget(t.GP_WIDGET_SECTION, "capturesettings", children=[iso]),
+            StubWidget(t.GP_WIDGET_SECTION, "other", children=[unnamed]),
+        ],
+    )
+
+    assert list(_gphoto2.flatten_config(t, root)) == ["iso"]
+
+
 def test_fakes_fill_the_seam() -> None:
     # Checked by mypy: the fakes must stay interchangeable with the real layer.
     camera: _gphoto2.Session = FakeCamera()
@@ -217,7 +239,7 @@ def test_open_and_close_the_camera_at_a_port():
     with camera:
         assert wanted.is_open and not other.is_open
         assert camera.info == DeviceInfo(
-            backend="gphoto2", model="Nikon Z 7II", address="usb:020,007"
+            backend="gphoto2", model="Nikon Z7_2", address="usb:020,007"
         )
     assert not wanted.is_open
 
@@ -320,7 +342,7 @@ def test_discover_lists_attached_cameras_without_opening_them(monkeypatch):
     monkeypatch.setattr(gphoto2, "_default_library", lambda: library)
 
     assert GPhoto2Camera.discover() == [
-        DeviceInfo("gphoto2", "Nikon Z 7II", "usb:020,006"),
+        DeviceInfo("gphoto2", "Nikon Z7_2", "usb:020,006"),
         DeviceInfo("gphoto2", "Canon EOS R5", "usb:020,009"),
     ]
     assert library.open_attempts == 0

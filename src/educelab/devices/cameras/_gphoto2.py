@@ -26,6 +26,7 @@ __all__ = [
     "GP_ERROR_MODEL_NOT_FOUND",
     "GP_ERROR_TIMEOUT",
     "LIBGPHOTO2_LOGGER",
+    "UNREAD_SECTIONS",
     "Event",
     "FilePath",
     "GPhoto2Error",
@@ -136,7 +137,7 @@ class Session(Protocol):
 
     @property
     def model(self) -> str:
-        """The camera model libgphoto2 identified, e.g. ``"Nikon Z 7II"``."""
+        """The camera model libgphoto2 identified, e.g. ``"Nikon Z7_2"``."""
         ...
 
     def close(self) -> None:
@@ -173,7 +174,7 @@ class Library(Protocol):
 
     def autodetect(self) -> list[tuple[str, str]]:
         """List attached cameras as ``(model, port)`` pairs, e.g.
-        ``("Nikon Z 7II", "usb:020,007")``, without opening them."""
+        ``("Nikon Z7_2", "usb:020,007")``, without opening them."""
         ...
 
     def open(self, port: str) -> Session:
@@ -341,11 +342,18 @@ class _LibSession:
             return bytes(self._camera.capture_preview().get_data_and_size())
 
 
+# Sections that are never read. ``other`` holds the PTP properties libgphoto2
+# has no name for; on the Z7 II one is a text widget with no value, and reading
+# it crashes python-gphoto2 (docs/hardware/gphoto2-cameras.md#settings).
+UNREAD_SECTIONS = frozenset({"other"})
+
+
 def flatten_config(gp: Any, root: Any) -> dict[str, Widget]:
     """Read every value widget under ``root``, keyed by name.
 
-    Sections are walked but not listed. If two widgets share a name, the
-    first one found wins, matching libgphoto2's own lookup by name.
+    Sections are walked but not listed, except `UNREAD_SECTIONS`, which are
+    skipped. If two widgets share a name, the first one found wins, matching
+    libgphoto2's own lookup by name.
     """
     kinds: dict[int, WidgetKind] = {
         gp.GP_WIDGET_TEXT: "text",
@@ -363,6 +371,8 @@ def flatten_config(gp: Any, root: Any) -> dict[str, Widget]:
         if kind is None:
             if node is not root:
                 section = node.get_name()
+                if section in UNREAD_SECTIONS:
+                    return
             for child in node.get_children():
                 visit(child, section)
             return

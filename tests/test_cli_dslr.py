@@ -24,7 +24,7 @@ def test_lists_the_camera_and_its_settings(attach, capsys):
     attach(FakeCamera())
     assert main(["dslr"]) == 0
     out = capsys.readouterr().out
-    assert "Nikon Z 7II at usb:020,007" in out
+    assert "Nikon Z7_2 at usb:020,007" in out
     assert "exposure_time = 0.01667 s" in out
     assert "imagequality = 'NEF (Raw)'" in out
     assert "focus drive: yes" in out

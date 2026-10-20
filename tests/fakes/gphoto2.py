@@ -108,7 +108,7 @@ class FakeCamera:
 
     def __init__(
         self,
-        model: str = "Nikon Z 7II",
+        model: str = "Nikon Z7_2",
         port: str = "usb:020,007",
         *,
         widgets: Iterable[Widget] = NIKON_WIDGETS,

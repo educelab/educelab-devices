@@ -156,6 +156,14 @@ guide). How long a full read takes on the Z7 II is **unknown**; measure it in Ph
 - **Actions are not settings.** Widgets in the `actions` section (`viewfinder`,
   `autofocusdrive`, `manualfocusdrive`, …) are commands; the driver uses them for live
   view and the focus drive and doesn't list them.
+- **The `other` section is never read.** It holds the PTP properties libgphoto2 has no
+  name for, by hex code (`d1f8`, `5011`, …; about 280 on the Z7 II). On the Z7 II,
+  `/main/other/d1fd` is a text widget with no value (NULL), and python-gphoto2 2.6.4
+  segfaults reading it: `get_value()` passes the NULL to `PyUnicode_FromString`
+  unchecked, so Python can't catch it. Every other widget on the body reads cleanly
+  (2026-10-20, Linux aarch64, libgphoto2 2.5.34; `~/hw-logs/dslr-widgets-linux-*.log`).
+  If another body crashes the same way in a named section, the fix has to be a NULL
+  check before reading, not another skipped section.
 - **Aperture and live view**: the prototype paused live view to read or change the
   aperture, because the choices were restricted while it was on. **unknown** whether this
   applies to the Z7 II; the driver doesn't do it yet.
@@ -277,7 +285,8 @@ libgphoto2's Nikon driver and is **assumed** until Task 5.4 records what this bo
 
 Each needs the Z7 II on the bench (Tasks 5.4–5.6):
 
-- The model name libgphoto2 reports, and the port format on macOS.
+- The port format on macOS. (On Linux libgphoto2 reports the model as `Nikon Z7_2`, at
+  `usb:003,002`.)
 - The `shutterspeed`, `iso`, and `f-number` choice texts; whether `shutterspeed2`
   exists; and what `Bulb` and `Time` look like.
 - How long a full config read takes (decides the serial number at `open()`).

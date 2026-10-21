@@ -2,7 +2,7 @@
   "id": "gphoto2-camera_20261012",
   "title": "gphoto2 Camera",
   "type": "feature",
-  "status": "in_progress",
+  "status": "complete",
   "created": "2026-10-12T00:00:00Z",
   "updated": "2026-10-21T00:00:00Z",
   "phases": {
@@ -53,5 +53,7 @@
     "40e8074: Record the gphoto2 open timing with identity reads",
     "5ae78ce: Note that a gphoto2 -1 focus error can also mean no focus motor",
     "fbf59d1: Record what the Z7 II bench runs verified in the gphoto2 doc"
-  ]
+  ],
+  "archived": true,
+  "pull_request": 4
 }

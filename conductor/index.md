@@ -21,19 +21,19 @@ Project-level context outside this directory:
 
 <!-- Auto-populated by /conductor:new-track -->
 
-- [MISHA Lights](./tracks/misha-lights_20261012/index.md) — pending
-- [Foldio360 Turntable](./tracks/foldio360_20261012/index.md) — pending
-- [gphoto2 Camera](./tracks/gphoto2-camera_20261012/index.md) — pending
 - [XLC Lights and X-Carve Stage](./tracks/xlc-xcarve_20261012/index.md) — pending
-- [Spinnaker Camera](./tracks/spinnaker-camera_20261012/index.md) — pending
-- [Acroname USB Hub](./tracks/acroname-hub_20261012/index.md) — pending
 - [Documentation Site](./tracks/docs-site_20261012/index.md) — pending
 - [USB3 Vision Camera](./tracks/usb3-vision-camera_20261021/index.md) — pending
 
 ## Completed Tracks
 
 - [Foundation](./tracks/_archive/foundation_20261012/index.md) — complete (archived)
+- [MISHA Lights](./tracks/_archive/misha-lights_20261012/index.md) — complete (archived)
+- [Foldio360 Turntable](./tracks/_archive/foldio360_20261012/index.md) — complete (archived)
+- [gphoto2 Camera](./tracks/_archive/gphoto2-camera_20261012/index.md) — complete (archived)
+- [Spinnaker Camera](./tracks/_archive/spinnaker-camera_20261012/index.md) — complete (archived)
+- [Acroname USB Hub](./tracks/_archive/acroname-hub_20261012/index.md) — complete (archived)
 
 ## Getting Started
 
-Tracks are listed in planned order. Foundation is done; next is `/conductor:implement misha-lights_20261012`. The docs site can run in parallel at any time.
+Tracks are listed in planned order. `xlc-xcarve` and `usb3-vision-camera` are ready to start. The docs site can run in parallel at any time.

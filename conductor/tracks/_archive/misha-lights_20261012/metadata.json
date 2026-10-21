@@ -4,7 +4,7 @@
   "type": "feature",
   "status": "complete",
   "created": "2026-10-12T00:00:00Z",
-  "updated": "2026-10-20T00:00:00Z",
+  "updated": "2026-10-21T00:00:00Z",
   "phases": {
     "total": 5,
     "completed": 5
@@ -58,5 +58,8 @@
     "a7866c0: Record approval of MISHA Phase 4",
     "fe1fa5f: Add MISHA hardware tests",
     "d44eb18: Record the MISHA hardware run on firmware 2.0.0"
-  ]
+  ],
+  "current_task": null,
+  "archived": true,
+  "pull_request": 8
 }

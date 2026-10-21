@@ -2,12 +2,12 @@
   "id": "acroname-hub_20261012",
   "title": "Acroname USB Hub",
   "type": "feature",
-  "status": "in_progress",
+  "status": "complete",
   "created": "2026-10-12T00:00:00Z",
-  "updated": "2026-10-17T00:00:00Z",
+  "updated": "2026-10-21T00:00:00Z",
   "phases": {
     "total": 3,
-    "completed": 1
+    "completed": 3
   },
   "tasks": {
     "total": 10,
@@ -33,5 +33,7 @@
     "66fa627: Rework the Acroname USB 3 device tests and record the port-speed runs",
     "dee7e2b: Correct the Acroname port-speed record: port 7 had no device",
     "c62d016: Record that raising an Acroname port to USB 3 needs a power cycle"
-  ]
+  ],
+  "archived": true,
+  "pull_request": 3
 }

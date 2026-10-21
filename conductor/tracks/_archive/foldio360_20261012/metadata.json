@@ -2,19 +2,19 @@
   "id": "foldio360_20261012",
   "title": "Foldio360 Turntable",
   "type": "feature",
-  "status": "in_progress",
+  "status": "complete",
   "created": "2026-10-12T00:00:00Z",
-  "updated": "2026-10-20T00:00:00Z",
+  "updated": "2026-10-21T00:00:00Z",
   "phases": {
     "total": 5,
     "completed": 5
   },
   "tasks": {
     "total": 16,
-    "completed": 15
+    "completed": 16
   },
   "current_phase": 5,
-  "current_task": "5.3",
+  "current_task": null,
   "commits": [
     "b06f59c: Move the Foldio360 BLE client into the stages package",
     "132a085: Port the Foldio360 offline tests to pytest",
@@ -49,5 +49,7 @@
     "c5ed5e7: Record the Foldio360 hardware run",
     "d6bee7e: Regenerate the Foldio360 commit list after the rebase",
     "ae79c32: Record the Foldio360 halo-after-stop hardware run"
-  ]
+  ],
+  "archived": true,
+  "pull_request": 2
 }

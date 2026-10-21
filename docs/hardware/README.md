@@ -12,7 +12,7 @@ hardware doc reflects what the change taught us (workflow.md).
 | Model | Role | Driver | Doc |
 |---|---|---|---|
 | MISHA | Light | planned (`misha-lights` track) | not yet written |
-| Foldio360 turntable and halo | Stage, Light | planned (`foldio360` track) | not yet written |
+| Foldio360 turntable and halo | Stage, Light | `Foldio360` (`educelab.devices.stages.foldio360`) | [foldio360.md](foldio360.md) |
 | Nikon Z7 II (gphoto2) | File camera, Focus drive | planned (`gphoto2-camera` track) | not yet written |
 | XLC1, XLC2 | Light | planned (`xlc-xcarve` track) | not yet written |
 | X-Carve (GRBL) | Stage | planned (`xlc-xcarve` track) | not yet written |

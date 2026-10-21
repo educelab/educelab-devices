@@ -24,6 +24,8 @@ dependencies = ["numpy>=2"]
 
 # Each driver track adds its vendor SDK as an extra named for its backend.
 [project.optional-dependencies]
+foldio360 = ["bleak>=3.0.2"]
+all = ["educelab-devices[foldio360]"]
 
 [project.scripts]
 el-devices = "educelab.devices.app.cli:main"

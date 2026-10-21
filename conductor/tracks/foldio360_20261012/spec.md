@@ -19,19 +19,19 @@ As a developer of spectral photogrammetry software, I want to rotate the turntab
 
 ## Acceptance Criteria
 
-- [ ] `Foldio360` (`educelab.devices.stages.foldio360`) is a `Device` and `Stage` with one rotary, wrapping axis `"theta"` (degrees, machine/device counter coordinates); `can_home` and `requires_homing` are false (the counter has no hardware reference).
-- [ ] `move_to` takes the shortest path; `move_by` is literal (`+720` turns twice); default timeouts come from the predicted move time (`watchdog_seconds`); arrival is verified against `get_device_position` within a tolerance, raising `PositionError` otherwise.
-- [ ] `speed()` lists the three firmware speeds as `choices` in deg/s, converted with the timing model (speeds 2 and 3 are **assumed**); `set_speed()` applies to later moves and jogs.
-- [ ] `jog(axis, direction)` returns once spin-up is acknowledged; `stop()` interrupts a move running on another thread, completing the pending move as cancelled and draining stray replies.
-- [ ] `position()` returns the last known position while a move is in progress (never blocks, never estimates).
-- [ ] The origin API (`origin`, `set_origin`, `clear_origin`, `home()` as move-to-origin) is removed, per ADR 0003; the power-cycle counter reset is documented in the hardware doc.
-- [ ] `foldio.halo` is a `Light` with one mono channel `"halo"` sharing the connection; brightness ack unreliability under load is handled (paced writes or tolerant ack draining).
-- [ ] Public methods are serialized by the device lock (the original client had none).
-- [ ] `run(frames)` and the IR shutter / `set_signal` commands are not exposed.
-- [ ] The original offline tests are ported to the injected fake transport, and the `Stage` and `Light` contract suites pass.
-- [ ] `docs/hardware/foldio360.md` contains the protocol spec (from `PROTOCOL.md`, keeping verified/assumed/unknown markers); behavior-level content from `CLIENT_GUIDE.md` is folded into the hardware doc or `docs/guide.md`.
-- [ ] `el-devices foldio` subcommand: status, rotate, move to angle, halo level. Takes `--address`; caching the address is not the library's job.
-- [ ] `[foldio360]` extra (`bleak`) declared.
+- [x] `Foldio360` (`educelab.devices.stages.foldio360`) is a `Device` and `Stage` with one rotary, wrapping axis `"theta"` (degrees, machine/device counter coordinates); `can_home` and `requires_homing` are false (the counter has no hardware reference).
+- [x] `move_to` takes the shortest path; `move_by` is literal (`+720` turns twice); default timeouts come from the predicted move time (`watchdog_seconds`); arrival is verified against `get_device_position` within a tolerance, raising `PositionError` otherwise.
+- [x] `speed()` lists the three firmware speeds as `choices` in deg/s, converted with the timing model (speeds 2 and 3 are **assumed**); `set_speed()` applies to later moves and jogs.
+- [x] `jog(axis, direction)` returns once spin-up is acknowledged; `stop()` interrupts a move running on another thread, completing the pending move as cancelled and draining stray replies.
+- [x] `position()` returns the last known position while a move is in progress (never blocks, never estimates).
+- [x] The origin API (`origin`, `set_origin`, `clear_origin`, `home()` as move-to-origin) is removed, per ADR 0003; the power-cycle counter reset is documented in the hardware doc.
+- [x] `foldio.halo` is a `Light` with one mono channel `"halo"` sharing the connection; brightness ack unreliability under load is handled (paced writes or tolerant ack draining).
+- [x] Public methods are serialized by the device lock (the original client had none).
+- [x] `run(frames)`, `ir_shutter`, and `set_signal` are Foldio360-only methods (not part of `Stage`), ported with their original tests. They hold the device lock, `stop()` cancels a `run` the same as a move, and the hardware doc marks them unverified in our use. Nothing uses them yet; they keep the reverse-engineered behavior available.
+- [x] The original offline tests are ported to the injected fake transport, and the `Stage` and `Light` contract suites pass.
+- [x] `docs/hardware/foldio360.md` contains the protocol spec (from `PROTOCOL.md`, keeping verified/assumed/unknown markers); behavior-level content from `CLIENT_GUIDE.md` is folded into the hardware doc or `docs/guide.md`.
+- [x] `el-devices foldio` subcommand: status, rotate, move to angle, halo level. Takes `--address`; caching the address is not the library's job.
+- [x] `[foldio360]` extra (`bleak`) declared.
 
 ## Dependencies
 
@@ -40,7 +40,6 @@ As a developer of spectral photogrammetry software, I want to rotate the turntab
 ## Out of Scope
 
 - Origins and address caching (consumer concerns; ADR 0003).
-- `run(frames)` sequences and IR camera triggering.
 - Reverse-engineering tools (`tools/parse_btsnoop.py`, `probe.py`, `docs/foldio360-protocol.html`), which stay in the archived `foldio360` repo.
 - Migrating the spectral prototype to this driver.
 

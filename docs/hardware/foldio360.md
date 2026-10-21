@@ -99,9 +99,11 @@ Measured with the original standalone client:
 3. Wait ~500 ms.
 4. Send `get_status`.
 
-Whether the ~500 ms settle in step 3 is **required** is unknown — it is the app's
-behavior, and a client that copies it cannot tell. `get_status` itself replies in
-**35–65 ms** (3 samples, live), so the wait is not response latency.
+**The ~500 ms settle in step 3 is not required — verified** (2026-10-16 and 2026-10-19,
+firmware `V1.0.2_1712M02669`, the lab's unit, macOS). The driver sends `get_status` as
+soon as bleak's `start_notify` returns, with no wait, and the firmware answered on every
+open in both hardware runs. `get_status` itself replies in **35–65 ms** (3 samples,
+live), so the app's wait is not response latency either.
 
 ## Protocol
 
@@ -132,11 +134,10 @@ forty other plausible names (`home`, `get_state`, `get_speed`, `info`, `version`
 …) all answer `FAIL`.
 
 The driver offers `run`, `ir_shutter`, and `set_signal` as Foldio360-only methods, outside
-the `Stage` role (see [Driver behavior](#driver-behavior)). Nothing uses them yet. Through
-`educelab-devices`, the 2026-10-16 hardware run covered only the first frames of a `run`
-and `ir_shutter` without a signal; the rest of their sections was verified with the
-official app and the original standalone client, and `set_signal` is **unverified in our
-use**.
+the `Stage` role (see [Driver behavior](#driver-behavior)). Through the driver, only the
+first frames of a `run` and `ir_shutter` without a signal have been run on hardware
+(2026-10-16); the rest of their sections was verified with the official app and the
+original standalone client, and `Foldio360.set_signal()` has not been run on hardware.
 
 ### rotate
 
@@ -199,8 +200,7 @@ are lost. **Pace to ~50 ms** if you need per-value confirmation.
 **`run` turns clockwise — verified** (2026-10-16, firmware `V1.0.2_1712M02669`, the lab's unit). Through `Foldio360.run()`, the
 first frames of `run(24)` at speed 3 stepped the counter +15° each, and the counter counts
 up clockwise. The same run checked that `ir_shutter(0)` without a `set_signal` answers
-`FAIL`. The rest of this section was observed with the app and the original client, not
-yet through the driver.
+`FAIL`. The rest of this section was observed with the app and the original client.
 
 `run(frames, speed)`, `continue`, and `ir_shutter(0)` make up the 360° capture sequence,
 and the only stateful part of the protocol. `run` does **not** free-run: the turntable
@@ -266,8 +266,10 @@ images by any means it likes.
 
 ### set_signal (partially decoded)
 
-**Unverified in our use:** `Foldio360.set_signal()` has not been run against hardware;
-the lab has no captured blob for its cameras yet.
+The command itself is verified: replaying the capture's Canon blob with the original
+client enabled `ir_shutter` ([run / continue / ir_shutter](#run--continue--ir_shutter)).
+`Foldio360.set_signal()` has not been run on hardware, and the lab has no captured blob
+for its own cameras.
 
 Sent when a camera model is chosen in the app. The only non-ASCII command, and the only
 one that exceeds the MTU.
@@ -320,8 +322,7 @@ command names to the firmware and keeping whatever did not answer `FAIL`.
 
 There is **no `set_position`** — it answers `FAIL`, as do `home`, `zero`, `goto` and every
 other name tried. The counter is read-only, so reaching an angle means turning until it
-reads that angle. That is enough for repeatable homing, which the protocol was previously
-believed not to support at all.
+reads that angle. That is enough for repeatable homing.
 
 The counter re-zeros at power-on and integrates commanded motion rather than sensing the
 platter; see [State and recovery](#state-and-recovery).
@@ -337,10 +338,9 @@ The notify characteristic carries exactly four things:
 | `V<major>.<minor>.<patch>_<serial>` | Reply to `get_status` |
 | decimal integer | Frame index during `run`, or the reply to `get_position` / `get_bright` |
 
-**`FAIL` is a real error response, and the firmware does validate its arguments.** Earlier
-revisions of this document said no error had ever been observed and that the parser should
-be assumed permissive; both were wrong, and wrong for the same reason — the official app
-never sends anything invalid, so no capture contains a `FAIL`. Verified rejections:
+**`FAIL` is a real error response, and the firmware does validate its arguments.** No
+capture contains a `FAIL`, because the official app never sends anything invalid; the
+rejections below come from probing with a direct client. Verified rejections:
 
 | Command | Reply | Reading |
 |---|---|---|
@@ -444,7 +444,7 @@ slope_s_per_deg = {1: 0.13696, 2: 0.10303, 3: 0.06812}   # 2 and 3 are ASSUMED
 intercept_s     = 0.1403
 ```
 
-**Speed 3's assumed intercept now has live support.** A 45° move at speed 3 was measured
+**Speed 3's assumed intercept has live support.** A 45° move at speed 3 was measured
 twice at 3.229 s and 3.228 s against a 3.205 s prediction (+24 ms), a second angle on that
 speed's ladder. Speed 1 was re-confirmed at 90°: 12.466 s and 12.442 s against 12.467 s
 predicted, inside 25 ms. Speed 2 still rests on a single 90° sample.
@@ -454,7 +454,8 @@ Use the model as a **watchdog**, not as a substitute for the notification — e.
 error if `2 × predicted + 1 s` elapses with no `OK`. The driver does exactly that
 (`watchdog_seconds`).
 
-**Through the driver, 2026-10-16** (2026-10-16, firmware `V1.0.2_1712M02669`, the lab's unit), each time a whole `move_by` call:
+**Through the driver** (2026-10-16, firmware `V1.0.2_1712M02669`, the lab's unit), each
+time a whole `move_by` or `move_to` call:
 
 | Move | Measured | Model | Difference |
 |---|---|---|---|
@@ -468,8 +469,9 @@ Every call ran 0.18–0.30 s per rotation over the model. A `move_by` call is mo
 rotation: it reads the counter before the move and again to check arrival, each a round
 trip plus the 30 ms digits-only settle, and those two reads account for roughly this much
 (**assumed**: the reads weren't timed on their own). So the model still describes the motion,
-and speeds 2 and 3 now each have a 90° sample through the driver, matching their assumed
-fits within that overhead. A 2 s jog at speed 1 covered 15°, as in the earlier probe.
+and speeds 2 and 3 each have a 90° sample through the driver, matching their assumed
+fits within that overhead. A 2 s jog at speed 1 covered 15°, as it did with the original
+client.
 
 The watchdog needs no change for this. It only times the wait for the rotation's `OK`, not
 the counter reads around it, and `2 × predicted + 1 s` leaves seconds of margin (13.5 s for
@@ -562,8 +564,8 @@ How `Foldio360` maps the protocol onto the `Stage` role:
   hardware reference.
 - **Whole degrees.** The counter counts whole degrees, so the driver rounds every target
   and offset to the nearest degree, and a move counts as arrived when `get_position`
-  reads within ±1° of the target (decided 2026-10-15, from the counter's ±1° resolution
-  in [get_position / get_bright](#get_position--get_bright)). A reading further off
+  reads within ±1° of the target, the counter's resolution
+  ([get_position / get_bright](#get_position--get_bright)). A reading further off
   raises `PositionError`. `position()` always reports whole degrees.
 - **Moves.** `move_to` reads the counter and turns the shorter way; an exact half-turn
   goes counter-clockwise. `move_by` is literal: `+720` turns twice. Turns longer than one
@@ -599,8 +601,8 @@ How `Foldio360` maps the protocol onto the `Stage` role:
   turntable's connection and lock, so a halo command waits for a move. The halo is opened
   and closed on its own. Opening it opens the turntable if that is closed and remembers
   doing so; closing it then closes the turntable too, but otherwise closes only the halo.
-  Closing the turntable always closes the halo (decided 2026-10-15). Levels 0.0–1.0 are sent as whole percent (rounded), and
-  `level()` reads `get_bright`. Writes are paced at least 50 ms apart, so ramps get their
+  Closing the turntable always closes the halo. Levels 0.0–1.0 are sent as whole percent
+  (rounded), and `level()` reads `get_bright`. Writes are paced at least 50 ms apart, so ramps get their
   acks. If an ack still doesn't arrive within 0.5 s, the driver reads the level back:
   if it landed, the write counts as done (the ack is counted as a stray and drained),
   and otherwise `DeviceTimeout` is raised.
@@ -612,8 +614,9 @@ How `Foldio360` maps the protocol onto the `Stage` role:
   `PositionError`. A front end offering a frame count should offer `KNOWN_GOOD_FRAMES` and
   let free entry reach the rest. A frame count outside 24/36/48 is passed through; its wedge surfaces as
   `DeviceTimeout` after a single `cancel(1)`. Moving or jogging from inside `on_frame`
-  raises `DeviceBusy`. The 2026-10-16 run covered its first frames only (they step
-  clockwise); a full sequence, and `set_signal()`, haven't been run through the driver.
+  raises `DeviceBusy`. On hardware, only the first three frames of `run(24)` have been run
+  through the driver (2026-10-16; they stepped clockwise). A full sequence and
+  `set_signal()` haven't been.
 - **Errors.** Arguments are checked before anything is sent, because `FAIL` doesn't say
   which argument was wrong. `CommandRejected` means the device answered `FAIL`;
   `UnexpectedResponse` (a `DeviceError`) means a reply that makes no sense for the
@@ -633,9 +636,9 @@ How `Foldio360` maps the protocol onto the `Stage` role:
 
 ## Notes for a client
 
-Design consequences of the above, in the order they'll bite. These were written for the
-original standalone client; the driver follows them except that its public API is blocking
-(ADR 0001), so `run` takes a per-frame callback instead of being an async iterator.
+Design consequences of the above, in the order they'll bite, for an asyncio client. The
+driver follows them except that its public API is blocking (ADR 0001), so `run` takes a
+per-frame callback instead of being an async iterator.
 
 - **Stack:** `bleak` + `asyncio`. Scan by name `Foldio360` or by service UUID
   `6e400001-b5a3-f393-e0a9-e50e24dcca9e`. Address characteristics by UUID, not by the
@@ -656,8 +659,7 @@ original standalone client; the driver follows them except that its public API i
 - **Ask the device where it is.** `get_position` returns a 0–359 angle that survives
   reconnects — though *not* a power cycle, where it re-zeros to wherever the platter is
   sitting — and follows jog motion ([get_position / get_bright](#get_position--get_bright)).
-  Do **not** dead-reckon from commanded angles — an earlier revision of this document
-  recommended exactly that, before `get_position` was found, and it is strictly worse.
+  Do **not** dead-reckon from commanded angles; it is strictly worse.
   Homing is `get_position` plus a rotate of the shorter signed difference; expect ±1° from
   the counter's resolution, and do not iterate to close that last degree or you will chase
   quantization noise.
@@ -686,10 +688,7 @@ Minimal working capture, for reference: enable notifications → `set_bright(60)
 | `speed > 3`, `deg > 380` | `speed` 4 is rejected ([Response grammar](#response-grammar)); higher speeds and `deg > 380` untried |
 | Does any `frames` outside 24/36/48 work? | Twelve values tried, all wedge ([run / continue / ir_shutter](#run--continue--ir_shutter)); the set matches the app's presets exactly, so probably not |
 | Acknowledged writes (0x12) on RX | Untested; the characteristic advertises support |
-| Is the ~500 ms settle after the CCCD write required? | Enable notifications and send `get_status` immediately |
-
-Settled on 2026-10-16: `cancel(1)` stops a `rotate` in progress ([cancel](#cancel)), and
-`run` turns clockwise ([run / continue / ir_shutter](#run--continue--ir_shutter)).
+| Does bleak on Linux or Windows address the turntable by MAC? | Run `el-devices foldio scan` on each |
 
 ## Manual check
 
@@ -722,8 +721,8 @@ turntable connected to another host doesn't advertise, so it isn't listed.
   landed its last level.
 - `CW` turned the platter clockwise.
 - Nothing surprising beyond the ~0.27 s per-move overhead under [Timing](#timing).
-- `test_stop_leaves_the_halo_alone` was added after this run; it passed on its own on
-  2026-10-19 (same unit and firmware).
+
+On 2026-10-19, same unit and firmware, `test_stop_leaves_the_halo_alone` passed on its own.
 
 ## Capture provenance
 

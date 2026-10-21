@@ -21,7 +21,9 @@ Driver: `educelab.devices.lights.misha.MishaLight`. Manual check: `el-devices mi
   so it's only as accurate as whoever last edited the firmware.
 - **Firmware versions**: `1.0.0` (from `usb-dslr-capture-demo`) and `2.0.0` (this
   repository). The driver needs 2.0.0 or newer. See the
-  [version history](../../firmware/misha/README.md#version-history).
+  [version history](../../firmware/misha/README.md#version-history). **Verified**:
+  `MISHA-2108d7a8` and `MISHA-e6a00ad8` both report firmware 2.0.0, hardware 1.1,
+  2026-10-20.
 - **USB-serial bridge**: Silicon Labs CP2102N, VID:PID `10C4:EA60`, with a factory
   unique 128-bit serial number. **Verified** on two units, 2026-10-13:
   `MISHA-e6a00ad8` and `MISHA-2108d7a8` (one of them had factory serial
@@ -34,8 +36,8 @@ Driver: `educelab.devices.lights.misha.MishaLight`. Manual check: `el-devices mi
   I²C and the brightness line.
 - **Band enables**: one MCP23017 I/O expander per board, at I²C `0x21` on the main
   board (Arduino pin 4 drives its `A0` high) and `0x20` on the second. Arduino pin 7
-  resets the main board's; the cable doesn't carry it to the second. Each expander output enables one band; the firmware maps wavelengths to
-  pins. The enables are pulled down, so every band is off while the expanders are in
+  resets the main board's; the cable doesn't carry it to the second. Each expander
+  output enables one band; the firmware maps wavelengths to pins. The enables are pulled down, so every band is off while the expanders are in
   reset.
 - **Brightness**: Arduino pin D3 is one PWM line to every band's LED driver on both
   boards. The drivers (ST STCS2A) ramp their current on and off over about 1.8 ms,
@@ -69,7 +71,8 @@ Names are `MISHA-` and 8 random hex digits, so nobody has to keep a sequence:
 python3 -c "import secrets; print('MISHA-' + secrets.token_hex(4))"
 ```
 
-To write the name (**verified** on `MISHA-e6a00ad8` and `MISHA-2108d7a8`, 2026-10-13; rewriting an already-programmed configuration is verified on `MISHA-2108d7a8`):
+To write the name (**verified** on `MISHA-e6a00ad8` and `MISHA-2108d7a8`, 2026-10-13,
+including rewriting `MISHA-2108d7a8`'s product string after it was first programmed):
 
 1. Install **Simplicity Studio 5**. Studio 6 doesn't support CP210x devices or Xpress
    Configurator (Silicon Labs community answer, 2026-10-13).
@@ -100,6 +103,12 @@ firmware reflashes. Write the name on the panel's housing too.
 
 Firmware 2.0.0 follows [ADR 0004](../adr/0004-lab-firmware-acknowledges-every-command.md):
 every command gets exactly one reply line, and a rejected command changes nothing.
+
+**Verified** on `MISHA-2108d7a8` and `MISHA-e6a00ad8`, firmware 2.0.0, 2026-10-20, by
+the hardware tests (see [Last run](#last-run)): `ID`, `STATE`, lighting each band,
+switching bands, changing the lit band's level, `<nm>,0` on lit and unlit bands, `OFF`,
+and all three `ERR` replies, each leaving the lit band as it was. Not exercised on
+hardware: `?`, `0,<percent>`, and blank lines.
 
 | Command | Effect | Reply |
 |---|---|---|
@@ -140,7 +149,9 @@ port took 5–115 ms more. Round trips over 20 tries: `ID` 36 ms median (max 37 
 ## State and recovery
 
 - **Power-up and reset**: every band off (the firmware's `setup()`). Any reconnect
-  that resets the board (most do; see Hazards) leaves it dark.
+  that resets the board (most do; see Hazards) leaves it dark. **Verified** on both
+  panels, firmware 2.0.0, macOS, 2026-10-20: a band lit at 25%, then the port closed
+  without `OFF` and reopened, read back dark.
 - **`STATE`** reports what the firmware last commanded, not what the LEDs are doing.
   A failed LED or a loose cable still reads as lit.
 - **Driver**: `open()` reads `STATE` rather than changing anything, so reconnecting to a
@@ -202,7 +213,9 @@ level and shutter speed, comparing the frame-to-frame spread of the mean against
 
 - **Opening the port resets the board.** The DTR line pulses when a port opens, which
   resets an Arduino-style board. Asking pyserial to keep DTR low doesn't reliably stop
-  it on Linux or macOS. Any tool that opens ports to see what's there can reset
+  it on Linux or macOS. **Verified** on macOS: reopening a MISHA panel resets it (see
+  [State and recovery](#state-and-recovery)), and it ignores commands for about 1.6 s
+  after the port opens (see [Timing](#timing)). Any tool that opens ports to see what's there can reset
   *other* boards, e.g. an X-Carve's GRBL controller, which then loses its homing. So
   the driver never opens a port it hasn't matched from USB descriptors or been given
   explicitly.
@@ -214,11 +227,16 @@ level and shutter speed, comparing the frame-to-frame spread of the mean against
 ## Unknowns
 
 - Whether units beyond the two checked use the CP2102N, and what else they might use.
-- Boot time on units other than `MISHA-e6a00ad8`.
-- The exact PWM frequency and current ramp time, measured directly.
+  Check each new unit's USB IDs.
+- Boot time on units other than `MISHA-e6a00ad8`. `MISHA-2108d7a8` opened every time
+  with the 2 s settle (2026-10-20), but wasn't timed; the probe described under
+  [Timing](#timing) would settle it.
+- The exact PWM frequency and current ramp time. An oscilloscope on D3 and on one
+  band's LED current would settle both.
 - Whether other bands, panels, and cameras flicker the same way; only 530 nm on one
-  panel with one camera was measured.
+  panel with one camera was measured. Repeating the exposure test would settle it.
 - Where the ~1% frame-to-frame spread at 100% comes from (camera shutter or light).
+  Repeating it with a steady DC light source would separate the two.
 
 ## Manual check
 

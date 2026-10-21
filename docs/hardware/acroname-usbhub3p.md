@@ -9,8 +9,8 @@ Driver: `educelab.devices.hubs.acroname.AcronameHub`. Manual check: `el-devices 
 
 Facts below come from the BrainStem SDK 2.12.5 source and docstrings, and from
 `pgs-scan`'s `utils/usb_hub3p_config.py` and `utils/usb_hub3p_reset.py` (branch `dev`),
-unless marked **verified**. Verified facts come from the 2026-10-16 hardware test
-run and read-only checks of one unit, serial `0x1A43352C` (see
+unless marked **verified**. Verified facts come from hardware test runs and read-only
+checks of one unit, serial `0x1A43352C`, firmware 2.9.20, on macOS on 2026-10-16 (see
 [Manual check](#manual-check)).
 
 ## Identity
@@ -36,8 +36,9 @@ run and read-only checks of one unit, serial `0x1A43352C` (see
   - `USBHub3p-Stem`: the BrainStem control endpoint, product ID `0013`, at 12 Mb/s,
     behind the upstream USB 2 hub. The driver talked to it with only the upstream
     cable connected, so the separate control port isn't needed for this. The
-    `[0-3]` and `[4-7]` hubs are internal; how their port positions map to the
-    driver's port numbers wasn't checked.
+    `[0-3]` and `[4-7]` hubs are internal. How their port positions map to the
+    driver's port numbers is **unknown**; plugging one device into each port in turn
+    and reading the host's USB tree would settle it.
 
 ## Transport
 
@@ -69,8 +70,10 @@ time if it can't:
   Download it from Microsoft
   (<https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist>); a
   restart is usually needed afterwards.
-- **macOS**: one universal library. **Verified** to import on macOS with Python 3.13,
-  2026-10-15 (no hub attached).
+- **macOS**: one universal library. **Verified** with Python 3.13.15 and brainstem
+  2.12.5, controlling `0x1A43352C`, 2026-10-16.
+
+Only macOS has been used with a hub; the Linux and Windows notes come from the SDK.
 
 Importing `educelab.devices.hubs` never imports `brainstem`. The SDK is loaded on the
 first `discover()` or `open()`, so these failures only affect this backend.
@@ -88,7 +91,8 @@ SUBSYSTEM=="usb", ATTRS{idVendor}=="24ff", MODE="0666"
 
 How a missing rule shows up is **unknown**. The driver says to check udev rules
 when the SDK returns its permission error (12), but the SDK may instead report the
-hub as not found.
+hub as not found. Running `el-devices hub status` as a normal user on Linux, with and
+without the rule, would settle both questions.
 
 ## Protocol
 
@@ -141,7 +145,7 @@ isn't connected return 25; `disconnect()` on a stem that isn't connected returns
 
 The driver can limit how fast each port's data link runs, e.g. to keep a camera at
 USB 2 and cap its bandwidth. It's an `AcronameHub` method, not part of the `Hub`
-role, until a second hub driver needs it.
+role.
 
 | `PortSpeed` | Data lines | Calls |
 |---|---|---|
@@ -160,7 +164,9 @@ warns when the port's device is still at USB 2. Details under
 - **`power_on()` keeps the limit.** `setPortEnable` would turn every data line back
   on, so for a `USB2` or `DATA_OFF` port the driver calls `setPowerEnable` and then
   sets the data lines. `power_off()` still uses `setPortDisable`, which clears power
-  and data.
+  and data. **Verified** on port 7 of `0x1A43352C`, 2026-10-16: `USB2` and `DATA_OFF`
+  read back from the port's data lines after `power_off()`/`power_on()` and after
+  `power_cycle()`.
 - **The limit lives in the driver while the hub is open**, starting from each port's
   state bits at `open()`: both data lines means `USB3`, Hi-Speed only `USB2`, neither
   `DATA_OFF`. A port that's unpowered at `open()` reads as `USB3`, because
@@ -169,14 +175,16 @@ warns when the port's device is still at USB 2. Details under
   (logged at debug). Setting a speed on an unpowered port takes effect at
   `power_on()`.
 - `connected_speed(port)` reads bits 12 and 11 of the port state: `USB3`, `USB2`, or
-  `None` if no device has connected. Low- and full-speed devices are assumed to
-  report as USB 2 (**assumed**; the 12 Mb/s serial adapter on port 0 of
-  `0x1A43352C` did).
+  `None` if no device has connected. A full-speed device reports as USB 2
+  (**verified** on port 0 of `0x1A43352C`, 2026-10-16: a HOLTEK USB-to-serial adapter,
+  `04d9:b534`, that macOS listed at 12 Mb/s read as connected at USB 2). Low-speed
+  devices are **assumed** to do the same.
 - Nothing is saved to the hub's flash.
-- **The limit reads back without a power cycle**: on empty port 7 of `0x1A43352C`,
+- **The limit reads back without a power cycle.** **Verified** on port 7 of
+  `0x1A43352C`, 2026-10-16: each of the three limits read back from the port's data
+  lines on a fresh connection to the hub, and by hand on the empty port,
   `el-devices hub speed 7 usb2` reported a `usb2` limit until
-  `el-devices hub speed 7 usb3 --cycle` (**verified** by hand by the maintainer,
-  2026-10-16).
+  `el-devices hub speed 7 usb3 --cycle`.
 
 #### Speed changes on a live device
 
@@ -184,25 +192,26 @@ warns when the port's device is still at USB 2. Details under
 about 245 mA, 2026-10-16 (hardware tests):
 
 - **Lowering to `USB2`** without a power cycle: the device dropped from USB 3 to
-  USB 2 within 0.5 s.
+  USB 2 within 0.5 s (0.8 s in a second run).
 - **`DATA_OFF`** without a power cycle: the device disconnected within 0.3 s.
 - **Raising from `USB2` to `USB3`** without a power cycle: the device stayed at USB 2
-  (port state `0x0080080B`: VBUS, both data lines enabled, at USB 2, attached) for the
-  15.1 s the test watched. It was also still at USB 2 another 15.1 s later, after
-  the test fixture had re-enabled both data lines and called `setPortEnable` on the
-  powered port. So neither re-enabling the lines nor `setPortEnable` brings it back;
-  cutting VBUS is assumed to.
-- In the same run, two restores done by the test fixture reached USB 3 without a
-  power cycle. They re-enabled both data lines and then called `setPortEnable`.
+  (port state `0x0080080B`: VBUS, both data lines enabled, at USB 2, attached). It
+  was watched for 15.1 s in one run and 5.1 s in another. It was also still at USB 2
+  another 15.1 s later, after both data lines had been re-enabled and `setPortEnable`
+  called on the powered port. So neither re-enabling the lines nor `setPortEnable`
+  brings it back; a power cycle does (below).
+- Two restores in the same run reached USB 3 without a power cycle. Both re-enabled
+  the data lines and then called `setPortEnable`.
   - From `DATA_OFF`: back at USB 3 in 0.8 s. With no data lines the device was fully
     disconnected, so it attached fresh.
   - From `USB2`, about half a second after the device dropped: back at USB 3 in
     0.3 s.
 
-  Why the second one worked and the dedicated test didn't is **unknown**. One guess
+  Why the second one worked and the 15.1 s case didn't is **unknown**. One guess
   is that a USB 3 device retries SuperSpeed only for a short while after losing it,
   and then waits for a power cycle (**assumed**, from the USB 3 spec's SS.Disabled
-  state). Don't rely on it: power-cycle after raising to `USB3`.
+  state). Timing how soon after the drop the limit is raised would test it. Don't
+  rely on it: power-cycle after raising to `USB3`.
 - **A power cycle brings it back.** After `power_cycle()`, the device reconnected at
   USB 3 in 3.4–3.6 s, including from a fallen-back USB 2 connection with USB 3
   already re-enabled. A port limited to `USB2` reconnected at USB 2 in 3.8 s, so the
@@ -211,7 +220,9 @@ about 245 mA, 2026-10-16 (hardware tests):
   same device and port, 2026-10-16.
 
 **Unknown**:
-- whether data-line settings survive a hub reset or power loss;
+- whether data-line settings survive a hub reset or power loss. Setting a port to
+  `USB2`, removing the hub's power, and reading `el-devices hub status` afterwards
+  would settle it;
 - whether the hub accepts data-line changes on an unpowered port (the driver
   avoids them).
 
@@ -224,10 +235,14 @@ step 0.1) and `set_enumeration_delay(seconds)`, which rounds to the nearest 100 
 
 The driver only changes the running value. `pgs-scan`'s config script followed the
 set with `system.save()` (write to the hub's flash) and `system.reset()`. The driver
-doesn't do either, because devices persist nothing. **Verified** 2026-10-16 that a
-new value reads back from the running hub (`test_enumeration_delay_reads_back`).
+doesn't do either, because devices persist nothing. **Verified** on `0x1A43352C`,
+2026-10-16, that a new value reads back from the running hub and can be restored. The
+unit read 1 s afterwards.
+
 **Unknown**: whether the new value takes effect without a save and reset, and what
-the maximum is.
+the maximum is. Setting a long delay, then timing how far apart devices on several
+ports come back after the hub re-enumerates, would settle the first; setting
+increasing values until the SDK rejects one would settle the second.
 
 ## Timing
 
@@ -242,19 +257,27 @@ the maximum is.
 ## State and recovery
 
 - **Across a reconnect**: a port switched off stays off after `close()` and a new
-  `open()`; opening doesn't change port power. **Verified** 2026-10-16
-  (`test_a_port_switched_off_stays_off_across_a_reconnect`).
+  `open()`; opening doesn't change port power. **Verified** on `0x1A43352C`,
+  2026-10-16.
 - **After a hub power loss or reset**: whether disabled ports come back enabled is
-  **unknown**.
+  **unknown**. Switching a spare port off, removing the hub's power, and reading
+  `el-devices hub status` afterwards would settle it.
 - **Unplugged while open**: commands fail with `NotConnected`. `close()` still
   succeeds; reopen once the hub is back.
+- **A device that won't return to USB 3**: if a port reads `limit usb3, connected usb2`
+  even after `power_cycle()`, suspect the cable. On 2026-10-19 a camera on port 3 of
+  `0x1A43352C` stayed at USB 2 after `el-devices hub cycle 3`; a USB 2 cable or a
+  damaged USB 3 pair is the likely cause (**assumed**; swapping the cable would
+  confirm it).
 
 ## Hazards
 
 - `power_off()` and `power_cycle()` cut data as well as power, so a device mid-transfer
   (e.g. a camera writing a file) loses that transfer.
-- Know which port a device is on before cycling it. Ports are numbered from 0, and the
-  numbering on the hub's case may differ (**unknown**).
+- Know which port a device is on before cycling it. Ports are numbered from 0, and
+  whether the numbering on the hub's case matches is **unknown**. Plugging a device
+  into a labelled port and checking which port `el-devices hub status` shows it on
+  would settle it.
 - Power, speed, and the hardware tests act on real ports. On a rig, the other ports
   usually carry cameras in use: on 2026-10-16, ports 1–5 of `0x1A43352C` had five
   cameras on them. Run the hardware tests only with `ACRONAME_TEST_PORT` set to a
@@ -276,107 +299,46 @@ limit.
 The `hardware`-marked tests are in `tests/test_acroname_hardware.py`. They only
 switch the port named by `ACRONAME_TEST_PORT`, which must have nothing important on
 it, and restore its power and speed afterwards; tests that switch anything skip
-without it. With several hubs attached, set `ACRONAME_SERIAL_NUMBER`. Set
-`ACRONAME_USB3_DEVICE=1` when a spare USB 3 device is plugged into the test port, to
-check the connected speed at each limit.
+without it. With several hubs attached, set `ACRONAME_SERIAL_NUMBER`.
+
+Set `ACRONAME_USB3_DEVICE=1` when a spare USB 3 device is plugged into the test port.
+The device tests first wait up to 15 s for it to connect at USB 3, power-cycling once
+if it's at USB 2, and fail saying to plug one in (or check the cable) if it doesn't.
+They check that `USB2` and `DATA_OFF` apply without a power cycle, that raising to
+`USB3` without one leaves the device at USB 2 for 5 s, and that the device reconnects
+at its limit within 30 s of a power cycle. On failure they print the raw port state.
 
 ### 2026-10-16
 
-The `hardware`-marked tests, run by the maintainer on macOS with Python 3.13.15,
-pytest 9.1.1, and brainstem 2.12.5, with `ACRONAME_TEST_PORT` set: all 7 passed in
-7.79 s.
+All runs by the maintainer on macOS with Python 3.13.15, pytest 9.1.1, and brainstem
+2.12.5. The logs from the speed runs name the hub as `0x1A43352C`; the first log
+doesn't name the hub, firmware, or test port, but it was the only hub attached when
+checked later that day.
 
-- The hub identifies as a USBHub3p, with a serial number and a firmware version in
-  the expected formats.
-- `discover()` lists the open hub.
-- Every port reports its power state.
-- `power_off()` and `power_on()` switch the test port, and `is_powered()` follows.
-- `power_cycle()` leaves the test port powered.
-- A port switched off stays off across a reconnect.
-- The enumeration delay reads back after being set, and was restored.
+- **Power and enumeration delay**: 7 passed in 7.79 s. The hub identifies as a
+  USBHub3p with a serial number and firmware version in the expected formats,
+  `discover()` lists it, every port reports its power, `power_off()`, `power_on()`,
+  and `power_cycle()` switch the test port, a port switched off stays off across a
+  reconnect, and the enumeration delay reads back and is restored.
+- **Read-only checks** (`el-devices hub list`, `status`, `speed 7`, a script calling
+  only SDK getters, and `system_profiler SPUSBHostDataType`): one hub, serial
+  `0x1A43352C`, firmware 2.9.20, enumeration delay 1 s, all 8 ports powered at
+  `USB3`, ports 1–5 connected at USB 3, port 0 at USB 2, ports 6 and 7 empty. The
+  results are in [Identity](#identity) and [Ports](#ports).
+- **Port speed, port 7 empty**: 12 passed and 3 skipped (the device tests) in
+  40.35 s. Each limit reads back on a fresh connection, and `USB2` and `DATA_OFF`
+  survive `power_off()`/`power_on()` and `power_cycle()`. Read-only checks
+  afterwards found port 7 powered with both data lines enabled, nothing attached,
+  drawing 0 µA, and every other port as before.
+- **Port speed, USB 3 device on port 7** (`ACRONAME_USB3_DEVICE=1`, `-s`): in 89.57 s,
+  `USB2` applied in 0.5 s and `DATA_OFF` disconnected in 0.3 s, but raising to
+  `USB3` without a power cycle left the device at USB 2 for 15.1 s. The two
+  reconnect cases couldn't start, because the device was still at USB 2.
+- **Reconnect and raise-to-USB 3 tests**, same device and port: 3 passed in 31.46 s.
+  The device, still at USB 2 from the previous run, reached USB 3 3.6 s after a
+  power cycle. Raising from `USB2` to `USB3` without a cycle again left it at USB 2,
+  for the 5.1 s watched. After `power_cycle()` it reconnected at USB 3 in 3.4–3.6 s,
+  and at USB 2 in 3.8 s with a `USB2` limit.
 
-| | |
-|---|---|
-| Hub serial number | not in the log |
-| Firmware version | not in the log |
-| Test port | not in the log |
-
-Later the same day, read-only checks (`el-devices hub list`, `el-devices hub status`,
-`el-devices hub speed 7`, a script calling only SDK getters, and
-`system_profiler SPUSBHostDataType`) found one hub attached: serial `0x1A43352C`,
-firmware 2.9.20, enumeration delay 1 s, all 8 ports powered at `USB3`, ports 1–5
-connected at USB 3, port 0 at USB 2, ports 6 and 7 empty. The results are in
-[Identity](#identity) and [Ports](#ports).
-
-### 2026-10-16, port speed
-
-The port-speed hardware tests, run by the maintainer on macOS with Python 3.13.15 on
-`ACRONAME_TEST_PORT=7`, on the 15-test version of `tests/test_acroname_hardware.py`:
-
-- **Port 7 empty**: 12 passed, 3 skipped (the USB 3 device tests), in 40.35 s. Speed
-  limits reach the hub (a fresh connection reads them back from the port's data
-  lines), and `USB2` and `DATA_OFF` survive `power_off()`/`power_on()` and
-  `power_cycle()`.
-- **`ACRONAME_USB3_DEVICE=1`, but port 7 still empty**: 13 passed and 2 failed, in
-  73.73 s. Nothing was plugged into port 7 (confirmed by the maintainer), so the
-  `USB2` and `USB3` connected-speed tests waited 15 s for a device that wasn't
-  there. The `DATA_OFF` case passed only because it expected no device. These
-  failures say nothing about the hub or the driver.
-- **By hand**, on the same empty port: `el-devices hub speed 7 usb2` reported a `usb2`
-  limit until `el-devices hub speed 7 usb3 --cycle`. That shows the limit reads back;
-  connected speed wasn't tested.
-
-Read-only checks afterwards agreed: port 7 powered with both data lines enabled, no
-device attached, drawing 0 µA. Hub mode and every other port matched the earlier
-checks.
-
-The device tests have since been reworked:
-- They first wait for a device at USB 3 on the test port, and fail saying to plug
-  one in if none shows up within 15 s.
-- Limiting is tested without a power cycle.
-- Restoring `USB3` without a cycle has its own test.
-- Reconnecting after a power cycle has its own test, with a 30 s wait and the raw
-  port state (VBUS, data lines, attached bit, current) on failure.
-
-#### Re-run with a USB 3 device on port 7
-
-The maintainer re-ran the 17 tests with a USB 3 device on port 7,
-`ACRONAME_USB3_DEVICE=1`, and `-s`: 14 passed, 1 failed, 2 errors, in 89.57 s.
-
-- Passed: the 11 tests that don't need a device, plus
-  `test_usb2_limit_applies_without_a_power_cycle` (USB 2 in 0.5 s),
-  `test_data_off_disconnects_the_device` (disconnected in 0.3 s), and
-  `test_enumeration_delay_reads_back`.
-- Failed: `test_restoring_usb3_without_a_power_cycle`. The device stayed at USB 2
-  for 15.1 s, drawing about 245 mA. That's the finding above, not a bug.
-- Errors: both `test_device_reconnects_after_a_power_cycle` cases. The failed test
-  left the device at USB 2, and the `usb3_device` precondition waited 15.1 s for USB 3
-  before giving up. Reconnecting after a power cycle was tested in the next run (below).
-
-Since then:
-- The failed test became `test_raising_to_usb3_without_a_power_cycle_leaves_the_device_at_usb2`.
-  It now pins this behavior: after raising the limit it checks the device stays at
-  USB 2 for 5 s. Its cleanup power-cycles the port and waits up to 30 s for USB 3.
-- The precondition now power-cycles once when it finds the device at USB 2. If the
-  device is still at USB 2 after that, it fails saying the device may not be USB 3,
-  or may be on a USB 2 cable.
-
-#### Reconnect tests
-
-`-k "reconnects or raising_to_usb3"` with the same device on port 7: 3 passed in
-31.46 s.
-
-- `test_raising_to_usb3_without_a_power_cycle_leaves_the_device_at_usb2`:
-  - The precondition found the device still at USB 2 from the earlier run after
-    3.1 s, power-cycled, and saw USB 3 3.6 s later. So the recovery path works on
-    hardware.
-  - The test limited the port to USB 2 (0.8 s), raised it to USB 3 without a cycle,
-    and the device stayed at USB 2 for the 5.1 s watched.
-  - Cleanup power-cycled, and the device was at USB 3 in 3.6 s.
-- `test_device_reconnects_after_a_power_cycle[usb3]`: reconnected at USB 3 in 3.4 s.
-- `test_device_reconnects_after_a_power_cycle[usb2]`: limited to USB 2 (0.8 s), then
-  reconnected at USB 2 in 3.8 s.
-
-Not yet run: the checks the tests don't cover
-(whether the enumeration delay takes effect without a save, port numbering on the
-case, behavior after a hub power loss).
+Not checked on hardware: Linux and Windows, whether the enumeration delay takes effect
+without a save, port numbering on the case, and behavior after a hub power loss.

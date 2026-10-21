@@ -1,7 +1,7 @@
 """gphoto2 tests against a real camera: ``pytest -m hardware -s tests/test_gphoto2_hardware.py``.
 
 Uses the only camera attached, or ``GPHOTO2_PORT`` to pick one. Set the camera to
-M with a lens attached and manual focus allowed; the focus tests move the lens to
+M and AF-S, with a lens that has a focus motor; the focus tests move the lens to
 both ends of its range. Run with ``-s`` to see the measurements printed for the
 hardware doc.
 """

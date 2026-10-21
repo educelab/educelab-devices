@@ -858,6 +858,21 @@ def test_a_trigger_fired_before_not_before_is_fired_again(triggered, fake):
     assert frame.timestamp >= later
 
 
+def test_a_trigger_in_the_same_clock_tick_as_not_before_counts(
+    triggered, fake, monkeypatch
+):
+    # Windows' clock on Python 3.12 ticks every 15.6 ms, so not_before and the
+    # trigger can read the same tick, with not_before rounded just after it.
+    tick = time.time()
+    monkeypatch.setattr(fake, "clock", lambda: tick)
+    monkeypatch.setattr("educelab.devices.cameras.spinnaker.time.time", lambda: tick)
+    triggered.trigger()
+    triggered.capture_frame(
+        not_before=datetime.fromtimestamp(tick, UTC) + timedelta(microseconds=1)
+    )
+    assert fake.trigger_calls == 1
+
+
 def test_trigger_outside_software_trigger_mode_raises(camera):
     with pytest.raises(DeviceError, match="software-trigger"):
         camera.trigger()

@@ -274,10 +274,9 @@ increasing values until the SDK rejects one would settle the second.
 
 - `power_off()` and `power_cycle()` cut data as well as power, so a device mid-transfer
   (e.g. a camera writing a file) loses that transfer.
-- Know which port a device is on before cycling it. Ports are numbered from 0, and
-  whether the numbering on the hub's case matches is **unknown**. Plugging a device
-  into a labelled port and checking which port `el-devices hub status` shows it on
-  would settle it.
+- Know which port a device is on before cycling it. Ports are numbered from 0, as
+  labelled on the hub's case (**verified** on `0x1A43352C`: a device in the port
+  labelled 7 showed up on driver port 7).
 - Power, speed, and the hardware tests act on real ports. On a rig, the other ports
   usually carry cameras in use: on 2026-10-16, ports 1–5 of `0x1A43352C` had five
   cameras on them. Run the hardware tests only with `ACRONAME_TEST_PORT` set to a
@@ -341,4 +340,4 @@ checked later that day.
   and at USB 2 in 3.8 s with a `USB2` limit.
 
 Not checked on hardware: Linux and Windows, whether the enumeration delay takes effect
-without a save, port numbering on the case, and behavior after a hub power loss.
+without a save, and behavior after a hub power loss.

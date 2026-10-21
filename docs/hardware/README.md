@@ -17,7 +17,7 @@ hardware doc reflects what the change taught us (workflow.md).
 | XLC1, XLC2 | Light | planned (`xlc-xcarve` track) | not yet written |
 | X-Carve (GRBL) | Stage | planned (`xlc-xcarve` track) | not yet written |
 | Spinnaker cameras | Frame camera | `SpinnakerCamera` (`educelab.devices.cameras.spinnaker`) | [spinnaker.md](spinnaker.md) |
-| Acroname USB hub | Hub | planned (`acroname-hub` track) | not yet written |
+| Acroname USBHub3p | Hub | `hubs.acroname.AcronameHub` | [acroname-usbhub3p.md](acroname-usbhub3p.md) |
 
 Add a row when a doc is created, and link it from the Doc column.
 

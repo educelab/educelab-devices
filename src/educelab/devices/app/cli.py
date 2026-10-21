@@ -14,7 +14,7 @@ from collections.abc import Sequence
 from educelab.devices import __version__
 from educelab.devices.errors import DeviceError
 
-SUBCOMMANDS = ("discover", "dslr", "foldio", "misha", "simulate", "spinnaker")
+SUBCOMMANDS = ("discover", "dslr", "foldio", "hub", "misha", "simulate", "spinnaker")
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -1,0 +1,105 @@
+# Implementation Plan: USB3 Vision Camera
+
+**Track ID:** usb3-vision-camera_20261021
+**Spec:** [spec.md](./spec.md)
+**Created:** 2026-10-21
+**Status:** [ ] Not Started
+
+## Overview
+
+Settle the open choices and the seam first. Then move the Spinnaker driver onto a shared GenICam core, using its existing tests as the safety net. On that core, build the Aravis backend (Linux/macOS, primary), then the GenTL backend (Windows, secondary), then the CLI, docs, and hardware runs.
+
+## Phase 1: Decisions, ADR and the shared seam
+
+### Tasks
+
+- [ ] Task 1.1: Research and record install steps per OS:
+  - Aravis + PyGObject on macOS (Homebrew) and Linux, including the udev rule.
+  - IDS peak's GenTL producer on Windows and Linux.
+  - Whether the IDS producer accepts cameras from other vendors.
+  - Harvesters versus calling `genicam` directly.
+- [ ] Task 1.2: Draft ADR 0006 (GenICam cameras share a core with one backend per transport). Needs maintainer approval.
+- [ ] Task 1.3: Decide the names: backends, extras (e.g. `[gentl]`), driver classes, module layout under `cameras/`, and the CLI subcommand.
+- [ ] Task 1.4: Define the backend seam:
+  - Node map: read/write float, int, enum, and command nodes, with their ranges and access mode.
+  - Stream: start/stop, grab with a timeout, buffer status, device timestamp, release.
+  - Discovery and error translation into `DeviceError` subclasses.
+- [ ] Task 1.5: Build an in-memory fake backend that implements the seam, for testing the core on its own.
+
+### Verification
+
+- [ ] ADR approved. The seam and fake backend pass their own tests.
+
+## Phase 2: Move Spinnaker onto the core
+
+### Tasks
+
+- [ ] Task 2.1: Write core tests against the fake backend. They cover settings (units, snap/clamp, auto modes), pausing acquisition for some writes, software trigger priming and re-firing, the timestamp offset, the `not_before` loop, and handling of incomplete and missing-trailer frames.
+- [ ] Task 2.2: Move that logic out of `spinnaker.py` into the core.
+- [ ] Task 2.3: Implement the PySpin backend on the seam: `System` lifecycle, node access, image status, and exception codes.
+- [ ] Task 2.4: Add probing for optional features (trigger, throughput limit, timestamp node, auto modes, `AcquisitionResultingFrameRate`). Settings for missing features are left out.
+
+### Verification
+
+- [ ] Every existing Spinnaker unit and contract test passes unmodified.
+- [ ] `pytest -m hardware` passes on a CM3-U3-50S5M.
+- [ ] `docs/hardware/spinnaker.md` is unchanged except for links to the core.
+
+## Phase 3: Aravis backend (Linux, macOS)
+
+### Tasks
+
+- [ ] Task 3.1: Build a fake `gi.repository.Aravis` covering discovery, the device feature API, streams and buffers with release tracking, buffer status, and timestamps.
+- [ ] Task 3.2: Write tests for the lazy import and for the install hint that links to the per-OS steps; implement.
+- [ ] Task 3.3: Write tests for discovery and open/close by serial, including what `open()` configures; implement.
+- [ ] Task 3.4: Write tests for the stream (buffer pool, newest-only behaviour, timeouts, incomplete buffers) and error mapping (busy, not found, timeout); implement.
+- [ ] Task 3.5: Run the `Camera`/`FrameCamera` contract suites against the fake.
+- [ ] Task 3.6: Add hardware tests, mirroring the Spinnaker set where it applies.
+
+### Verification
+
+- [ ] CI is green.
+- [ ] IDS U3-36P0XCP-M-GL hardware tests pass on macOS and Linux.
+- [ ] The rolling-shutter timestamp behaviour is checked.
+
+## Phase 4: GenTL backend (Windows, Linux)
+
+### Tasks
+
+- [ ] Task 4.1: Build a fake for the chosen library (Harvesters or `genicam`), covering producer loading, discovery, the node map, buffers, and error codes.
+- [ ] Task 4.2: Write tests for the lazy import, the install hint, and a missing producer (`GENICAM_GENTL64_PATH`); implement.
+- [ ] Task 4.3: Write tests for discovery, open/close, the stream, and error mapping; implement.
+- [ ] Task 4.4: Run the contract suites against the fake.
+- [ ] Task 4.5: Add hardware tests.
+
+### Verification
+
+- [ ] CI is green.
+- [ ] IDS hardware tests pass on Linux through IDS peak, and on Windows if a Windows machine is available. Otherwise the Windows check is recorded as outstanding.
+
+## Phase 5: CLI, docs and hardware checks
+
+### Tasks
+
+- [ ] Task 5.1: Add the `el-devices` subcommand with backend selection: list cameras, capture N frames, and a latency benchmark, matching `el-devices spinnaker`.
+- [ ] Task 5.2: Write the hardware docs:
+  - USB3 Vision backends: install per OS, how the driver differs from Aravis and GenTL, hazards.
+  - The IDS U3-36P0XCP-M-GL doc: identity, nodes, timing, rolling shutter, rig steps.
+- [ ] Task 5.3: Update `pyproject.toml` extras, `CLAUDE.md`, `tech-stack.md`, the README, and `docs/guide.md` (only if callers can notice the difference).
+- [ ] Task 5.4: Run the manual checks on the IDS camera: Aravis on macOS and Linux, GenTL on Linux and Windows. Record the results in the hardware doc.
+- [ ] Task 5.5 (stretch): Run the CM3-U3-50S5M through both generic backends and compare it with the Spinnaker driver.
+
+### Verification
+
+- [ ] The manual checks are recorded, and `pytest -m hardware` results are in the doc.
+
+## Final Verification
+
+- [ ] All acceptance criteria met
+- [ ] Tests passing
+- [ ] Documentation updated
+- [ ] Ready for review
+
+---
+
+_Generated by Conductor. Tasks will be marked [~] in progress and [x] complete._

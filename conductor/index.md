@@ -28,6 +28,7 @@ Project-level context outside this directory:
 - [Spinnaker Camera](./tracks/spinnaker-camera_20261012/index.md) — pending
 - [Acroname USB Hub](./tracks/acroname-hub_20261012/index.md) — pending
 - [Documentation Site](./tracks/docs-site_20261012/index.md) — pending
+- [USB3 Vision Camera](./tracks/usb3-vision-camera_20261021/index.md) — pending
 
 ## Completed Tracks
 

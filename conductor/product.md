@@ -34,6 +34,7 @@ Planned tracks, in order. All are registered in [tracks.md](./tracks.md).
 | 5 | XLC lights and X-Carve | Serial drivers from `pgs-scan` `dev`; firmware moved in; fixes #71 and #84 |
 | 6 | Spinnaker camera | `SpinnakerSystem` + per-camera driver; fixes #83 and #90 |
 | 7 | Acroname hub | `brainstem`-based Hub |
+| 8 | USB3 Vision camera | Shared GenICam core from the Spinnaker driver; Aravis (Linux/macOS) and GenTL (Windows) backends; IDS U3-36P0XCP-M-GL first |
 | — | Docs site | MkDocs Material + mkdocstrings on GitHub Pages; can run alongside any track |
 
 ## Out of scope

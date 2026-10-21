@@ -10,6 +10,7 @@
 | [~] | [spinnaker-camera_20261012](./tracks/spinnaker-camera_20261012/index.md) | Spinnaker Camera | 2026-10-12 | 2026-10-15 |
 | [~] | [acroname-hub_20261012](./tracks/acroname-hub_20261012/index.md) | Acroname USB Hub | 2026-10-12 | 2026-10-15 |
 | [ ] | [docs-site_20261012](./tracks/docs-site_20261012/index.md) | Documentation Site | 2026-10-12 | 2026-10-12 |
+| [ ] | [usb3-vision-camera_20261021](./tracks/usb3-vision-camera_20261021/index.md) | USB3 Vision Camera | 2026-10-21 | 2026-10-21 |
 
 `xlc-xcarve` is blocked until `misha-lights` merges (it reuses the serial transport).
 

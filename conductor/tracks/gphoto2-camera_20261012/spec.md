@@ -19,17 +19,17 @@ As a developer of spectral imaging software, I want to capture the camera's nati
 
 ## Acceptance Criteria
 
-- [ ] `[gphoto2]` extra: `gphoto2; sys_platform != "win32"` and Pillow; lazy import; libgphoto2 logging bridged to Python `logging`.
-- [ ] `GPhoto2Camera` is a `Device` and `FileCamera`; `discover()` uses camera autodetect (model, port).
-- [ ] `open()` errors: USB claim (`-53`) raises `DeviceBusy` whose message names `ptpcamerad` and the documented workaround; an empty bus (`-105`) is retried a bounded number of times, then raises `DeviceNotFound`. The library never kills processes.
-- [ ] `capture_files()` returns every file one shutter release produces (e.g. RAW + JPEG) as in-memory `CameraFile`s; downloads are retried a bounded number of times; a capture in flight blocks keep-alive and concurrent captures.
-- [ ] Settings are `Setting` descriptors from the camera's config tree; canonical `exposure_time` (seconds) lists the discrete shutter speeds as `choices`, so consumers pick one with `Setting.nearest()`; other settings are reachable by native widget name.
-- [ ] `preview_frame()` enables live view as needed (`viewfinder` / `eosviewfinder` / `d1a6`, continuous AF off) and returns an ndarray decoded with Pillow.
-- [ ] Keep-alive runs on an internal daemon thread, paused during capture and stopped on `close()`.
-- [ ] `cam.focus` is a `FocusDrive` when the camera exposes a range-type `manualfocusdrive` (Nikon, Sony), else `None`: `step(n)` chunks large moves, waits a settle time per chunk, retries busy (`-110`), and raises `FocusLimitReached` on the end-stop error; `drive_to_limit()` steps until the limit; the step counter resets at each limit.
-- [ ] Tests run against an injected fake gphoto2 layer (no libgphoto2 needed); `Camera`/`FileCamera`/`FocusDrive` contract suites pass; tests run on every OS in CI, Windows included, since only the extra can't install there.
-- [ ] `docs/hardware/gphoto2-cameras.md` with a Nikon Z7 II section (widgets, error codes, focus behavior, live-view quirks, `ptpcamerad`).
-- [ ] `el-devices dslr` subcommand: detect, list settings, capture to a directory, focus step.
+- [x] `[gphoto2]` extra: `gphoto2; sys_platform != "win32"` and Pillow; lazy import; libgphoto2 logging bridged to Python `logging`.
+- [x] `GPhoto2Camera` is a `Device` and `FileCamera`; `discover()` uses camera autodetect (model, port).
+- [x] `open()` errors: USB claim (`-53`) raises `DeviceBusy` whose message names `ptpcamerad` and the documented workaround; an empty bus (`-105`) is retried a bounded number of times, then raises `DeviceNotFound`. The library never kills processes.
+- [x] `capture_files()` returns every file one shutter release produces (e.g. RAW + JPEG) as in-memory `CameraFile`s; downloads are retried a bounded number of times; a capture in flight blocks keep-alive and concurrent captures.
+- [x] Settings are `Setting` descriptors from the camera's config tree; canonical `exposure_time` (seconds) lists the discrete shutter speeds as `choices`, so consumers pick one with `Setting.nearest()`; other settings are reachable by native widget name.
+- [x] `preview_frame()` enables live view as needed (`viewfinder` / `eosviewfinder` / `d1a6`, continuous AF off) and returns an ndarray decoded with Pillow.
+- [x] Keep-alive runs on an internal daemon thread, paused during capture and stopped on `close()`.
+- [x] `cam.focus` is a `FocusDrive` when the camera exposes a range-type `manualfocusdrive` (Nikon, Sony), else `None`: `step(n)` chunks large moves, waits a settle time per chunk, retries busy (`-110`), and raises `FocusLimitReached` on the end-stop error; `drive_to_limit()` steps until the limit; the step counter resets at each limit.
+- [x] Tests run against an injected fake gphoto2 layer (no libgphoto2 needed); `Camera`/`FileCamera`/`FocusDrive` contract suites pass; tests run on every OS in CI, Windows included, since only the extra can't install there.
+- [x] `docs/hardware/gphoto2-cameras.md` with a Nikon Z7 II section (widgets, error codes, focus behavior, live-view quirks, `ptpcamerad`).
+- [x] `el-devices dslr` subcommand: detect, list settings, capture to a directory, focus step.
 
 ## Dependencies
 

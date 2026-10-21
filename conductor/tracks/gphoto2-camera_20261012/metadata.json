@@ -4,17 +4,17 @@
   "type": "feature",
   "status": "in_progress",
   "created": "2026-10-12T00:00:00Z",
-  "updated": "2026-10-16T00:00:00Z",
+  "updated": "2026-10-21T00:00:00Z",
   "phases": {
     "total": 5,
-    "completed": 4
+    "completed": 5
   },
   "tasks": {
     "total": 20,
-    "completed": 17
+    "completed": 20
   },
   "current_phase": 5,
-  "current_task": "5.4",
+  "current_task": null,
   "commits": [
     "f453498: Add the gphoto2 extra, lazy SDK import, and libgphoto2 logging bridge",
     "27fcc99: Define the gphoto2 session seam and a fake camera library",
@@ -44,6 +44,14 @@
     "198eaaf: Add el-devices dslr to check a gphoto2 camera by hand",
     "50a85f6: Add gphoto2 hardware tests and stop iterating CameraList",
     "b7f1174: Record gphoto2 Phase 5 bench-free commits in the track metadata",
-    "6cb19e3: Keep canonical gphoto2 settings listed at Bulb and Auto ISO"
+    "6cb19e3: Keep canonical gphoto2 settings listed at Bulb and Auto ISO",
+    "fd6cfa0: Update gphoto2 track commits after rebasing onto main",
+    "f5613ae: Skip the unnamed gphoto2 config section",
+    "555b8b2: Copy gphoto2 previews before freeing their CameraFile",
+    "dc41ef6: Write one gphoto2 widget without reading the whole tree",
+    "e28b82f: Read the gphoto2 serial number and firmware at open",
+    "ce5e2bf: Record the gphoto2 open timing with identity reads",
+    "7bb16b9: Note that a gphoto2 -1 focus error can also mean no focus motor",
+    "9dc876c: Record what the Z7 II bench runs verified in the gphoto2 doc"
   ]
 }

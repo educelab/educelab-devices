@@ -149,7 +149,8 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
 
 ### Verification
 
-- [ ] Maintainer confirms capture, settings, live view, and focus on the Z7 II.
+- [x] Maintainer confirms capture, settings, live view, and focus on the Z7 II.
+  - Approved 2026-10-21. Adding `camera.focus` to `docs/guide.md` waits on main (below).
 
 ## Waiting on main
 
@@ -159,10 +160,10 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
 
 ## Final Verification
 
-- [ ] All acceptance criteria met
-- [ ] Tests passing
-- [ ] Documentation updated
-- [ ] Ready for review
+- [x] All acceptance criteria met
+- [x] Tests passing
+- [x] Documentation updated
+- [x] Ready for review
 
 ---
 

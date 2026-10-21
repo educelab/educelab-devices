@@ -182,9 +182,10 @@ class GPhoto2Camera(FileCamera):
 
         Available when the camera has a range-type ``manualfocusdrive`` widget
         (Nikon, Sony). It shares this camera's connection: it opens with the
-        camera, closes and forgets its step count when the camera closes, and
-        closing it leaves the camera open. The same object is returned on every
-        connection while the lens can drive focus.
+        camera, and closes and forgets its step count when the camera closes.
+        Opened on its own, it opens the camera if needed and closes it again
+        only if it opened it. The same object is returned on every connection
+        while the lens can drive focus.
 
         Raises:
             NotConnected: The camera isn't open, so whether it can drive focus
@@ -505,9 +506,10 @@ class GPhoto2FocusDrive(FocusDrive):
     """The focus drive of a `GPhoto2Camera`, reached through ``camera.focus``.
 
     It shares the camera's connection and lock rather than opening its own:
-    `open()` succeeds only while the camera is open, `close()` leaves the
-    camera alone, and closing the camera closes this too. Moves larger than
-    `FOCUS_CHUNK_STEPS` go in chunks, each followed by a settle wait.
+    `open()` opens the camera if that is closed, and `close()` then closes the
+    camera too, but only in that case. Closing the camera closes this. Moves
+    larger than `FOCUS_CHUNK_STEPS` go in chunks, each followed by a settle
+    wait.
     """
 
     def __init__(self, camera: GPhoto2Camera) -> None:
@@ -517,6 +519,7 @@ class GPhoto2FocusDrive(FocusDrive):
         # never interleave on the bus.
         self._lock = camera._lock
         self._max_chunk = FOCUS_CHUNK_STEPS
+        self._opened_camera = False
 
     @property
     def info(self) -> DeviceInfo:
@@ -537,14 +540,26 @@ class GPhoto2FocusDrive(FocusDrive):
         self._reset_state()
 
     def _open(self) -> None:
-        if not self._camera.is_open:
-            raise NotConnected(f"{self!r}: open the camera first")
-        # Re-checks the widget if the camera was reopened since it was last read.
-        if self._camera.focus is not self:
-            raise DeviceError(f"{self!r}: the camera can no longer drive focus")
+        opened = not self._camera.is_open
+        if opened:
+            self._camera.open()
+        try:
+            # Re-checks the widget if the camera was reopened since it was read.
+            if self._camera.focus is not self:
+                raise DeviceError(f"{self!r}: the camera can no longer drive focus")
+        except BaseException:
+            if opened:
+                self._camera.close()
+            raise
+        self._opened_camera = opened
 
     def _close(self) -> None:
-        pass
+        if self._opened_camera:
+            self._camera.close()
+
+    def _reset_state(self) -> None:
+        super()._reset_state()
+        self._opened_camera = False
 
     def _step(self, steps: int) -> None:
         chunk = min(FOCUS_CHUNK_STEPS, self._max_chunk)

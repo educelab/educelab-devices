@@ -115,6 +115,9 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
   camera's connection and lock: it opens with the camera, closes (forgetting its count)
   when the camera closes, and closing it leaves the camera open. The same object is
   returned on every connection.
+  - Changed (2026-10-21), to follow the guide's rule for a role handed out as a second
+    object: opening the drive opens a closed camera, and closing it then closes the camera
+    too, but only in that case.
 - `cam.focus` raises `NotConnected` while the camera is closed, rather than returning
   `None`, which would wrongly say the camera can't drive focus. The first access per
   connection reads the config tree once.
@@ -156,7 +159,8 @@ Establish the session layer and a fake gphoto2 seam first, then capture, setting
 
 - [x] After `Setting.value` allows `None` on main: rebase, then make canonical settings always present with `value=None` at non-numeric camera values (Phase 4 decision).
   - Rebased onto main at `6dbb066` (PRs #6 and #7) on 2026-10-16 with no conflicts. #6 changes only `FrameCamera`, which this driver doesn't offer. The contract suite also runs with the fake at Bulb and Auto ISO.
-- [ ] After the Foldio track's guide wording is on main: add `camera.focus` to `docs/guide.md`.
+- [x] After the Foldio track's guide wording is on main: add `camera.focus` to `docs/guide.md`.
+  - Done 2026-10-21 after rebasing onto #2.
 
 ## Final Verification
 

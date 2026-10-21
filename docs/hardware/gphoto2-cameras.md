@@ -266,7 +266,8 @@ it.
 `manualfocusdrive` widget (Nikon and Sony bodies), and `None` otherwise. The first access
 on each connection reads the config tree to find out, so it raises `NotConnected` while
 the camera is closed. The drive shares the camera's connection and lock: it opens and
-closes with the camera, and closing just the drive leaves the camera open. Writing a
+closes with the camera. Opening a drive you hold while the camera is closed opens the
+camera, and closing the drive then closes the camera too, but only in that case. Writing a
 number to the widget drives the lens motor by that many steps. Canon bodies have a
 choice-type `manualfocusdrive` (`Near 1`–`3`, `Far 1`–`3`), which this driver doesn't
 support.

@@ -1300,11 +1300,32 @@ def test_closing_the_camera_closes_its_focus_drive(focus_waits):
     assert focus.focus_steps is None
     with pytest.raises(NotConnected):
         focus.step(1)
-    with pytest.raises(NotConnected):
-        focus.open()
 
     camera.open()
     assert camera.focus is focus and focus.is_open
+    camera.close()
+
+
+def test_opening_the_focus_drive_opens_a_closed_camera(focus_waits):
+    attached = FakeCamera()
+    camera, focus = focus_of(attached)
+    camera.close()
+    focus.open()
+    assert camera.is_open and attached.is_open and focus.is_open
+    focus.step(10)
+    focus.close()
+    assert not camera.is_open and not attached.is_open
+
+
+def test_a_focus_drive_that_opened_the_camera_closes_with_it(focus_waits):
+    camera, focus = focus_of(FakeCamera())
+    camera.close()
+    focus.open()
+    camera.close()
+    assert not focus.is_open
+    camera.open()
+    focus.close()
+    assert camera.is_open
     camera.close()
 
 
@@ -1336,6 +1357,18 @@ def test_reopening_a_focus_drive_rechecks_the_camera(focus_waits):
         focus.open()
     assert camera.focus is None
     camera.close()
+
+
+def test_a_focus_drive_that_cant_drive_focus_closes_the_camera_it_opened(
+    focus_waits,
+):
+    attached = FakeCamera()
+    camera, focus = focus_of(attached)
+    camera.close()
+    attached.widgets.pop("manualfocusdrive")
+    with pytest.raises(DeviceError, match="no longer drive focus"):
+        focus.open()
+    assert not camera.is_open and not attached.is_open
 
 
 class TestGPhoto2FocusDriveContract(FocusDriveContract):

@@ -27,7 +27,8 @@ remembers only what it learned since `open()`. Most of what follows comes from t
    One device can offer several roles. A driver either implements them in one class or
    hands out a second object for a role that shares the device's connection and lock:
    the Foldio360 is a `Stage`, and its built-in light is the `Light` at
-   `Foldio360.halo`. Such a role is opened and closed on its own. Opening it opens the
+   `Foldio360.halo`; a gphoto2 camera's lens focus is the `FocusDrive` at
+   `camera.focus`. Such a role is opened and closed on its own. Opening it opens the
    device if needed, and closing it closes the device only if it was the one that opened
    it. Closing the device closes the role too.
 5. **Positions are machine coordinates.** A stage reports what the hardware counts, not

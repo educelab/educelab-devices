@@ -1,7 +1,7 @@
 # Track: Spinnaker Camera
 
 **ID:** spinnaker-camera_20261012
-**Status:** Pending
+**Status:** Complete (archived)
 
 ## Documents
 
@@ -10,10 +10,10 @@
 
 ## Progress
 
-- Phases: 0/3 complete
-- Tasks: 0/12 complete
+- Phases: 3/3 complete
+- Tasks: 12/12 complete
 
 ## Quick Links
 
-- [Back to Tracks](../../tracks.md)
-- [Product Context](../../product.md)
+- [Back to Tracks](../../../tracks.md)
+- [Product Context](../../../product.md)

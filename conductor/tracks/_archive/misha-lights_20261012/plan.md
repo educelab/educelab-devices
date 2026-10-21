@@ -20,7 +20,8 @@ Build the shared serial transport and its fake first, then the MISHA driver agai
 
 ### Verification
 
-- [ ] Transport tests pass on all CI platforms without `pyserial` hardware.
+- [x] Transport tests pass on all CI platforms without `pyserial` hardware.
+  - Confirmed by green CI on Linux, macOS, and Windows for PR #8.
 
 ## Phase 2: Firmware update
 

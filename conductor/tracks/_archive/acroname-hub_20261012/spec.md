@@ -19,13 +19,13 @@ As a rig operator or application developer, I want to power-cycle a specific USB
 
 ## Acceptance Criteria
 
-- [ ] `[acroname]` extra (`brainstem`); lazy import, so `brainstem`'s import-time `ImportError` on unrecognized Linux distros only affects this backend.
-- [ ] `AcronameHub` is a `Device` and `Hub`; `discover()` lists connected hubs by serial number.
-- [ ] Per-port power on/off/state and `power_cycle(port, off_seconds)`; brainstem error codes mapped to the `DeviceError` hierarchy with readable messages.
-- [ ] Enumeration delay exposed as a hub setting.
-- [ ] Tests on a fake brainstem layer; `Hub` contract suite passes.
-- [ ] `docs/hardware/acroname-usbhub3p.md` (udev rules, MSVC redistributable on Windows, Linux distro caveat).
-- [ ] `el-devices hub` subcommand: list hubs, show port state, power-cycle a port.
+- [x] `[acroname]` extra (`brainstem`); lazy import, so `brainstem`'s import-time `ImportError` on unrecognized Linux distros only affects this backend.
+- [x] `AcronameHub` is a `Device` and `Hub`; `discover()` lists connected hubs by serial number.
+- [x] Per-port power on/off/state and `power_cycle(port, off_seconds)`; brainstem error codes mapped to the `DeviceError` hierarchy with readable messages.
+- [x] Enumeration delay exposed as a hub setting.
+- [x] Tests on a fake brainstem layer; `Hub` contract suite passes.
+- [x] `docs/hardware/acroname-usbhub3p.md` (udev rules, MSVC redistributable on Windows, Linux distro caveat).
+- [x] `el-devices hub` subcommand: list hubs, show port state, power-cycle a port.
 
 ## Dependencies
 

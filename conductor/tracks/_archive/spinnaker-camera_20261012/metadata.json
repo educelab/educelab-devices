@@ -4,7 +4,7 @@
   "type": "feature",
   "status": "complete",
   "created": "2026-10-12T00:00:00Z",
-  "updated": "2026-10-20T00:00:00Z",
+  "updated": "2026-10-21T00:00:00Z",
   "phases": {
     "total": 3,
     "completed": 3
@@ -47,5 +47,8 @@
     "8db589c: Wait by the free-running frame rate for a missed Spinnaker trigger",
     "89af548: Prime the Spinnaker software trigger when acquisition starts",
     "2d0cad4: Record the passing Spinnaker trigger test with priming"
-  ]
+  ],
+  "current_task": null,
+  "archived": true,
+  "pull_request": 5
 }

@@ -158,10 +158,10 @@ hub.connected_speed(port) -> PortSpeed | None   # what the attached device
 
 ## Final Verification
 
-- [ ] All acceptance criteria met
-- [ ] Tests passing
-- [ ] Documentation updated
-- [ ] Ready for review
+- [x] All acceptance criteria met
+- [x] Tests passing
+- [x] Documentation updated
+- [x] Ready for review
 
 ---
 

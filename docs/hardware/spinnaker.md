@@ -201,7 +201,12 @@ before choosing a mode for another pixel format.
   (`_TRIGGER_TOLERANCE_S`, room for offset error) before the trigger, such as one from
   an earlier capture that timed out, counts as stale, so no frame from before the
   trigger is returned. After a stale or incomplete frame it fires again. `not_before` is
-  still honoured: the trigger fires after any wait for it.
+  still honoured: the trigger fires after any wait for it, and a trigger already fired
+  counts if it was no more than the same 1 ms before `not_before`. On Windows, Python
+  3.12's `time.time()` and `datetime.now()` tick every 15.6 ms, so a `not_before` taken
+  just before a trigger often reads the same tick, and `datetime`'s rounding to the
+  microsecond can put it after the trigger. Without the tolerance, every such capture
+  fired a second trigger (seen in CI, 2026-10-21).
 - **Priming:** on the CM3-U3-50S5M (20305113 and 20305122, 2026-10-20), the first
   capture after switching to `"Software"` got no frame in three hardware-test runs in a
   row, while 500 captures per camera from `el-devices spinnaker` missed none. Whenever

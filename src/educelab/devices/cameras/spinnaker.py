@@ -13,7 +13,7 @@ import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import ModuleType, TracebackType
 from typing import Any, Self, TypeVar
 
@@ -831,6 +831,12 @@ class SpinnakerCamera(FrameCamera):
                 if turnaround is not None
                 else _PRIME_WAIT_S
             )
+            # Windows' 15.6 ms clock on Python 3.12 can read not_before and the
+            # trigger in one tick, and datetime's rounding then puts not_before
+            # after it, so both comparisons allow the tolerance.
+            tolerance = timedelta(seconds=_TRIGGER_TOLERANCE_S)
+            if not_before is not None:
+                not_before -= tolerance
             fired_at, self._fired_at = self._fired_at, None
             if fired_at is None or (
                 not_before is not None and fired_at < not_before.timestamp()
@@ -839,7 +845,7 @@ class SpinnakerCamera(FrameCamera):
                 fired_at = self._fire()
             if self._timestamp_offset is not None:
                 # Any frame whose exposure began before the trigger is stale.
-                floor = datetime.fromtimestamp(fired_at - _TRIGGER_TOLERANCE_S, UTC)
+                floor = datetime.fromtimestamp(fired_at, UTC) - tolerance
                 not_before = floor if not_before is None else max(not_before, floor)
         stale = incomplete = retriggers = 0
         remeasured = False

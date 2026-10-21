@@ -48,6 +48,7 @@ what we know about each piece of hardware.
 
 ```shell
 el-devices discover              # list devices the installed backends can find
+el-devices misha                 # light each band of the attached MISHA panel
 el-devices simulate              # exercise every simulated device
 el-devices simulate stage light  # ...or only some roles
 el-devices -v <command>          # log device traffic

@@ -8,10 +8,11 @@ possible so they can be wrapped by any consumer (CLI scripts, Qt applications,
 etc.).
 
 # Installation
-Install from a git tag:
+Install from PyPI:
 
 ```shell
-pip install "educelab-devices @ git+https://github.com/educelab/educelab-devices@vX.Y.Z"
+pip install educelab-devices
+pip install "educelab-devices[all]"   # with every PyPI-hosted backend SDK
 ```
 
 The core package needs only numpy and includes a simulated device for every
@@ -80,6 +81,26 @@ pytest -m hardware          # tests that need real hardware attached
 pytest --cov                # coverage report
 mypy                        # type check (advisory in CI)
 ```
+
+## Releasing
+Pushing a `vX.Y.Z` tag publishes that release to PyPI through
+`.github/workflows/publish.yml`, using PyPI trusted publishing (no API token).
+
+1. Bump `version` in `pyproject.toml` and merge it to `main` through a PR.
+2. Tag the merge commit and push the tag:
+   ```shell
+   git tag vX.Y.Z
+   git push origin vX.Y.Z
+   ```
+
+The workflow fails without publishing if the tag doesn't match the version in
+`pyproject.toml`. Running it by hand from the Actions tab builds the
+distributions without publishing them.
+
+Publishing needs a one-time setup: a trusted publisher for `educelab-devices`
+on PyPI (owner `educelab`, repository `educelab-devices`, workflow
+`publish.yml`, environment `pypi`), and a `pypi` environment in the GitHub
+repository's settings.
 
 # Project organization
 - All package code goes in `src/educelab/devices`, grouped into subpackages by

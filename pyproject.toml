@@ -25,8 +25,9 @@ dependencies = ["numpy>=2"]
 # Each driver track adds its vendor SDK as an extra named for its backend.
 [project.optional-dependencies]
 foldio360 = ["bleak>=3.0.2"]
+gphoto2 = ["gphoto2>=2.5; sys_platform != 'win32'", "Pillow>=10"]
 serial = ["pyserial>=3.5"]
-all = ["educelab-devices[foldio360,serial]"]
+all = ["educelab-devices[foldio360,gphoto2,serial]"]
 
 [project.scripts]
 el-devices = "educelab.devices.app.cli:main"
@@ -36,7 +37,7 @@ Homepage = "https://github.com/educelab/educelab-devices"
 Repository = "https://github.com/educelab/educelab-devices"
 
 [dependency-groups]
-dev = ["mypy>=1.11", "pytest>=8", "pytest-cov>=5", "ruff>=0.6"]
+dev = ["mypy>=1.11", "Pillow>=10", "pytest>=8", "pytest-cov>=5", "ruff>=0.6"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

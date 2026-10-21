@@ -2,15 +2,56 @@
   "id": "gphoto2-camera_20261012",
   "title": "gphoto2 Camera",
   "type": "feature",
-  "status": "pending",
+  "status": "in_progress",
   "created": "2026-10-12T00:00:00Z",
-  "updated": "2026-10-12T00:00:00Z",
+  "updated": "2026-10-21T00:00:00Z",
   "phases": {
     "total": 5,
-    "completed": 0
+    "completed": 5
   },
   "tasks": {
-    "total": 18,
-    "completed": 0
-  }
+    "total": 20,
+    "completed": 20
+  },
+  "current_phase": 5,
+  "current_task": null,
+  "commits": [
+    "7bf2bb1: Add the gphoto2 extra, lazy SDK import, and libgphoto2 logging bridge",
+    "5cca784: Define the gphoto2 session seam and a fake camera library",
+    "4b55b03: Open and close gphoto2 cameras, retrying cameras still enumerating",
+    "70c9680: Discover gphoto2 cameras and list them in el-devices discover",
+    "38a2f34: Record approval of gphoto2 Phase 1",
+    "a3bada3: Run the gphoto2 tests on Windows and add Pillow to the dev group",
+    "dc6a1ad: Capture every file a gphoto2 release produces into memory",
+    "9e5b491: Run the FileCamera contract suite against the gphoto2 driver",
+    "2b5131c: Record gphoto2 Phase 2 commits in the track metadata",
+    "f3f3854: Record approval of gphoto2 Phase 2",
+    "1e42586: Name only the host platform's daemon in the claimed-USB hint",
+    "fea1438: Read gphoto2 camera settings from the config tree",
+    "98f65eb: Turn on live view and decode gphoto2 previews with Pillow",
+    "2d39d6d: Keep idle gphoto2 cameras alive from an internal thread",
+    "6faaa35: Run the Camera contract suite with keep-alive active",
+    "47d90d7: Record gphoto2 Phase 3 commits in the track metadata",
+    "4630593: Record approval of gphoto2 Phase 3",
+    "bc16cd5: Report a gphoto2 camera as disconnected after three failed pings",
+    "fb5e533: Drive gphoto2 lens focus in chunked, settled steps",
+    "52f4d2f: Test driving gphoto2 focus to its near and far limits",
+    "8e085e7: Offer camera.focus only when the lens has a range-type focus drive",
+    "fa000fd: Run the FocusDrive contract suite against camera.focus",
+    "4d17587: Record gphoto2 Phase 4 commits in the track metadata",
+    "aca04d9: Record approval of gphoto2 Phase 4",
+    "c5003c7: Fill out the gphoto2 hardware doc with the Z7 II, hazards, and unknowns",
+    "28c9c32: Add el-devices dslr to check a gphoto2 camera by hand",
+    "0a6bd92: Add gphoto2 hardware tests and stop iterating CameraList",
+    "40a27ef: Record gphoto2 Phase 5 bench-free commits in the track metadata",
+    "4ac84aa: Keep canonical gphoto2 settings listed at Bulb and Auto ISO",
+    "a4ce2ab: Update gphoto2 track commits after rebasing onto main",
+    "f0bc16d: Skip the unnamed gphoto2 config section",
+    "dd9437a: Copy gphoto2 previews before freeing their CameraFile",
+    "d235076: Write one gphoto2 widget without reading the whole tree",
+    "a2966aa: Read the gphoto2 serial number and firmware at open",
+    "40e8074: Record the gphoto2 open timing with identity reads",
+    "5ae78ce: Note that a gphoto2 -1 focus error can also mean no focus motor",
+    "fbf59d1: Record what the Z7 II bench runs verified in the gphoto2 doc"
+  ]
 }

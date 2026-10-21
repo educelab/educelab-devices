@@ -13,7 +13,7 @@ hardware doc reflects what the change taught us (workflow.md).
 |---|---|---|---|
 | MISHA | Light | `lights.misha.MishaLight` | [misha.md](misha.md) |
 | Foldio360 turntable and halo | Stage, Light | `Foldio360` (`educelab.devices.stages.foldio360`) | [foldio360.md](foldio360.md) |
-| Nikon Z7 II (gphoto2) | File camera, Focus drive | planned (`gphoto2-camera` track) | not yet written |
+| Nikon Z7 II (gphoto2) | File camera, Focus drive | `cameras.gphoto2.GPhoto2Camera` | [gphoto2-cameras.md](gphoto2-cameras.md) |
 | XLC1, XLC2 | Light | planned (`xlc-xcarve` track) | not yet written |
 | X-Carve (GRBL) | Stage | planned (`xlc-xcarve` track) | not yet written |
 | Spinnaker cameras | Frame camera | `SpinnakerCamera` (`educelab.devices.cameras.spinnaker`) | [spinnaker.md](spinnaker.md) |

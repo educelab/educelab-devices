@@ -20,7 +20,7 @@ classifiers = [
     "Operating System :: OS Independent",
     "Typing :: Typed",
 ]
-dependencies = ["numpy>=1.26"]
+dependencies = ["numpy>=2"]
 
 # Each driver track adds its vendor SDK as an extra named for its backend.
 [project.optional-dependencies]

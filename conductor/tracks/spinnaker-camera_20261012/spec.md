@@ -19,16 +19,16 @@ As the `pgs-scan` developer, I want each Spinnaker camera behind the `FrameCamer
 
 ## Acceptance Criteria
 
-- [ ] PySpin imported lazily; a missing PySpin raises an `ImportError` pointing to `docs/hardware/spinnaker.md` install steps.
-- [ ] `SpinnakerSystem` owns the PySpin `System` instance (shared, released when the last user closes), and `discover()` returns serial number and model per camera; enumeration/removal has no #90 bug.
-- [ ] `SpinnakerCamera(serial)` is a `Device` and `FrameCamera`; open configures continuous acquisition with newest-only buffering.
-- [ ] Settings: canonical `exposure_time` (seconds), `gain`, `pixel_format`, with auto modes; ranges reported via `Setting` descriptors.
-- [ ] `capture_frame(not_before=ts, timeout=…)` rejects frames older than `ts` using a measured device-to-host timestamp offset, with bounded retries; **every** grabbed buffer is released (fixes #83); incomplete images are rejected on every frame; `Frame` metadata includes timestamp and retry count.
-- [ ] `preview_frame()` returns the newest frame.
-- [ ] Acquisition start/stop semantics are decided and documented (implicit on demand vs. explicit), recorded in the hardware doc.
-- [ ] Tests run against a fake PySpin module; `Camera`/`FrameCamera` contract suites pass.
-- [ ] `docs/hardware/spinnaker.md`: SDK install, Python 3.12 only, numpy<2 requirement, version coupling.
-- [ ] `el-devices spinnaker` subcommand: list cameras, capture N frames, capture-latency benchmark (like `pgs-scan` `utils/system_check.py`).
+- [x] PySpin imported lazily; a missing PySpin raises an `ImportError` pointing to `docs/hardware/spinnaker.md` install steps.
+- [x] `SpinnakerSystem` owns the PySpin `System` instance (shared, released when the last user closes), and `discover()` returns serial number and model per camera; enumeration/removal has no #90 bug.
+- [x] `SpinnakerCamera(serial)` is a `Device` and `FrameCamera`; open configures continuous acquisition with newest-only buffering.
+- [x] Settings: canonical `exposure_time` (seconds), `gain`, `pixel_format`, with auto modes; ranges reported via `Setting` descriptors.
+- [x] `capture_frame(not_before=ts, timeout=…)` rejects frames older than `ts` using a measured device-to-host timestamp offset, with bounded retries; **every** grabbed buffer is released (fixes #83); incomplete images are rejected on every frame; `Frame` metadata includes timestamp and retry count.
+- [x] `preview_frame()` returns the newest frame.
+- [x] Acquisition start/stop semantics are decided and documented (implicit on demand vs. explicit), recorded in the hardware doc. (Decided 2026-10-15: continuous from `open()` to `close()`, because it is fastest.)
+- [x] Tests run against a fake PySpin module; `Camera`/`FrameCamera` contract suites pass.
+- [x] `docs/hardware/spinnaker.md`: SDK install, Python 3.12 only, numpy requirement, version coupling. (Changed 2026-10-16: PySpin 4.4.0's cp312 wheel requires numpy>=2, not numpy<2.)
+- [x] `el-devices spinnaker` subcommand: list cameras, capture N frames, capture-latency benchmark (like `pgs-scan` `utils/system_check.py`).
 
 ## Dependencies
 

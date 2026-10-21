@@ -25,7 +25,9 @@ class Backend:
 
 
 # Each driver track adds its backend here.
-BACKENDS: tuple[Backend, ...] = ()
+BACKENDS: tuple[Backend, ...] = (
+    Backend("spinnaker", "educelab.devices.cameras.spinnaker", "SpinnakerCamera"),
+)
 
 
 def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:

@@ -22,6 +22,7 @@ from educelab.devices.cameras.simulated import (
     SimulatedFileCamera,
     SimulatedFocusDrive,
 )
+from educelab.devices.cameras.spinnaker import SpinnakerCamera, SpinnakerSystem
 
 __all__ = [
     "APERTURE",
@@ -43,4 +44,6 @@ __all__ = [
     "SimulatedCamera",
     "SimulatedFileCamera",
     "SimulatedFocusDrive",
+    "SpinnakerCamera",
+    "SpinnakerSystem",
 ]

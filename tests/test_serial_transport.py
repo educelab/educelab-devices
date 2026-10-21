@@ -8,7 +8,9 @@ from educelab.devices.errors import DeviceNotFound, DeviceTimeout, NotConnected
 
 
 def test_missing_pyserial_names_the_extra(monkeypatch):
-    monkeypatch.setitem(sys.modules, "serial", None)
+    # A submodule already imported by an earlier test is found without its parent.
+    for name in ("serial", "serial.tools", "serial.tools.list_ports"):
+        monkeypatch.setitem(sys.modules, name, None)
     with pytest.raises(ImportError, match=r"educelab-devices\[serial\]"):
         _serial.list_ports()
 

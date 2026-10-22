@@ -987,12 +987,59 @@ def test_a_trigger_in_the_same_clock_tick_as_not_before_counts(
     # trigger can read the same tick, with not_before rounded just after it.
     tick = time.time()
     monkeypatch.setattr(fake, "clock", lambda: tick)
-    monkeypatch.setattr(time, "time", lambda: tick)
+    monkeypatch.setattr(_genicam, "host_time", lambda: tick)
     triggered.trigger()
     triggered.capture_frame(
         not_before=datetime.fromtimestamp(tick, UTC) + timedelta(microseconds=1)
     )
     assert fake.trigger_calls == 1
+
+
+class WindowsClock:
+    """Python 3.12's wall clock on Windows: it ticks every 15.6 ms, while
+    perf_counter keeps fine time. Each read moves fine time on 1 µs."""
+
+    TICK = 0.015625
+
+    def __init__(self, start=1_000_000.0):
+        self.true = start
+
+    def fine(self):
+        self.true += 1e-6
+        return self.true - 999_000.0
+
+    def wall(self):
+        self.true += 1e-6
+        return math.floor(self.true / self.TICK) * self.TICK
+
+
+def test_the_host_clock_is_finer_than_a_coarse_wall_clock():
+    clock = WindowsClock()
+    host = _genicam._HostClock(coarse=True, wall=clock.wall, fine=clock.fine)
+    for step in (0.0, 0.003, 0.0071, 0.012):
+        clock.true += step
+        assert host.now() == pytest.approx(clock.true, abs=1e-5)
+
+
+def test_on_a_fine_wall_clock_the_host_clock_is_the_wall_clock():
+    clock = WindowsClock()
+    host = _genicam._HostClock(coarse=False, wall=lambda: 42.0, fine=clock.fine)
+    assert host.now() == 42.0
+
+
+def test_a_wall_clock_that_never_ticks_falls_back_without_hanging():
+    clock = WindowsClock()
+    host = _genicam._HostClock(coarse=True, wall=lambda: 5.0, fine=clock.fine)
+    assert host.now() == 5.0
+
+
+def test_the_timestamp_offset_uses_the_host_clock(monkeypatch, backend):
+    # A coarse wall clock would throw the latched offset off by up to a tick.
+    monkeypatch.setattr(_genicam, "host_time", lambda: 1234.5)
+    fake = backend.cameras[0]
+    with GenICamCamera(MONO, backend) as camera:
+        expected = 1234.5 - fake.device_time_ns() / 1e9
+        assert camera.timestamp_offset == pytest.approx(expected, abs=0.01)
 
 
 def test_trigger_outside_software_trigger_mode_raises(camera):

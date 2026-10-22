@@ -297,6 +297,69 @@ _TRIGGER_SETTLE_S = 0.01
 # Recent software triggers kept for dating frames by trigger; more than a
 # frame can be in flight across.
 _FIRES_KEPT = 16
+# A wall clock coarser than this is too coarse for timestamp offsets: before
+# Python 3.13, Windows' ticks every 15.6 ms (usb3-vision.md, Hardware runs).
+_COARSE_CLOCK_S = 0.001
+# How long to wait for a coarse wall clock to tick, and how often to line the
+# fine counter up with it again, so the two don't drift apart.
+_ANCHOR_WAIT_S = 0.05
+_REANCHOR_S = 60.0
+
+
+class _HostClock:
+    """The host's wall-clock time in seconds, finer than ``time.time()`` where
+    that is coarse.
+
+    There, it counts ``time.perf_counter()`` from a moment the wall clock
+    ticked. If the wall clock never ticks while it waits, it falls back to it.
+    """
+
+    def __init__(
+        self,
+        *,
+        coarse: bool | None = None,
+        wall: Callable[[], float] | None = None,
+        fine: Callable[[], float] | None = None,
+    ) -> None:
+        # Looked up at each call, so tests can patch time.time.
+        self._wall = wall or (lambda: time.time())
+        self._fine = fine or time.perf_counter
+        if coarse is None:
+            coarse = time.get_clock_info("time").resolution > _COARSE_CLOCK_S
+        self._coarse = coarse
+        self._base: float | None = None
+        self._anchored_at = -math.inf
+
+    def now(self) -> float:
+        if not self._coarse:
+            return self._wall()
+        if self._fine() - self._anchored_at > _REANCHOR_S:
+            self.anchor()
+        if self._base is None:
+            return self._wall()
+        return self._base + self._fine()
+
+    def anchor(self) -> None:
+        """Line the fine counter up with the wall clock at one of its ticks."""
+        if not self._coarse:
+            return
+        start = self._wall()
+        deadline = self._fine() + _ANCHOR_WAIT_S
+        while (fine := self._fine()) < deadline:
+            wall = self._wall()
+            if wall != start:
+                self._base = wall - fine
+                break
+        self._anchored_at = self._fine()
+
+
+_HOST_CLOCK = _HostClock()
+
+
+def host_time() -> float:
+    """The host's wall-clock time in seconds, as ``time.time()`` but fine-grained
+    on every platform. Frame timestamps are measured against it."""
+    return _HOST_CLOCK.now()
 
 
 class GenICamCamera(FrameCamera):
@@ -541,13 +604,14 @@ class GenICamCamera(FrameCamera):
         conn = self._connection
         node = self._timestamp_node
         if node is not None and conn.is_writable("TimestampLatch"):
+            _HOST_CLOCK.anchor()
             offsets = []
             for _ in range(TIMESTAMP_SAMPLES):
-                before = time.time()
+                before = host_time()
                 self._call(
                     "latch the timestamp", lambda: conn.execute("TimestampLatch")
                 )
-                after = time.time()
+                after = host_time()
                 device = self._call("read the timestamp", lambda: conn.get_int(node))
                 offsets.append((before + after) / 2 - device / 1e9)
             self._timestamp_offset = statistics.median(offsets)
@@ -828,7 +892,7 @@ class GenICamCamera(FrameCamera):
                     f"{self!r} can't check not_before: it can't latch its timestamp "
                     "and its library doesn't time frame arrivals"
                 )
-            wait = (not_before - datetime.now(UTC)).total_seconds()
+            wait = not_before.timestamp() - host_time()
             if wait >= timeout:
                 raise DeviceTimeout(
                     f"{self!r}: not_before is {wait:.3g} s away, past the "
@@ -944,7 +1008,7 @@ class GenICamCamera(FrameCamera):
         settle = self._last_frame_at + _TRIGGER_SETTLE_S - time.monotonic()
         if settle > 0:
             time.sleep(settle)
-        fired_at = time.time()
+        fired_at = host_time()
         self._call("fire a software trigger", lambda: conn.execute("TriggerSoftware"))
         self._fires.append(fired_at)
         return fired_at
@@ -984,12 +1048,12 @@ class GenICamCamera(FrameCamera):
                 self._note_arrival(arrival, device_ns)
                 triggered_at = self._first_fire_after(arrival / 1e9)
         if triggered_at is not None:
-            host_time, source = triggered_at, "trigger"
+            frame_time, source = triggered_at, "trigger"
         elif self._timestamp_offset is None:
-            host_time = time.time() - exposure
+            frame_time = host_time() - exposure
         else:
-            host_time = self._timestamp_offset + device_ns / 1e9 - exposure
-        timestamp = datetime.fromtimestamp(host_time, UTC)
+            frame_time = self._timestamp_offset + device_ns / 1e9 - exposure
+        timestamp = datetime.fromtimestamp(frame_time, UTC)
         if not_before is not None and timestamp < not_before:
             logger.debug("%r: dropping a frame from %s", self, timestamp)
             return "stale"

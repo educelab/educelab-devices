@@ -212,7 +212,11 @@ before choosing a mode for another pixel format.
   3.12's `time.time()` and `datetime.now()` tick every 15.6 ms, so a `not_before` taken
   just before a trigger often reads the same tick, and `datetime`'s rounding to the
   microsecond can put it after the trigger. Without the tolerance, every such capture
-  fired a second trigger (seen in CI, 2026-10-21).
+  fired a second trigger (seen in CI, 2026-10-21). The driver itself now reads host time
+  from `perf_counter`, lined up with the wall clock at one of its ticks (`host_time()` in
+  the GenICam core), because the coarse clock also threw the latched timestamp offset off
+  by up to 8 ms (usb3-vision.md, Hardware runs, Windows). A caller's `not_before` from
+  `datetime.now()` is still up to 15.6 ms early there.
 - **Priming:** on the CM3-U3-50S5M (20305113 and 20305122, 2026-10-20), the first
   capture after switching to `"Software"` got no frame in three hardware-test runs in a
   row, while 500 captures per camera from `el-devices spinnaker` missed none. Whenever

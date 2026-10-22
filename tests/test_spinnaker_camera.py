@@ -871,7 +871,7 @@ def test_a_trigger_in_the_same_clock_tick_as_not_before_counts(
     # trigger can read the same tick, with not_before rounded just after it.
     tick = time.time()
     monkeypatch.setattr(fake, "clock", lambda: tick)
-    monkeypatch.setattr("educelab.devices.cameras.spinnaker.time.time", lambda: tick)
+    monkeypatch.setattr("educelab.devices.cameras._genicam.host_time", lambda: tick)
     triggered.trigger()
     triggered.capture_frame(
         not_before=datetime.fromtimestamp(tick, UTC) + timedelta(microseconds=1)

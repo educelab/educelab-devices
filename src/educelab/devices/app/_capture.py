@@ -313,10 +313,13 @@ def _benchmark(
             _write_png(save_dir / f"{camera.info.serial_number}-{name}.png", frame)
             result.saved += 1
 
+    from educelab.devices.cameras._genicam import host_time
+
     print(f"Capturing {frames} frame(s) from {len(cameras)} camera(s) at once...")
     trial_ms = []
     for index in range(frames):
-        requested = datetime.now(UTC)
+        # Not datetime.now(): on Windows before Python 3.13 it ticks every 15.6 ms.
+        requested = datetime.fromtimestamp(host_time(), UTC)
         start = time.perf_counter()
         if trigger:
             for camera in cameras:

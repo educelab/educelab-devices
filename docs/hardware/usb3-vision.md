@@ -34,6 +34,7 @@ Behaviour the drivers add or change, and why. Each point was verified on the har
 - Captures are newest-only and honour `not_before`, as with `SpinnakerCamera`; stale and incomplete frames are dropped and counted in the metadata.
 - Without a timestamp latch, the device-to-host offset comes from frame arrivals (Aravis only), and frames a camera stamps before their trigger are dated by the trigger (IDS).
 - A software trigger waits until 10 ms after the last frame, because the IDS camera ignores triggers for about 3 ms after one.
+- Host time comes from `host_time()`: `time.time()` where that is fine-grained, and otherwise `time.perf_counter()` lined up with the wall clock at one of its ticks and again every minute. Before Python 3.13, `time.time()` on Windows ticks every 15.6 ms, which threw the latched timestamp offset off by up to 8 ms. See the Windows run below.
 - `ExposureTimeAbs` stands in for `ExposureTime`, and `TimestampLatchValue` for `Timestamp`, on cameras with the older names. `AcquisitionMode`, `ExposureAuto`, `GainAuto` and the throughput nodes are optional.
 - Mono10g40IDS is unpacked to `uint16`; packed formats the core can't unpack (e.g. Mono12Packed) come back as raw bytes.
 
@@ -157,6 +158,22 @@ Spinnaker installs a GenTL producer on macOS, in `/usr/local/lib/spinnaker-gentl
 
 Loading it makes genicam print five lines such as "GenTL producer does not implement DSGetNumFlows" to stderr, one for each optional GenTL 1.6 function the producer lacks. They are harmless. The driver logs them at debug level instead of letting them reach the console.
 
+### 2026-10-22, Windows, GenTL
+
+**CM3-U3-50S5M** (`20305122`, firmware `1.12.3.00`) through Spinnaker's producer (`C:\Program Files\FLIR Systems\Spinnaker\cti64\vs2015\FLIR_GenTL_v140.cti`), Python 3.12.10, genicam 1.6.0: 22 of 23 hardware tests passed. [V] for each point below, on this unit:
+
+- **Coarse clock.** The timestamp offset spread over 5 measurements was 8.2 ms, against 2–35 µs on the Mac: `test_timestamp_offset_is_stable` failed. Python 3.12's `time.time()` on Windows ticks every 15.6 ms, and the latch measurement read it either side of each latch.
+- **Stale triggered frames, from the same cause.** In `el-devices genicam --trigger software`, every one of 20 captures dropped its first frame as stale and took the next: exposures began a median 77 ms after the request (61–146 ms in the hardware test), against 2–3 ms on the Mac. An offset several milliseconds off dates a triggered frame more than the 1 ms tolerance before its trigger.
+- The driver now reads host time from `host_time()` (see [How the drivers differ](#how-the-drivers-differ-from-aravis-and-gentl)). **Not yet rerun** on Windows.
+- **Other results.** Busy detection, reopening, pixel formats (Mono8 and Mono16), throughput limit and newest-only all passed. 300 `not_before` captures met 563 stale frames, at 13.4 captures per second. Switching to software trigger took 1.23 s, with a 47 ms turnaround. genapi refused an out-of-range exposure.
+- **Serial and address.** `discover()` lists the FLIR serial (`20305122`) at an address like `USB\VID_1E10&PID_3300&MI_00\7&C357BFF&0&0000_0`.
+
+### 2026-10-22, Linux (Fedora, arm64), GenTL
+
+The IDS camera through IDS peak 26.06.2's producer: see [ids-u3-36p0xcp.md](ids-u3-36p0xcp.md#gentl-on-linux). In short, the camera's control channel fell out of step after the first few tests, and no frames came.
+
+- **IDS's proxy producer.** IDS peak installs `ids_proxygentl.cti` beside `ids_u3vgentl.cti` and `ids_gevgentl.cti`. The proxy wraps IDS's other producers, so with the folder in `GENICAM_GENTL64_PATH` the driver loaded the camera's producer twice, and opening failed with an exception on close. Moving the proxy out of the folder, or naming `ids_u3vgentl.cti` itself in `GENICAM_GENTL64_PATH` (or `GenTLCamera(producer=...)`), fixed it. [V by the maintainer]
+
 ### CM3-U3-50S5M: three backends compared
 
 The same camera (`20298452`, firmware `1.12.3.00`) on the same Mac, Python 3.12, 2026-10-22, through each driver's hardware tests. [V] for each figure, from the runs above and `spinnaker.md` (Last run):
@@ -242,6 +259,15 @@ pip install pycairo && pip install PyGObject
 - PyGObject **3.52 and later** link `girepository-2.0`, which ships in glib 2.80+. Older releases used `libgirepository1.0-dev`. Current PyGObject 3.58.1 needs glib >= 2.80. Noble ships glib **2.80.0**, so it meets the requirement exactly, and `libgirepository-2.0-dev` exists in noble. [V] (PyGObject `meson.build`; Launchpad)
 - On jammy (22.04, glib 2.72) the current PyGObject won't build, and you'd need to pin `PyGObject<3.51`. [I, inferred from the glib 2.80 floor]
 - The typelib goes to `/usr/lib/x86_64-linux-gnu/girepository-1.0/Aravis-0.8.typelib`, which is a default search path, so `GI_TYPELIB_PATH` is not needed. [I]
+
+### Building Aravis from source (Fedora)
+
+- Aravis built with meson into the `/usr/local` prefix puts its library and typelib under `/usr/local/lib64` on Fedora, which neither PyGObject nor the dynamic linker searches. `gi.require_version("Aravis", "0.8")` then fails with "Namespace Aravis not available". Set both paths: [V on the lab's Fedora arm64 machine, 2026-10-22, for the error and the prefix]
+  ```bash
+  export GI_TYPELIB_PATH=/usr/local/lib64/girepository-1.0
+  export LD_LIBRARY_PATH=/usr/local/lib64
+  ```
+- Install the udev rule and raise usbfs memory as below.
 
 ### udev rule
 - Upstream ships an **example** file **`src/aravis.rules`**. It is **not installed** by meson, and the docs tell you to copy it into `/etc/udev/rules.d/`. [V] (`src/meson.build` has no rules install; `docs/reference/aravis/usb.md`)

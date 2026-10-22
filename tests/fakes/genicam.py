@@ -202,6 +202,9 @@ class FakeCamera:
         # one it isn't ready for.
         self.ignore_triggers = 0
         self.respond_to_triggers = True
+        # Operations to fail, e.g. {"write Gain": FakeCameraError(...)}. Keys are
+        # "read <node>", "write <node>", "execute <node>", "start", "stop", "close".
+        self.failures: dict[str, FakeCameraError] = {}
 
         if formats is None:
             formats = ["Mono8", "Mono16", "Mono12Packed"]
@@ -362,6 +365,7 @@ class FakeCamera:
         self.opened = True
 
     def close(self) -> None:
+        self._maybe_fail("close")
         if self.streaming:
             raise FakeCameraError("state", f"camera {self.serial} is still acquiring")
         self.opened = False
@@ -380,6 +384,7 @@ class FakeCamera:
 
     def read(self, name: str) -> Any:
         self._require_open()
+        self._maybe_fail(f"read {name}")
         if self.access(name) not in ("RW", "RO"):
             raise FakeCameraError("access", f"{name} isn't readable")
         return self.get(name)
@@ -389,6 +394,7 @@ class FakeCamera:
         node = self._node(name)
         if self.access(name) not in ("RW", "WO"):
             raise FakeCameraError("access", f"{name} isn't writable")
+        self._maybe_fail(f"write {name}")
         if node.kind == "enum":
             if value not in node.entries:
                 raise FakeCameraError("range", f"{name} has no entry {value!r}")
@@ -408,16 +414,19 @@ class FakeCamera:
         node = self._node(name)
         if node.kind != "command" or self.access(name) not in ("RW", "WO"):
             raise FakeCameraError("access", f"{name} can't be executed")
+        self._maybe_fail(f"execute {name}")
         assert node.action is not None
         node.action()
 
     def start(self) -> None:
         self._require_open()
+        self._maybe_fail("start")
         if self.streaming:
             raise FakeCameraError("state", f"camera {self.serial} is already acquiring")
         self.streaming = True
 
     def stop(self) -> None:
+        self._maybe_fail("stop")
         if not self.streaming:
             raise FakeCameraError("state", f"camera {self.serial} isn't acquiring")
         self.streaming = False
@@ -474,6 +483,10 @@ class FakeCamera:
             return self.nodes[name]
         except KeyError:
             raise FakeCameraError("not_found", f"no node {name}") from None
+
+    def _maybe_fail(self, operation: str) -> None:
+        if operation in self.failures:
+            raise self.failures[operation]
 
     def _require_attached(self) -> None:
         if not self.attached:

@@ -44,8 +44,8 @@ Settle the open choices and the seam first. Then move the Spinnaker driver onto 
 
 ### Tasks
 
-- [~] Task 2.1: Write core tests against the fake backend. They cover settings (units, snap/clamp, auto modes), pausing acquisition for some writes, software trigger priming and re-firing, the timestamp offset, the `not_before` loop, and handling of incomplete and missing-trailer frames.
-- [ ] Task 2.2: Move that logic out of `spinnaker.py` into the core.
+- [x] Task 2.1: Write core tests against the fake backend. They cover settings (units, snap/clamp, auto modes), pausing acquisition for some writes, software trigger priming and re-firing, the timestamp offset, the `not_before` loop, and handling of incomplete and missing-trailer frames.
+- [~] Task 2.2: Move that logic out of `spinnaker.py` into the core.
 - [ ] Task 2.3: Implement the PySpin backend on the seam: `System` lifecycle, node access, image status, and exception codes.
 - [ ] Task 2.4: Add probing for optional features (trigger, throughput limit, timestamp node, auto modes, `AcquisitionResultingFrameRate`). Settings for missing features are left out.
 

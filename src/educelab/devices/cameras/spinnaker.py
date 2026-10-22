@@ -7,34 +7,32 @@ PySpin is imported on first use, so this module imports without it. See
 import functools
 import logging
 import math
-import statistics
 import threading
-import time
-from collections.abc import Callable, Iterable, Iterator, Mapping
+
+# Not used here, but tests patch spinnaker.time.time, as they did when the
+# capture logic lived in this module.
+import time  # noqa: F401
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
-from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
 from types import ModuleType, TracebackType
 from typing import Any, Self, TypeVar
 
-import numpy as np
 import numpy.typing as npt
 
-from educelab.devices.cameras.base import (
-    EXPOSURE_TIME,
-    GAIN,
-    PIXEL_FORMAT,
-    Frame,
-    FrameCamera,
-    Setting,
-    SettingValue,
+from educelab.devices.cameras._genicam import (
+    _RETRIGGER_TURNAROUNDS,  # noqa: F401 (tests read it from here)
+    PREVIEW_MAX_SIZE,
+    RETRIES_BEFORE_REMEASURE,
+    THROUGHPUT_LIMIT,
+    TIMESTAMP_SAMPLES,
+    TRIGGER,
+    BufferStatus,
+    GenICamCamera,
 )
-from educelab.devices.device import DeviceInfo, synchronized
+from educelab.devices.device import DeviceInfo
 from educelab.devices.errors import (
-    CommandRejected,
     DeviceBusy,
     DeviceError,
-    DeviceNotFound,
     DeviceTimeout,
     NotConnected,
     import_optional,
@@ -58,56 +56,6 @@ logger = logging.getLogger(__name__)
 BACKEND = "spinnaker"
 
 T = TypeVar("T")
-
-# Latch samples whose median gives the device-to-host timestamp offset; the
-# count comes from pgs-scan (and multi_pyspin before it). See the hardware doc.
-TIMESTAMP_SAMPLES = 20
-# Newer cameras name the latched value "Timestamp", older ones
-# "TimestampLatchValue" (docs/hardware/spinnaker.md, Protocol).
-_TIMESTAMP_NODES = ("Timestamp", "TimestampLatchValue")
-
-# Stale frames a capture drops before re-measuring the timestamp offset, as in
-# pgs-scan dev. The capture's timeout bounds the retries. See the hardware doc.
-RETRIES_BEFORE_REMEASURE = 5
-
-# Longest side of a preview, in pixels; larger frames are subsampled.
-PREVIEW_MAX_SIZE = 1280
-
-# Pixel formats whose arrays the driver knows how to shape. Others (e.g.
-# packed 12-bit) would come back as raw bytes.
-_PIXEL_FORMATS = frozenset(
-    {"Mono8", "Mono16", "RGB8"}
-    | {f"Bayer{order}{bits}" for order in ("RG", "GB", "GR", "BG") for bits in (8, 16)}
-)
-# "Once" isn't offered: it reverts to "Off" by itself, so it never reads back.
-_AUTO_MODES = ("Off", "Continuous")
-_US_PER_S = 1e6
-
-THROUGHPUT_LIMIT = "throughput_limit"
-"""Spinnaker-only setting: the cap on the camera's USB bandwidth, in MB/s."""
-# MB here is 10^6 bytes. DeviceLinkThroughputLimit counts bytes per second
-# (verified on the CM3-U3-50S5M; see the hardware doc).
-_BYTES_PER_MB = 1e6
-
-TRIGGER = "trigger"
-"""Spinnaker-only setting: ``"Off"`` to free-run, ``"Software"`` to expose a frame
-only when a capture asks for one."""
-_TRIGGER_MODES = ("Off", "Software")
-# How far before a software trigger a frame's exposure may seem to start and still
-# count as triggered by it: room for error in the timestamp offset.
-_TRIGGER_TOLERANCE_S = 0.001
-# A camera ignores triggers for a while after acquisition starts, so the driver
-# fires until one is answered, waiting the exposure plus this long for each.
-_PRIME_WAIT_S = 1.0
-# A capture fires again if no frame comes within the exposure plus this many
-# times the answered trigger's turnaround (docs/hardware/spinnaker.md).
-_RETRIGGER_TURNAROUNDS = 3
-# More than any stream's buffer pool, so discarding waiting frames always ends.
-_MAX_DISCARDED = 100
-
-# Added to a grab timeout on a camera that hasn't sent a frame since open: on
-# macOS, SpinView streaming from the camera shows up this way, not as -1005.
-_NO_FRAME_HINT = "another program (e.g. SpinView) may be streaming from this camera"
 
 
 # The only SDK the driver's PySpin names have been checked against, and the first
@@ -345,7 +293,7 @@ def _get_by_serial(pyspin: Any, cameras: Any, serial: str) -> Any | None:
     return cam if cam.IsValid() else None
 
 
-class SpinnakerCamera(FrameCamera):
+class SpinnakerCamera(GenICamCamera):
     """One FLIR/Teledyne camera, addressed by serial number.
 
     ``open()`` initializes the camera, measures the offset between its
@@ -364,37 +312,19 @@ class SpinnakerCamera(FrameCamera):
     not chained to the original ``SpinnakerException``, whose traceback would
     keep the camera alive and stop the SDK from being released.
 
+    The behaviour is shared with every GenICam camera (ADR 0006); this class
+    adds PySpin's ``System`` and error handling.
+
     Args:
         serial: The camera's serial number, as `discover()` reports it.
         pyspin: A module to use in place of PySpin, for tests.
     """
 
+    label = "Spinnaker"
+    _no_frame_hint = "another program (e.g. SpinView) may be streaming from this camera"
+
     def __init__(self, serial: str, *, pyspin: ModuleType | None = None) -> None:
-        super().__init__()
-        self._serial = str(serial)
-        self._system = SpinnakerSystem(pyspin)
-        self._pyspin: Any = None
-        self._cam: Any = None
-        self._model = "Spinnaker camera"
-        self._firmware: str | None = None
-        self._timestamp_node: str | None = None
-        self._timestamp_offset: float | None = None
-        self._delivered = False
-        self._software_trigger = False
-        self._fired_at: float | None = None
-        self._trigger_turnaround: float | None = None
-
-    def __repr__(self) -> str:
-        return f"<{type(self).__name__} {self._serial}>"
-
-    @property
-    def info(self) -> DeviceInfo:
-        return DeviceInfo(
-            BACKEND,
-            self._model,
-            serial_number=self._serial,
-            firmware_version=self._firmware,
-        )
+        super().__init__(serial, _PySpinBackend(pyspin))
 
     @classmethod
     def discover(cls) -> list[DeviceInfo]:
@@ -405,592 +335,62 @@ class SpinnakerCamera(FrameCamera):
         """
         return SpinnakerSystem().discover()
 
-    @property
-    def timestamp_node(self) -> str | None:
-        """The node holding the latched timestamp: ``"Timestamp"`` or the older
-        ``"TimestampLatchValue"``. ``None`` before open, or if the camera has neither.
-        """
-        return self._timestamp_node
 
-    @property
-    def timestamp_offset(self) -> float | None:
-        """Host clock minus the camera's timestamp counter, in seconds.
+class _PySpinBackend:
+    """Opens cameras through a `SpinnakerSystem` handle of their own."""
 
-        ``None`` if the camera can't latch its timestamp.
-        """
-        return self._timestamp_offset
+    name = BACKEND
 
-    @synchronized
-    def trigger(self) -> None:
-        """Fire a software trigger now, for the next capture to collect.
+    def __init__(self, pyspin: ModuleType | None) -> None:
+        self._pyspin = pyspin
 
-        Only in ``trigger`` mode ``"Software"``. Lets a caller start several
-        cameras' exposures together before collecting their frames; without it,
-        each capture fires its own trigger.
-        """
-        if not self._software_trigger:
-            raise DeviceError(f"{self!r} isn't in software-trigger mode")
-        self._discard_waiting_frames()
-        self._fired_at = self._fire()
+    def discover(self) -> list[DeviceInfo]:
+        return SpinnakerSystem(self._pyspin).discover()
 
-    @synchronized
-    def measure_timestamp_offset(self) -> float | None:
-        """Measure `timestamp_offset` again, e.g. after the host clock jumps.
-
-        Returns:
-            The new offset.
-        """
-        self._measure_timestamp_offset()
-        return self._timestamp_offset
-
-    # --- Lifecycle -------------------------------------------------------------
-
-    def _open(self) -> None:
-        self._system.open()
+    def open(self, serial: str) -> "_PySpinConnection | None":
+        system = SpinnakerSystem(self._pyspin)
+        system.open()
         try:
-            self._pyspin = self._system._module
-            self._cam = self._system._camera(self._serial)
-            if self._cam is None:
-                raise DeviceNotFound(self._not_found_message())
-            self._call(
-                "initialize",
-                lambda: self._cam.Init(),
-                by_code={self._pyspin.SPINNAKER_ERR_ACCESS_DENIED: DeviceBusy},
-            )
-            self._model = self._read_string("DeviceModelName") or self._model
-            self._firmware = self._read_string("DeviceFirmwareVersion")
-            self._configure()
-            self._delivered = False
-            self._software_trigger = False
-            self._fired_at = None
-            self._call("begin acquisition", lambda: self._cam.BeginAcquisition())
-            self._measure_timestamp_offset()
+            cam = system._camera(serial)
         except BaseException:
-            for problem in self._release():
-                logger.warning("%r: while giving up on open: %s", self, problem)
+            system.close()
             raise
-
-    def _close(self) -> None:
-        problems = self._release()
-        if problems:
-            raise DeviceError(f"{self!r} didn't close cleanly: {'; '.join(problems)}")
-
-    def _release(self) -> list[str]:
-        """Let go of the camera and the system, collecting what went wrong."""
-        problems = []
-        if self._cam is not None:
-            steps = (
-                ("end acquisition", self._end_acquisition),
-                ("de-initialize", self._deinit),
+        if cam is None:
+            system.close()
+            return None
+        conn = _PySpinConnection(system, cam)
+        del cam
+        try:
+            conn._do(
+                lambda: conn._cam.Init(),
+                by_code={conn._pyspin.SPINNAKER_ERR_ACCESS_DENIED: DeviceBusy},
             )
-            for action, step in steps:
-                try:
-                    step()
-                except self._pyspin.SpinnakerException as exc:
-                    problems.append(f"{action}: {exc}")
-            self._cam = None
-        self._timestamp_offset = None
-        try:
-            self._system.close()
-        except DeviceError as exc:
-            problems.append(str(exc))
-        return problems
-
-    def _end_acquisition(self) -> None:
-        if self._cam.IsStreaming():
-            self._cam.EndAcquisition()
-
-    def _deinit(self) -> None:
-        if self._cam.IsInitialized():
-            self._cam.DeInit()
-
-    def _not_found_message(self) -> str:
-        found = [info.serial_number for info in self._system.discover()]
-        attached = ", ".join(s for s in found if s) or "none"
-        return (
-            f"no Spinnaker camera with serial number {self._serial}; "
-            f"attached: {attached}"
-        )
-
-    def _configure(self) -> None:
-        # Free-running, keeping only the newest frame: the fastest way to
-        # capture (pgs-scan dev; docs/hardware/spinnaker.md, Acquisition).
-        self._set_enum("StreamBufferHandlingMode", "NewestOnly", stream=True)
-        self._set_enum("AcquisitionMode", "Continuous")
-        if self._pyspin.IsReadable(self._node("TriggerMode", "CEnumerationPtr")):
-            # A camera left in trigger mode (e.g. by SpinView) would never send
-            # a frame.
-            self._set_enum("TriggerMode", "Off")
-        formats = self._enum_choices("PixelFormat", _PIXEL_FORMATS)
-        if formats and self._enum_symbol("PixelFormat") not in formats:
-            preferred = "RGB8" if "RGB8" in formats else formats[0]
-            logger.info("%r: switching pixel format to %s", self, preferred)
-            self._set_enum("PixelFormat", preferred)
-        self._timestamp_node = next(
-            (n for n in _TIMESTAMP_NODES if self._raw_node(n) is not None), None
-        )
-
-    @contextmanager
-    def _acquisition_paused(self) -> Iterator[None]:
-        self._call("end acquisition", self._end_acquisition)
-        try:
-            yield
-        finally:
-            self._call("begin acquisition", lambda: self._cam.BeginAcquisition())
-        if self._software_trigger:
-            self._prime_trigger()
-
-    def _prime_trigger(self) -> None:
-        """Fire until the camera answers, so a capture's trigger isn't ignored.
-
-        Also times the answered trigger's turnaround, which sets how long a
-        capture waits before firing again.
-        """
-        exposure = self._read_float("ExposureTime") / _US_PER_S
-        deadline = time.monotonic() + self.capture_timeout
-        fired = 0
-        while (remaining := deadline - time.monotonic()) > 0:
-            started = time.monotonic()
-            self._fire()
-            fired += 1
-            wait_ms = max(1, math.ceil(min(remaining, exposure + _PRIME_WAIT_S) * 1000))
+            # Keep only the newest frame (pgs-scan dev; hardware doc, Acquisition).
+            conn._set_stream_enum("StreamBufferHandlingMode", "NewestOnly")
+        except BaseException:
             try:
-                image = self._call(
-                    "get a frame", functools.partial(self._cam.GetNextImage, wait_ms)
-                )
-            except DeviceTimeout:
-                continue
-            self._trigger_turnaround = time.monotonic() - started
-            self._call("release a frame", image.Release)
-            self._delivered = True
-            logger.info(
-                "%r answered software trigger %d, in %.3f s",
-                self,
-                fired,
-                self._trigger_turnaround,
-            )
-            self._discard_waiting_frames()
-            return
-        raise DeviceTimeout(
-            f"{self!r} answered none of {fired} software triggers in "
-            f"{self.capture_timeout:g} s"
-        )
+                conn.close()
+            except DeviceError as exc:
+                logger.warning("while giving up on camera %s: %s", serial, exc)
+            raise
+        return conn
 
-    def _measure_timestamp_offset(self) -> None:
-        latch = self._node("TimestampLatch", "CCommandPtr")
-        if self._timestamp_node is None or not self._pyspin.IsWritable(latch):
-            logger.warning("%r can't latch its timestamp", self)
-            self._timestamp_offset = None
-            return
-        value = self._node(self._timestamp_node, "CIntegerPtr")
-        offsets = []
-        for _ in range(TIMESTAMP_SAMPLES):
-            before = time.time()
-            self._call("latch the timestamp", latch.Execute)
-            after = time.time()
-            device = self._call("read the timestamp", value.GetValue)
-            offsets.append((before + after) / 2 - device / 1e9)
-        self._timestamp_offset = statistics.median(offsets)
-        logger.debug("%r timestamp offset %.6f s", self, self._timestamp_offset)
 
-    # --- Role hooks ------------------------------------------------------------
+class _PySpinConnection:
+    """A `Connection` onto one initialized PySpin camera.
 
-    def _settings(self) -> Mapping[str, Setting]:
-        found = (
-            self._float_setting(EXPOSURE_TIME, "ExposureTime", "s", _US_PER_S),
-            self._enum_setting("ExposureAuto", _AUTO_MODES),
-            self._float_setting(GAIN, "Gain", "dB"),
-            self._enum_setting("GainAuto", _AUTO_MODES),
-            # Read-only while acquiring, but _set_setting pauses acquisition.
-            self._enum_setting(
-                "PixelFormat", _PIXEL_FORMATS, name=PIXEL_FORMAT, writable=True
-            ),
-            self._throughput_limit_setting(),
-            self._trigger_setting(),
-            self._read_only_number(
-                "current_throughput",
-                "DeviceLinkCurrentThroughput",
-                "CIntegerPtr",
-                "MB/s",
-                _BYTES_PER_MB,
-            ),
-            self._read_only_number(
-                "resulting_frame_rate",
-                "AcquisitionResultingFrameRate",
-                "CFloatPtr",
-                "Hz",
-            ),
-        )
-        return {s.name: s for s in found if s is not None}
+    Holds the camera pointer and a `SpinnakerSystem` handle until `close()`.
+    """
 
-    def _set_setting(self, name: str, value: SettingValue) -> None:
-        logger.debug("%r: %s = %r", self, name, value)
-        if name in (EXPOSURE_TIME, GAIN):
-            node_name, scale = (
-                ("ExposureTime", _US_PER_S) if name == EXPOSURE_TIME else ("Gain", 1.0)
-            )
-            node = self._node(node_name, "CFloatPtr")
-            # Clamp, so a limit that went through the unit conversion still fits.
-            low, high = self._call(
-                f"read the limits of {name}", lambda: (node.GetMin(), node.GetMax())
-            )
-            native = min(max(float(value) * scale, low), high)
-            self._call(
-                f"set {name}", lambda: node.SetValue(native), kind=CommandRejected
-            )
-        elif name == PIXEL_FORMAT:
-            with self._acquisition_paused():
-                self._set_enum("PixelFormat", str(value), kind=CommandRejected)
-        elif name == THROUGHPUT_LIMIT:
-            self._set_throughput_limit(float(value))
-        elif name == TRIGGER:
-            self._set_trigger(str(value))
-        else:
-            self._set_enum(name, str(value), kind=CommandRejected)
+    def __init__(self, system: SpinnakerSystem, cam: Any) -> None:
+        self._system = system
+        self._pyspin: Any = system._module
+        self._cam: Any = cam
 
-    def _throughput_limit_setting(self) -> Setting | None:
-        node = self._node("DeviceLinkThroughputLimit", "CIntegerPtr")
-        if not self._pyspin.IsReadable(node):
-            return None
-        value, low, high, inc = self._call(
-            "read DeviceLinkThroughputLimit",
-            lambda: (node.GetValue(), node.GetMin(), node.GetMax(), node.GetInc()),
-        )
-        return Setting(
-            THROUGHPUT_LIMIT,
-            # None while a limit mode turns the limit off; writing turns it on.
-            value / _BYTES_PER_MB if self._throughput_limit_active() else None,
-            minimum=low / _BYTES_PER_MB,
-            maximum=_snap(high, low, high, inc) / _BYTES_PER_MB,
-            step=inc / _BYTES_PER_MB,
-            unit="MB/s",
-        )
-
-    def _throughput_limit_active(self) -> bool:
-        mode = self._node("DeviceLinkThroughputLimitMode", "CEnumerationPtr")
-        if not self._pyspin.IsReadable(mode):
-            return True
-        return self._enum_symbol("DeviceLinkThroughputLimitMode") == "On"
-
-    def _set_throughput_limit(self, mb_per_s: float) -> None:
-        if not self._throughput_limit_active():
-            self._set_enum("DeviceLinkThroughputLimitMode", "On", kind=CommandRejected)
-        node = self._node("DeviceLinkThroughputLimit", "CIntegerPtr")
-        low, high, inc = self._call(
-            "read the limits of DeviceLinkThroughputLimit",
-            lambda: (node.GetMin(), node.GetMax(), node.GetInc()),
-        )
-        native = _snap(mb_per_s * _BYTES_PER_MB, low, high, inc)
-
-        def write() -> None:
-            self._call(
-                f"set DeviceLinkThroughputLimit to {native} B/s",
-                lambda: node.SetValue(native),
-                kind=CommandRejected,
-            )
-
-        if self._pyspin.IsWritable(node):
-            write()
-            return
-        # Some cameras may only take it while stopped (unverified; hardware doc).
-        with self._acquisition_paused():
-            if not self._pyspin.IsWritable(node):
-                raise CommandRejected(
-                    f"{self!r} won't accept DeviceLinkThroughputLimit, even stopped"
-                )
-            write()
-
-    def _trigger_setting(self) -> Setting | None:
-        mode = self._node("TriggerMode", "CEnumerationPtr")
-        source = self._node("TriggerSource", "CEnumerationPtr")
-        readable = self._pyspin.IsReadable
-        if not (readable(mode) and readable(source)):
-            return None
-        if self._raw_node("TriggerSoftware") is None:
-            return None
-        value: str | None = None
-        if self._enum_symbol("TriggerMode") == "Off":
-            value = "Off"
-        elif self._enum_symbol("TriggerSource") == "Software" and (
-            self._trigger_selector() in (None, "FrameStart")
-        ):
-            value = "Software"
-        # Any other state (e.g. a hardware line) reads None; writing leaves it.
-        return Setting(TRIGGER, value, choices=_TRIGGER_MODES)
-
-    def _trigger_selector(self) -> str | None:
-        node = self._node("TriggerSelector", "CEnumerationPtr")
-        if not self._pyspin.IsReadable(node):
-            return None
-        return self._enum_symbol("TriggerSelector")
-
-    def _set_trigger(self, value: str) -> None:
-        # TriggerSource is only writable while TriggerMode is Off (Spinnaker's
-        # Trigger example); the mode itself is switched with acquisition stopped.
-        with self._acquisition_paused():
-            self._set_enum("TriggerMode", "Off", kind=CommandRejected)
-            self._software_trigger = False
-            self._fired_at = None
-            if value == "Software":
-                if self._trigger_selector() not in (None, "FrameStart"):
-                    self._set_enum(
-                        "TriggerSelector", "FrameStart", kind=CommandRejected
-                    )
-                self._set_enum("TriggerSource", "Software", kind=CommandRejected)
-                self._set_enum("TriggerMode", "On", kind=CommandRejected)
-                self._software_trigger = True
-
-    def _read_only_number(
-        self, name: str, node_name: str, cast: str, unit: str, scale: float = 1.0
-    ) -> Setting | None:
-        node = self._node(node_name, cast)
-        if not self._pyspin.IsReadable(node):
-            return None
-        value = self._call(f"read {node_name}", node.GetValue)
-        return Setting(name, float(value) / scale, unit=unit, read_only=True)
-
-    def _float_setting(
-        self, name: str, node_name: str, unit: str, scale: float = 1.0
-    ) -> Setting | None:
-        node = self._node(node_name, "CFloatPtr")
-        if not self._pyspin.IsReadable(node):
-            return None
-        value, low, high = self._call(
-            f"read {node_name}",
-            lambda: (node.GetValue(), node.GetMin(), node.GetMax()),
-        )
-        return Setting(
-            name,
-            value / scale,
-            minimum=low / scale,
-            maximum=high / scale,
-            unit=unit,
-            read_only=not self._pyspin.IsWritable(node),
-        )
-
-    def _enum_setting(
+    def _do(
         self,
-        node_name: str,
-        supported: Iterable[str],
-        *,
-        name: str | None = None,
-        writable: bool = False,
-    ) -> Setting | None:
-        node = self._node(node_name, "CEnumerationPtr")
-        if not self._pyspin.IsReadable(node):
-            return None
-        return Setting(
-            name or node_name,
-            self._enum_symbol(node_name),
-            choices=self._enum_choices(node_name, supported),
-            read_only=not (writable or self._pyspin.IsWritable(node)),
-        )
-
-    def _capture_frame(self, not_before: datetime | None, timeout: float) -> Frame:
-        return self._grab(not_before, timeout)
-
-    def _preview_frame(self) -> npt.NDArray[np.uint8]:
-        """The newest frame as 8 bits, subsampled to `PREVIEW_MAX_SIZE`."""
-        pixels = self._grab(None, self.capture_timeout).pixels
-        if pixels.dtype == np.uint16:
-            pixels = pixels >> 8
-        stride = -(-max(pixels.shape[:2]) // PREVIEW_MAX_SIZE)
-        return np.ascontiguousarray(pixels[::stride, ::stride], dtype=np.uint8)
-
-    # --- Capture ----------------------------------------------------------------
-
-    def _grab(self, not_before: datetime | None, timeout: float) -> Frame:
-        """Take the first complete frame no older than ``not_before``.
-
-        The camera free-runs with newest-only buffering, so the first frame is
-        often from before the call. Stale and incomplete frames are released
-        and the next one taken until ``timeout`` runs out; the timestamp offset
-        is re-measured after every `RETRIES_BEFORE_REMEASURE` stale frames.
-        """
-        deadline = time.monotonic() + timeout
-        if not_before is not None:
-            if self._timestamp_offset is None:
-                raise DeviceError(
-                    f"{self!r} can't check not_before: it can't latch its timestamp"
-                )
-            wait = (not_before - datetime.now(UTC)).total_seconds()
-            if wait >= timeout:
-                raise DeviceTimeout(
-                    f"{self!r}: not_before is {wait:.3g} s away, past the "
-                    f"{timeout:g} s timeout"
-                )
-            if wait > 0:
-                # No frame from before not_before would do, so don't grab any.
-                time.sleep(wait)
-        exposure = self._read_float("ExposureTime") / _US_PER_S
-        retrigger_s = math.inf
-        if self._software_trigger:
-            turnaround = self._trigger_turnaround
-            retrigger_s = exposure + (
-                _RETRIGGER_TURNAROUNDS * turnaround
-                if turnaround is not None
-                else _PRIME_WAIT_S
-            )
-            # Windows' 15.6 ms clock on Python 3.12 can read not_before and the
-            # trigger in one tick, and datetime's rounding then puts not_before
-            # after it, so both comparisons allow the tolerance.
-            tolerance = timedelta(seconds=_TRIGGER_TOLERANCE_S)
-            if not_before is not None:
-                not_before -= tolerance
-            fired_at, self._fired_at = self._fired_at, None
-            if fired_at is None or (
-                not_before is not None and fired_at < not_before.timestamp()
-            ):
-                self._discard_waiting_frames()
-                fired_at = self._fire()
-            if self._timestamp_offset is not None:
-                # Any frame whose exposure began before the trigger is stale.
-                floor = datetime.fromtimestamp(fired_at, UTC) - tolerance
-                not_before = floor if not_before is None else max(not_before, floor)
-        stale = incomplete = retriggers = 0
-        remeasured = False
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                raise DeviceTimeout(
-                    f"{self!r}: no usable frame in {timeout:g} s "
-                    f"({stale} stale, {incomplete} incomplete, "
-                    f"{retriggers} triggers fired again)"
-                )
-            wait = min(remaining, retrigger_s)
-            if math.isinf(wait):
-                grab_ms = self._pyspin.EVENT_TIMEOUT_INFINITE
-            else:
-                grab_ms = max(1, math.ceil(wait * 1000))
-            try:
-                image = self._next_image(grab_ms)
-            except DeviceTimeout:
-                if wait >= remaining:
-                    raise
-                logger.info("%r: no frame from the trigger; firing again", self)
-                self._fire()
-                retriggers += 1
-                continue
-            try:
-                taken = self._call(
-                    "read a frame",
-                    functools.partial(self._take, image, not_before, exposure),
-                )
-            finally:
-                self._call("release a frame", image.Release)
-            if isinstance(taken, _Taken):
-                metadata = {
-                    EXPOSURE_TIME: exposure,
-                    GAIN: self._read_optional_float("Gain"),
-                    "device_timestamp_ns": taken.device_timestamp_ns,
-                    "frame_id": taken.frame_id,
-                    "retries": stale + incomplete,
-                    "stale_frames": stale,
-                    "incomplete_frames": incomplete,
-                    "retriggers": retriggers,
-                    "missing_trailer": taken.missing_trailer,
-                    "timestamp_remeasured": remeasured,
-                }
-                return Frame(
-                    taken.pixels,
-                    taken.pixel_format,
-                    taken.timestamp,
-                    metadata,
-                )
-            if self._software_trigger:
-                # The frame this capture triggered may never come: ask again.
-                self._fire()
-            if taken == "incomplete":
-                incomplete += 1
-                continue
-            stale += 1
-            if stale % RETRIES_BEFORE_REMEASURE == 0:
-                logger.info("%r: %d stale frames; re-measuring offset", self, stale)
-                self._measure_timestamp_offset()
-                remeasured = True
-
-    def _next_image(self, grab_ms: int) -> Any:
-        try:
-            image = self._call(
-                "get a frame", functools.partial(self._cam.GetNextImage, grab_ms)
-            )
-        except DeviceTimeout as exc:
-            if self._delivered:
-                raise
-            error = DeviceTimeout(f"{exc} ({_NO_FRAME_HINT})")
-        else:
-            self._delivered = True
-            return image
-        raise error
-
-    def _fire(self) -> float:
-        """Execute ``TriggerSoftware``; returns the host time just before."""
-        node = self._node("TriggerSoftware", "CCommandPtr")
-        fired_at = time.time()
-        self._call("fire a software trigger", node.Execute)
-        return fired_at
-
-    def _discard_waiting_frames(self) -> None:
-        """Release frames already buffered, so a trigger's frame is the next one."""
-        for _ in range(_MAX_DISCARDED):
-            try:
-                image = self._call(
-                    "discard a waiting frame",
-                    functools.partial(
-                        self._cam.GetNextImage, self._pyspin.EVENT_TIMEOUT_NONE
-                    ),
-                )
-            except DeviceTimeout:
-                return
-            self._call("release a frame", image.Release)
-            logger.debug("%r: discarded a frame from before the trigger", self)
-
-    def _take(
-        self, image: Any, not_before: datetime | None, exposure: float
-    ) -> "_Taken | str":
-        """Copy a frame out of its buffer, or say why it won't do.
-
-        The device timestamp marks the end of exposure (hardware doc), so the
-        frame's timestamp is that minus ``exposure``, the start.
-        """
-        missing_trailer = False
-        if image.IsIncomplete():
-            status = image.GetImageStatus()
-            # Accepted as complete, as in pgs-scan dev (assumed; hardware doc).
-            if status != self._pyspin.SPINNAKER_IMAGE_STATUS_MISSING_TRAILER:
-                logger.warning(
-                    "%r: incomplete frame (%s)",
-                    self,
-                    self._pyspin.Image.GetImageStatusDescription(status),
-                )
-                return "incomplete"
-            missing_trailer = True
-        device_ns = int(image.GetTimeStamp())
-        if self._timestamp_offset is None:
-            host_time = time.time() - exposure
-        else:
-            host_time = self._timestamp_offset + device_ns / 1e9 - exposure
-        timestamp = datetime.fromtimestamp(host_time, UTC)
-        if not_before is not None and timestamp < not_before:
-            logger.debug("%r: dropping a frame from %s", self, timestamp)
-            return "stale"
-        return _Taken(
-            pixels=image.GetNDArray().copy(),
-            pixel_format=str(image.GetPixelFormatName()),
-            timestamp=timestamp,
-            device_timestamp_ns=device_ns,
-            frame_id=int(image.GetFrameID()),
-            missing_trailer=missing_trailer,
-        )
-
-    # --- PySpin access ---------------------------------------------------------
-
-    def _call(
-        self,
-        action: str,
         fn: Callable[[], T],
         *,
-        kind: type[DeviceError] = DeviceError,
         by_code: Mapping[int, type[DeviceError]] | None = None,
     ) -> T:
         """Call into PySpin, turning a ``SpinnakerException`` into a `DeviceError`.
@@ -1002,81 +402,188 @@ class SpinnakerCamera(FrameCamera):
             return fn()
         except self._pyspin.SpinnakerException as exc:
             code: int = getattr(exc, "errorcode", 0)
+            kind: type[DeviceError] = DeviceError
             if code == self._pyspin.SPINNAKER_ERR_TIMEOUT:
                 kind = DeviceTimeout
             kind = (by_code or {}).get(code, kind)
-            error = kind(f"{self!r} failed to {action}: {exc}")
+            error = kind(str(exc))
         del fn
         raise error
 
+    # --- Node map ---------------------------------------------------------------
+
     def _raw_node(self, name: str, *, stream: bool = False) -> Any:
-        nodemap = self._cam.GetTLStreamNodeMap() if stream else self._cam.GetNodeMap()
+        cam = self._cam
+        nodemap = cam.GetTLStreamNodeMap() if stream else cam.GetNodeMap()
         return nodemap.GetNode(name)
 
     def _node(self, name: str, cast: str, *, stream: bool = False) -> Any:
         node = self._raw_node(name, stream=stream)
-        return None if node is None else getattr(self._pyspin, cast)(node)
+        if node is None:
+            raise DeviceError(f"the camera has no {name} node")
+        return getattr(self._pyspin, cast)(node)
 
-    def _read_float(self, name: str) -> float:
-        node = self._node(name, "CFloatPtr")
-        return float(self._call(f"read {name}", node.GetValue))
+    def _get(self, name: str, cast: str, getter: Callable[[Any], T]) -> T:
+        node = self._node(name, cast)
+        return self._do(lambda: getter(node))
 
-    def _read_optional_float(self, name: str) -> float | None:
-        node = self._node(name, "CFloatPtr")
-        return self._read_float(name) if self._pyspin.IsReadable(node) else None
+    def has(self, name: str) -> bool:
+        return self._raw_node(name) is not None
 
-    def _read_string(self, name: str) -> str | None:
-        node = self._node(name, "CStringPtr")
-        if not self._pyspin.IsReadable(node):
-            return None
-        return str(self._call(f"read {name}", node.GetValue))
+    def is_readable(self, name: str) -> bool:
+        return bool(self._pyspin.IsReadable(self._raw_node(name)))
 
-    def _enum_symbol(self, name: str, *, stream: bool = False) -> str:
-        node = self._node(name, "CEnumerationPtr", stream=stream)
-        entry = self._call(f"read {name}", node.GetCurrentEntry)
-        return str(entry.GetSymbolic())
+    def is_writable(self, name: str) -> bool:
+        return bool(self._pyspin.IsWritable(self._raw_node(name)))
 
-    def _enum_choices(self, name: str, supported: Iterable[str]) -> tuple[str, ...]:
-        """The entries of an enumeration that are available and in ``supported``."""
+    def get_float(self, name: str) -> float:
+        return float(self._get(name, "CFloatPtr", lambda n: n.GetValue()))
+
+    def get_int(self, name: str) -> int:
+        return int(self._get(name, "CIntegerPtr", lambda n: n.GetValue()))
+
+    def get_string(self, name: str) -> str:
+        return str(self._get(name, "CStringPtr", lambda n: n.GetValue()))
+
+    def get_enum(self, name: str) -> str:
+        return self._enum_symbol(name)
+
+    def float_range(self, name: str) -> tuple[float, float]:
+        return self._get(name, "CFloatPtr", lambda n: (n.GetMin(), n.GetMax()))
+
+    def int_range(self, name: str) -> tuple[int, int, int]:
+        return self._get(
+            name, "CIntegerPtr", lambda n: (n.GetMin(), n.GetMax(), n.GetInc())
+        )
+
+    def enum_entries(self, name: str) -> tuple[str, ...]:
         node = self._node(name, "CEnumerationPtr")
-        supported = set(supported)
         symbols = []
-        for raw in self._call(f"list {name} entries", node.GetEntries):
+        for raw in self._do(node.GetEntries):
             entry = self._pyspin.CEnumEntryPtr(raw)
-            if self._pyspin.IsReadable(entry) and entry.GetSymbolic() in supported:
+            if self._pyspin.IsReadable(entry):
                 symbols.append(str(entry.GetSymbolic()))
         return tuple(symbols)
 
-    def _set_enum(
-        self,
-        name: str,
-        symbol: str,
-        *,
-        stream: bool = False,
-        kind: type[DeviceError] = DeviceError,
-    ) -> None:
+    def set_float(self, name: str, value: float) -> None:
+        node = self._node(name, "CFloatPtr")
+        self._do(lambda: node.SetValue(value))
+
+    def set_int(self, name: str, value: int) -> None:
+        node = self._node(name, "CIntegerPtr")
+        self._do(lambda: node.SetValue(value))
+
+    def set_enum(self, name: str, symbol: str) -> None:
+        self._set_enum(name, symbol)
+
+    def execute(self, name: str) -> None:
+        node = self._node(name, "CCommandPtr")
+        self._do(node.Execute)
+
+    def _enum_symbol(self, name: str, *, stream: bool = False) -> str:
         node = self._node(name, "CEnumerationPtr", stream=stream)
-        if not self._pyspin.IsWritable(node):
-            raise DeviceError(f"{self!r} can't set {name}: it isn't writable")
+        entry = self._do(node.GetCurrentEntry)
+        return str(entry.GetSymbolic())
+
+    def _set_enum(self, name: str, symbol: str, *, stream: bool = False) -> None:
+        node = self._node(name, "CEnumerationPtr", stream=stream)
         entry = self._pyspin.CEnumEntryPtr(node.GetEntryByName(symbol))
         if not self._pyspin.IsReadable(entry):
-            raise DeviceError(f"{self!r} has no {name} {symbol!r}")
+            raise DeviceError(f"no {name} entry {symbol!r}")
         value = entry.GetValue()
-        self._call(
-            f"set {name} to {symbol}", lambda: node.SetIntValue(value), kind=kind
+        self._do(lambda: node.SetIntValue(value))
+
+    def _set_stream_enum(self, name: str, symbol: str) -> None:
+        node = self._node(name, "CEnumerationPtr", stream=True)
+        if not self._pyspin.IsWritable(node):
+            raise DeviceError(f"can't set {name}: it isn't writable")
+        self._set_enum(name, symbol, stream=True)
+
+    # --- Stream -----------------------------------------------------------------
+
+    def start_acquisition(self) -> None:
+        self._do(lambda: self._cam.BeginAcquisition())
+
+    def stop_acquisition(self) -> None:
+        self._do(self._end_acquisition)
+
+    def _end_acquisition(self) -> None:
+        if self._cam.IsStreaming():
+            self._cam.EndAcquisition()
+
+    def grab(self, timeout: float | None) -> "_PySpinBuffer":
+        if timeout is None:
+            grab_ms = self._pyspin.EVENT_TIMEOUT_INFINITE
+        elif timeout <= 0:
+            grab_ms = self._pyspin.EVENT_TIMEOUT_NONE
+        else:
+            grab_ms = max(1, math.ceil(timeout * 1000))
+        image = self._do(functools.partial(self._cam.GetNextImage, grab_ms))
+        return _PySpinBuffer(self, image)
+
+    def close(self) -> None:
+        if self._cam is None:
+            return
+        problems = []
+        steps = (
+            ("end acquisition", self._end_acquisition),
+            ("de-initialize", self._deinit),
         )
+        for action, step in steps:
+            try:
+                self._do(step)
+            except DeviceError as exc:
+                problems.append(f"{action}: {exc}")
+        self._cam = None
+        try:
+            self._system.close()
+        except DeviceError as exc:
+            problems.append(str(exc))
+        if problems:
+            raise DeviceError("; ".join(problems))
+
+    def _deinit(self) -> None:
+        if self._cam.IsInitialized():
+            self._cam.DeInit()
 
 
-@dataclass(frozen=True)
-class _Taken:
-    """A usable frame, copied out of its SDK buffer."""
+class _PySpinBuffer:
+    """A `Buffer` over one PySpin image."""
 
-    pixels: npt.NDArray[Any]
-    pixel_format: str
-    timestamp: datetime
-    device_timestamp_ns: int
-    frame_id: int
-    missing_trailer: bool
+    def __init__(self, conn: _PySpinConnection, image: Any) -> None:
+        self._conn = conn
+        self._image = image
+
+    def _read(self, fn: Callable[[Any], T]) -> T:
+        image = self._image
+        return self._conn._do(lambda: fn(image))
+
+    def status(self) -> BufferStatus:
+        if not self._read(lambda i: i.IsIncomplete()):
+            return BufferStatus.COMPLETE
+        status = self._read(lambda i: i.GetImageStatus())
+        if status == self._conn._pyspin.SPINNAKER_IMAGE_STATUS_MISSING_TRAILER:
+            return BufferStatus.MISSING_TRAILER
+        return BufferStatus.INCOMPLETE
+
+    def status_text(self) -> str:
+        describe = self._conn._pyspin.Image.GetImageStatusDescription
+        return str(self._read(lambda i: describe(i.GetImageStatus())))
+
+    def device_timestamp_ns(self) -> int:
+        return int(self._read(lambda i: i.GetTimeStamp()))
+
+    def frame_id(self) -> int:
+        return int(self._read(lambda i: i.GetFrameID()))
+
+    def pixel_format(self) -> str:
+        return str(self._read(lambda i: i.GetPixelFormatName()))
+
+    def pixels(self) -> npt.NDArray[Any]:
+        return self._read(lambda i: i.GetNDArray().copy())
+
+    def release(self) -> None:
+        self._read(lambda i: i.Release())
 
 
 def _require_version(pyspin: Any, system: Any) -> None:
@@ -1100,11 +607,3 @@ def _require_version(pyspin: Any, system: Any) -> None:
     except pyspin.SpinnakerException as exc:
         logger.warning("could not release the Spinnaker system: %s", str(exc))
     raise ImportError(problem, name="PySpin")
-
-
-def _snap(value: float, low: int, high: int, inc: int) -> int:
-    """The nearest of ``low + k * inc`` within ``[low, high]``, as an int."""
-    inc = max(int(inc), 1)
-    top = low + (high - low) // inc * inc
-    k = round((value - low) / inc)
-    return int(min(max(low + k * inc, low), top))

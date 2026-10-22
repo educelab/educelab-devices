@@ -45,8 +45,10 @@ Settle the open choices and the seam first. Then move the Spinnaker driver onto 
 ### Tasks
 
 - [x] Task 2.1: Write core tests against the fake backend. They cover settings (units, snap/clamp, auto modes), pausing acquisition for some writes, software trigger priming and re-firing, the timestamp offset, the `not_before` loop, and handling of incomplete and missing-trailer frames.
-- [~] Task 2.2: Move that logic out of `spinnaker.py` into the core.
-- [ ] Task 2.3: Implement the PySpin backend on the seam: `System` lifecycle, node access, image status, and exception codes.
+- [x] Task 2.2: Move that logic out of `spinnaker.py` into the core.
+- [x] Task 2.3: Implement the PySpin backend on the seam: `System` lifecycle, node access, image status, and exception codes.
+  - Deviation: to keep the Spinnaker tests unmodified, `spinnaker.py` still imports `time` and re-exports `_RETRIGGER_TURNAROUNDS`, because the tests reach for both there.
+  - Unverified: `is_readable`/`is_writable` pass PySpin an uncast `INode`, where the old code passed typed pointers. Check this in the Phase 2 hardware run.
 - [ ] Task 2.4: Add probing for optional features (trigger, throughput limit, timestamp node, auto modes, `AcquisitionResultingFrameRate`). Settings for missing features are left out.
 
 ### Verification

@@ -576,6 +576,9 @@ class _PySpinBuffer:
     def frame_id(self) -> int:
         return int(self._read(lambda i: i.GetFrameID()))
 
+    def host_timestamp_ns(self) -> None:
+        return None
+
     def pixel_format(self) -> str:
         return str(self._read(lambda i: i.GetPixelFormatName()))
 

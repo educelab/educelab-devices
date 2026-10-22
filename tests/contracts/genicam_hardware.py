@@ -100,9 +100,12 @@ class GenICamHardwareTests:
             print(f"{name}: {setting}")
         assert EXPOSURE_TIME in camera.settings()
 
-    def test_camera_latches_a_timestamp(self, camera):
-        print(f"timestamp node: {camera.timestamp_node}")
-        assert camera.timestamp_node in ("Timestamp", "TimestampLatchValue")
+    def test_camera_has_a_timestamp_offset(self, camera):
+        # Records which node or source this model uses (usb3-vision.md).
+        print(
+            f"timestamp node: {camera.timestamp_node}, source {camera.timestamp_source}"
+        )
+        assert camera.timestamp_source in ("latch", "arrival")
         assert camera.timestamp_offset is not None
 
     def test_timestamp_offset_is_stable(self, camera):
@@ -291,7 +294,14 @@ class GenICamHardwareTests:
     def test_every_camera_captures_together(self, camera):
         camera.close()  # the module's camera would otherwise be opened twice
         try:
-            cameras = [self.make(s) for s in self.attached()]
+            # Cameras of this model only: a rig of mixed cameras uncapped can
+            # need more than the shared USB link has (usb3-vision.md).
+            same = [
+                i.serial_number
+                for i in self.driver.discover()
+                if i.serial_number and i.model == camera.info.model
+            ]
+            cameras = [self.make(s) for s in same]
             errors: list[str] = []
             for c in cameras:
                 c.open()

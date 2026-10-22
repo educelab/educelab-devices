@@ -688,6 +688,9 @@ class _GenTLBuffer:
     def frame_id(self) -> int:
         return int(self._read(lambda b: b.frame_id))
 
+    def host_timestamp_ns(self) -> None:
+        return None
+
     def pixel_format(self) -> str:
         return pfnc_name(int(self._read(lambda b: b.pixel_format)))
 

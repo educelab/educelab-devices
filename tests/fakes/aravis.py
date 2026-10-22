@@ -183,7 +183,11 @@ class FakeArvBuffer:
         return self._filled().timestamp_ns
 
     def get_system_timestamp(self) -> int:
-        return self._filled().camera.device_time_ns()
+        # Host time as the leader arrives; Aravis always reports it.
+        frame = self._filled()
+        if frame.arrival_ns is not None:
+            return frame.arrival_ns
+        return round((frame.camera.device_epoch + frame.timestamp_ns / 1e9) * 1e9)
 
 
 class FakeArvStream:

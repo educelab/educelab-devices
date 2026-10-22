@@ -21,6 +21,7 @@ import logging
 import math
 import statistics
 import time
+from collections import deque
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -49,6 +50,7 @@ from educelab.devices.errors import (
 )
 
 __all__ = [
+    "ARRIVAL_SAMPLES",
     "PREVIEW_MAX_SIZE",
     "RETRIES_BEFORE_REMEASURE",
     "THROUGHPUT_LIMIT",
@@ -92,6 +94,11 @@ class Buffer(Protocol):
         ...
 
     def frame_id(self) -> int: ...
+
+    def host_timestamp_ns(self) -> int | None:
+        """Host time, in nanoseconds since the epoch, when the frame began to
+        arrive, or None if the library doesn't say."""
+        ...
 
     def pixel_format(self) -> str:
         """The SFNC name of the pixel format, e.g. ``"Mono8"``."""
@@ -225,6 +232,10 @@ _TIMESTAMP_NODES = ("Timestamp", "TimestampLatchValue")
 # cameras (and Aravis's simulated camera) still use.
 _EXPOSURE_NODES = ("ExposureTime", "ExposureTimeAbs")
 
+# Recent frames whose arrival times estimate the offset of a camera that can't
+# latch its timestamp; the smallest gap has the least transfer delay in it.
+ARRIVAL_SAMPLES = 20
+
 # Stale frames a capture drops before re-measuring the timestamp offset, as in
 # pgs-scan dev. The capture's timeout bounds the retries. See spinnaker.md.
 RETRIES_BEFORE_REMEASURE = 5
@@ -324,6 +335,8 @@ class GenICamCamera(FrameCamera):
         self._timestamp_node: str | None = None
         self._exposure_node: str | None = None
         self._timestamp_offset: float | None = None
+        self._timestamp_source: str | None = None
+        self._arrival_gaps: deque[float] = deque(maxlen=ARRIVAL_SAMPLES)
         self._delivered = False
         self._software_trigger = False
         self._fired_at: float | None = None
@@ -355,6 +368,15 @@ class GenICamCamera(FrameCamera):
         ``None`` if the camera can't latch its timestamp.
         """
         return self._timestamp_offset
+
+    @property
+    def timestamp_source(self) -> str | None:
+        """How `timestamp_offset` is measured: ``"latch"`` from the camera's
+        timestamp latch, ``"arrival"`` from when frames reach the host (for
+        cameras without a latch; about a millisecond less exact), or ``None``
+        if it can't be.
+        """
+        return self._timestamp_source
 
     @synchronized
     def trigger(self) -> None:
@@ -421,6 +443,8 @@ class GenICamCamera(FrameCamera):
             except DeviceError as exc:
                 problems.append(str(exc))
         self._timestamp_offset = None
+        self._timestamp_source = None
+        self._arrival_gaps.clear()
         return problems
 
     def _not_found_message(self) -> str:
@@ -501,19 +525,59 @@ class GenICamCamera(FrameCamera):
     def _measure_timestamp_offset(self) -> None:
         conn = self._connection
         node = self._timestamp_node
-        if node is None or not conn.is_writable("TimestampLatch"):
-            logger.warning("%r can't latch its timestamp", self)
-            self._timestamp_offset = None
-            return
-        offsets = []
-        for _ in range(TIMESTAMP_SAMPLES):
-            before = time.time()
-            self._call("latch the timestamp", lambda: conn.execute("TimestampLatch"))
-            after = time.time()
-            device = self._call("read the timestamp", lambda: conn.get_int(node))
-            offsets.append((before + after) / 2 - device / 1e9)
-        self._timestamp_offset = statistics.median(offsets)
-        logger.debug("%r timestamp offset %.6f s", self, self._timestamp_offset)
+        if node is not None and conn.is_writable("TimestampLatch"):
+            offsets = []
+            for _ in range(TIMESTAMP_SAMPLES):
+                before = time.time()
+                self._call(
+                    "latch the timestamp", lambda: conn.execute("TimestampLatch")
+                )
+                after = time.time()
+                device = self._call("read the timestamp", lambda: conn.get_int(node))
+                offsets.append((before + after) / 2 - device / 1e9)
+            self._timestamp_offset = statistics.median(offsets)
+            self._timestamp_source = "latch"
+        else:
+            self._measure_from_arrivals()
+        logger.debug(
+            "%r timestamp offset %s (%s)",
+            self,
+            self._timestamp_offset,
+            self._timestamp_source,
+        )
+
+    def _measure_from_arrivals(self) -> None:
+        """Estimate the offset from one free-running frame's arrival time."""
+        self._arrival_gaps.clear()
+        self._timestamp_offset = None
+        self._timestamp_source = None
+        if self._software_trigger:
+            self._discard_waiting_frames()
+        deadline = time.monotonic() + self.capture_timeout
+        while (remaining := deadline - time.monotonic()) > 0:
+            if self._software_trigger:
+                self._fire()
+            buffer = self._next_buffer(remaining)
+            try:
+                status, arrival, device = self._call(
+                    "read a frame's times", functools.partial(_times, buffer)
+                )
+            finally:
+                self._call("release a frame", buffer.release)
+            if arrival is None:
+                logger.warning("%r can't latch its timestamp or time arrivals", self)
+                return
+            if status is not BufferStatus.INCOMPLETE:
+                self._note_arrival(arrival, device)
+                return
+        raise DeviceTimeout(
+            f"{self!r}: no complete frame to time in {self.capture_timeout:g} s"
+        )
+
+    def _note_arrival(self, arrival_ns: int, device_ns: int) -> None:
+        self._arrival_gaps.append(arrival_ns / 1e9 - device_ns / 1e9)
+        self._timestamp_offset = min(self._arrival_gaps)
+        self._timestamp_source = "arrival"
 
     # --- Role hooks ------------------------------------------------------------
 
@@ -745,7 +809,8 @@ class GenICamCamera(FrameCamera):
         if not_before is not None:
             if self._timestamp_offset is None:
                 raise DeviceError(
-                    f"{self!r} can't check not_before: it can't latch its timestamp"
+                    f"{self!r} can't check not_before: it can't latch its timestamp "
+                    "and its library doesn't time frame arrivals"
                 )
             wait = (not_before - datetime.now(UTC)).total_seconds()
             if wait >= timeout:
@@ -822,6 +887,7 @@ class GenICamCamera(FrameCamera):
                     "retriggers": retriggers,
                     "missing_trailer": taken.missing_trailer,
                     "timestamp_remeasured": remeasured,
+                    "timestamp_source": self._timestamp_source,
                 }
                 return Frame(
                     taken.pixels,
@@ -887,6 +953,10 @@ class GenICamCamera(FrameCamera):
         # Accepted as complete, as in pgs-scan dev (assumed; spinnaker.md).
         missing_trailer = status is BufferStatus.MISSING_TRAILER
         device_ns = buffer.device_timestamp_ns()
+        if self._timestamp_source == "arrival":
+            arrival = buffer.host_timestamp_ns()
+            if arrival is not None:
+                self._note_arrival(arrival, device_ns)
         if self._timestamp_offset is None:
             host_time = time.time() - exposure
         else:
@@ -979,6 +1049,10 @@ class _Taken:
     device_timestamp_ns: int
     frame_id: int
     missing_trailer: bool
+
+
+def _times(buffer: Buffer) -> tuple[BufferStatus, int | None, int]:
+    return buffer.status(), buffer.host_timestamp_ns(), buffer.device_timestamp_ns()
 
 
 def pfnc_name(code: int) -> str:

@@ -280,6 +280,14 @@ The lab Mac with five Chameleon3 CM3-U3-50S5M cameras and one IDS camera, via `t
   - In Aravis's default async mode on macOS, closing a camera can hang forever in `arv_uv_stream_finalize`. The stream thread waits for cancelled transfers to complete, while it is the thread that would complete them.
   - When a close doesn't hang, the next session may still get only `missing-packets` frames, until the camera is power-cycled.
   - The driver uses `UvUsbMode.SYNC` on USB3 Vision cameras. Six open/capture/close cycles then ran clean, and the CM3-U3-50S5M captured just as fast (11.9 per second either way, 30 `not_before` captures).
+- **Offset from frame arrivals.** With no latch, the driver now takes the device-to-host offset from when frames arrive. That is Aravis's system timestamp, taken as each frame's leader packet arrives. The offset is the smallest arrival-minus-stamp gap over the last 20 frames (`ARRIVAL_SAMPLES`), and frames' `metadata["timestamp_source"]` says `"arrival"`. Measured on this unit:
+  - 20 of 23 hardware tests passed, then 23 of 23 once the hardware tests accepted either source and the multi-camera test kept to one model.
+  - Offset spread over 5 remeasurements was 1.8 ms in one run and 0.46 ms in another (2–30 µs with a latch on the CM3-U3-50S5M).
+  - Arrival minus stamp moved between +0.5 and −1.1 ms over 10 frames as the window settled.
+  - 300 `not_before` captures met 300 stale frames, at 3.2 captures per second, for 19.6 MB frames at a 162 MB/s limit.
+  - After a 1 s pause, the frame taken was exposed 278 ms before the call.
+
+  So this camera's frame timestamps are good to about ±2 ms. **Unknown:** which moment of the rolling-shutter exposure the device stamp marks.
 - **Opening twice.** The driver refuses to open a camera this process already has open, without asking Aravis. A failed second `Camera.new` releases USB interfaces it never claimed. That was suspected of wedging the camera, but the async-mode hang above turned out to be the cause. The refusal stays as a precaution.
 - **Also measured.**
   - After a 1 s pause, the frame taken was exposed 13 ms before the call.

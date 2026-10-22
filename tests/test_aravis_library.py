@@ -2,7 +2,7 @@
 
 Needs no hardware, only Aravis 0.8 and PyGObject; skips without them (as in
 CI). Aravis's "Fake" camera is a GigE device with the older ``ExposureTimeAbs``
-node and no timestamp latch, so it checks the driver's use of the real library
+node and no timestamp latch (so its offset comes from frame arrivals), so it checks the driver's use of the real library
 rather than USB3 Vision behaviour.
 """
 
@@ -14,7 +14,6 @@ import pytest
 from educelab.devices.cameras import EXPOSURE_TIME, PIXEL_FORMAT, aravis
 from educelab.devices.cameras._genicam import TRIGGER
 from educelab.devices.cameras.aravis import AravisCamera
-from educelab.devices.errors import DeviceError
 
 SERIAL = "1"
 
@@ -68,10 +67,15 @@ def test_frames_carry_device_timestamps_and_ids(camera):
     )
 
 
-def test_without_a_timestamp_latch_not_before_is_refused(camera):
-    assert camera.timestamp_offset is None
-    with pytest.raises(DeviceError, match="latch"):
-        camera.capture_frame(not_before=datetime.now(UTC))
+def test_without_a_timestamp_latch_frame_arrivals_set_the_offset(camera):
+    # The simulated camera stamps frames with the system clock, so the offset
+    # from arrivals is close to zero.
+    assert camera.timestamp_source == "arrival"
+    assert abs(camera.timestamp_offset) < 0.1
+    ready = datetime.now(UTC)
+    frame = camera.capture_frame(not_before=ready)
+    assert frame.timestamp >= ready
+    assert frame.metadata["timestamp_source"] == "arrival"
 
 
 def test_software_trigger(camera):

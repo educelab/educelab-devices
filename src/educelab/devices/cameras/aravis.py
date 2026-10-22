@@ -409,6 +409,10 @@ class _AravisBuffer:
     def frame_id(self) -> int:
         return int(self._buffer.get_frame_id())
 
+    def host_timestamp_ns(self) -> int | None:
+        # Taken as the frame's leader packet arrives (arvuvstream.c).
+        return int(self._buffer.get_system_timestamp())
+
     def pixel_format(self) -> str:
         return pfnc_name(int(self._buffer.get_image_pixel_format()))
 

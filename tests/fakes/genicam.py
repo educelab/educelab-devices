@@ -126,6 +126,7 @@ class FakeFrame:
     status: BufferStatus
     pixel_format: str
     pixels: npt.NDArray[Any] = field(repr=False)
+    arrival_ns: int | None = None
     released: bool = False
 
     # Written over a buffer's pixels when it is released.
@@ -162,6 +163,8 @@ class FakeCamera:
             starting Off; the limit is read-only until the mode is On.
         throughput_while_streaming: Whether the limit is writable while acquiring.
         without: Names of nodes the camera lacks, e.g. ``["TriggerSoftware"]``.
+        arrival_latency: Seconds from a frame's device timestamp to the host
+            seeing it arrive, or None if the library reports no arrival time.
     """
 
     # Made-up figures, roughly a USB3 camera; nothing tests them against hardware.
@@ -190,7 +193,9 @@ class FakeCamera:
         throughput_mode: bool = False,
         throughput_while_streaming: bool = True,
         without: Iterable[str] = (),
+        arrival_latency: float | None = None,
     ) -> None:
+        self.arrival_latency = arrival_latency
         self.serial = serial
         self.model = model
         self.vendor = vendor
@@ -495,6 +500,11 @@ class FakeCamera:
         shape: tuple[int, ...] = (self.height, self.width)
         if channels > 1:
             shape += (channels,)
+        arrival_ns = None
+        if self.arrival_latency is not None:
+            arrival_ns = round(
+                (self.device_epoch + timestamp / 1e9 + self.arrival_latency) * 1e9
+            )
         frame = FakeFrame(
             self,
             self.frames_grabbed,
@@ -502,6 +512,7 @@ class FakeCamera:
             spec.status,
             pixel_format,
             np.full(shape, self.frames_grabbed % 200, dtype=dtype),
+            arrival_ns,
         )
         self.held.append(frame)
         return frame
@@ -577,6 +588,9 @@ class FakeBuffer:
 
     def frame_id(self) -> int:
         return self._held().frame_id
+
+    def host_timestamp_ns(self) -> int | None:
+        return self._held().arrival_ns
 
     def pixel_format(self) -> str:
         return self._held().pixel_format

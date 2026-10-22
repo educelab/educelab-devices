@@ -180,6 +180,73 @@ def test_a_camera_that_cannot_latch_has_no_offset():
     assert frame.timestamp.tzinfo is not None
 
 
+LATENCY = 0.0008
+
+
+def arrival_only(**options):
+    """A backend whose camera can't latch, but whose frames carry arrival times."""
+    return only(without=["TimestampLatch"], arrival_latency=LATENCY, **options)
+
+
+def test_without_a_latch_the_offset_comes_from_frame_arrivals():
+    backend = arrival_only()
+    with GenICamCamera(MONO, backend) as camera:
+        expected = backend.cameras[0].device_epoch + LATENCY
+        assert camera.timestamp_offset == pytest.approx(expected, abs=1e-6)
+        assert camera.timestamp_source == "arrival"
+
+
+def test_a_latched_camera_reports_its_source(camera):
+    assert camera.timestamp_source == "latch"
+    assert camera.capture_frame().metadata["timestamp_source"] == "latch"
+
+
+def test_not_before_works_from_frame_arrivals():
+    with GenICamCamera(MONO, arrival_only()) as camera:
+        request = datetime.now(UTC)
+        frame = camera.capture_frame(not_before=request)
+    assert frame.timestamp >= request
+    assert frame.metadata["timestamp_source"] == "arrival"
+
+
+def test_stale_frames_are_dropped_by_arrival_time():
+    backend = arrival_only()
+    fake = backend.cameras[0]
+    with GenICamCamera(MONO, backend) as camera:
+        fake.queue_frames(stale(fake), stale(fake, 0.5))
+        request = datetime.now(UTC)
+        frame = camera.capture_frame(not_before=request)
+    assert frame.metadata["stale_frames"] == 2
+    assert frame.timestamp >= request
+
+
+def test_a_slow_arrival_does_not_skew_the_offset():
+    # The fastest recent arrival is the best estimate of the offset.
+    backend = arrival_only()
+    fake = backend.cameras[0]
+    with GenICamCamera(MONO, backend) as camera:
+        fake.arrival_latency = 0.5
+        camera.capture_frame()
+        expected = fake.device_epoch + LATENCY
+        assert camera.timestamp_offset == pytest.approx(expected, abs=1e-6)
+
+
+def test_remeasuring_from_arrivals_follows_a_jump():
+    backend = arrival_only()
+    fake = backend.cameras[0]
+    with GenICamCamera(MONO, backend) as camera:
+        fake.device_epoch += 2.0
+        camera.measure_timestamp_offset()
+        expected = fake.device_epoch + LATENCY
+        assert camera.timestamp_offset == pytest.approx(expected, abs=1e-6)
+
+
+def test_with_neither_a_latch_nor_arrivals_there_is_no_source():
+    with GenICamCamera(MONO, only(without=["TimestampLatch"])) as camera:
+        assert camera.timestamp_source is None
+        assert camera.capture_frame().metadata["timestamp_source"] is None
+
+
 # --- Identity -----------------------------------------------------------------
 
 

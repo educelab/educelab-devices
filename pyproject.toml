@@ -26,9 +26,12 @@ dependencies = ["numpy>=2"]
 [project.optional-dependencies]
 acroname = ["brainstem>=2.12"]
 foldio360 = ["bleak>=3.0.2"]
+# genicam ships wheels only (cp310-cp314; no Intel macOS), so this extra and [all]
+# don't install elsewhere. See docs/hardware/usb3-vision.md.
+gentl = ["genicam>=1.6"]
 gphoto2 = ["gphoto2>=2.5; sys_platform != 'win32'", "Pillow>=10"]
 serial = ["pyserial>=3.5"]
-all = ["educelab-devices[acroname,foldio360,gphoto2,serial]"]
+all = ["educelab-devices[acroname,foldio360,gentl,gphoto2,serial]"]
 
 [project.scripts]
 el-devices = "educelab.devices.app.cli:main"

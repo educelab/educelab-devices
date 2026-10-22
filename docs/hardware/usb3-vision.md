@@ -231,6 +231,19 @@ Aravis ships a simulated camera on its "Fake" interface (`Aravis.enable_interfac
 - The software trigger primed in about 38 ms.
 - A second `Camera.new` on the same simulated camera succeeds, so busy detection (`DeviceBusy`) can only be checked on a real USB camera (`test_a_second_open_of_the_same_camera_is_busy`).
 
+### genicam's genapi, without a producer
+
+genicam 1.6.0 in a Python 3.12 venv on the same Mac, 2026-10-22, using a hand-written camera XML served through a stand-in port (`tests/test_gentl_library.py`). [V] for each point below:
+
+- `NodeMap.get_node(name)` returns a typed node (`IFloat`, `IInteger`, `IEnumeration`, `ICommand`, `IString`). A missing node raises `genapi.LogicalErrorException` ("Node not existing"), and `has_node()` doesn't raise.
+- `get_access_mode()` returns `genapi.EAccessMode` (`RO` = 3, `RW` = 4) and follows `pIsLocked`: a float locked by an auto mode reads as `RO`.
+- Writing a locked or read-only node raises `genapi.AccessException`. An unknown enum entry raises `genapi.InvalidArgumentException`. Both derive from `genapi.GenericException`, which is a different class from `gentl.GenericException`.
+- `IEnumeration.symbolics` leaves out entries whose `pIsAvailable` is false, so the driver's enum choices are the available ones.
+- XML loaded with `load_xml_from_string`, from a `local:` URL (NUL-padded, or zipped), works with a `genapi.AbstractPort` subclass passed to `connect()`.
+- `gentl.BufferToken` accepts a `bytearray`.
+
+Not yet checked against a real producer: the stream lifecycle (announce, queue, start, events, flush, revoke), `TLParamsLocked`, the `StreamBufferHandlingMode` node on IDS's data stream, `timestamp_ns`, and which exception a camera held elsewhere raises. The hardware run (`tests/test_gentl_hardware.py`) settles these.
+
 ## 4. IDS peak GenTL producer
 
 - **Current version:** IDS switched to year.month numbering. **IDS peak 26.06** is current, with the U3V Transport Layer at **2.0.0.0**. The previous release was 2.21 (U3V TL 1.22.0.0). [V] (https://en.ids-imaging.com/files/downloads/ids-peak/readme/ids-peak-linux-readme-26.06_EN.html and the `-windows-` equivalent)

@@ -29,6 +29,7 @@ BACKENDS: tuple[Backend, ...] = (
     Backend("acroname", "educelab.devices.hubs.acroname", "AcronameHub"),
     Backend("aravis", "educelab.devices.cameras.aravis", "AravisCamera"),
     Backend("foldio360", "educelab.devices.stages.foldio360", "Foldio360"),
+    Backend("gentl", "educelab.devices.cameras.gentl", "GenTLCamera"),
     Backend("gphoto2", "educelab.devices.cameras.gphoto2", "GPhoto2Camera"),
     Backend("misha", "educelab.devices.lights.misha", "MishaLight"),
     Backend("spinnaker", "educelab.devices.cameras.spinnaker", "SpinnakerCamera"),

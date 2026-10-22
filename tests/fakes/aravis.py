@@ -23,19 +23,9 @@ from collections import deque
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from fakes.genicam import FakeCamera, FakeCameraError, FakeFrame
+from fakes.genicam import PFNC, FakeCamera, FakeCameraError, FakeFrame
 
 __all__ = ["PFNC", "FakeArvBuffer", "FakeArvCamera", "FakeArvStream", "FakeRepository"]
-
-# PFNC codes, as in Aravis's arvenums.h (ARV_PIXEL_FORMAT_*).
-PFNC = {
-    "Mono8": 0x01080001,
-    "Mono16": 0x01100007,
-    "RGB8": 0x02180014,
-    "BayerRG8": 0x01080009,
-    "BayerRG16": 0x0110002F,
-    "Mono12Packed": 0x010C0006,
-}
 
 
 class GLibError(Exception):

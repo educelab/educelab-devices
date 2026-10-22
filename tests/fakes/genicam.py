@@ -27,6 +27,7 @@ from educelab.devices.device import DeviceInfo
 from educelab.devices.errors import DeviceBusy, DeviceError, DeviceTimeout
 
 __all__ = [
+    "PFNC",
     "FakeBackend",
     "FakeBuffer",
     "FakeCamera",
@@ -60,6 +61,17 @@ LAYOUTS: dict[str, tuple[type[np.unsignedinteger[Any]], int]] = {
     "BayerRG8": (np.uint8, 1),
     "BayerRG16": (np.uint16, 1),
     "Mono12Packed": (np.uint8, 1),
+}
+
+
+# PFNC codes of the formats above, for library fakes that report numbers.
+PFNC = {
+    "Mono8": 0x01080001,
+    "Mono16": 0x01100007,
+    "RGB8": 0x02180014,
+    "BayerRG8": 0x01080009,
+    "BayerRG16": 0x0110002F,
+    "Mono12Packed": 0x010C0006,
 }
 
 

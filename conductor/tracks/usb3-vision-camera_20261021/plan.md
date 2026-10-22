@@ -86,15 +86,25 @@ Settle the open choices and the seam first. Then move the Spinnaker driver onto 
 
 ### Tasks
 
-- [~] Task 4.1: Build a fake for the chosen library (Harvesters or `genicam`), covering producer loading, discovery, the node map, buffers, and error codes.
-- [ ] Task 4.2: Write tests for the lazy import, the install hint, and a missing producer (`GENICAM_GENTL64_PATH`); implement.
-- [ ] Task 4.3: Write tests for discovery, open/close, the stream, and error mapping; implement.
-- [ ] Task 4.4: Run the contract suites against the fake.
-- [ ] Task 4.5: Add hardware tests.
+- [x] Task 4.1: Build a fake for the chosen library (Harvesters or `genicam`), covering producer loading, discovery, the node map, buffers, and error codes.
+- [x] Task 4.2: Write tests for the lazy import, the install hint, and a missing producer (`GENICAM_GENTL64_PATH`); implement.
+- [x] Task 4.3: Write tests for discovery, open/close, the stream, and error mapping; implement.
+- [x] Task 4.4: Run the contract suites against the fake.
+- [x] Task 4.5: Add hardware tests.
+  - The GenTL backend calls `genicam` directly:
+    - One shared producer per `.cti`, reference-counted, found through `GENICAM_GENTL64_PATH` or passed as `producer=`. A missing or unloadable producer raises `ImportError` with the steps to fix it.
+    - The camera's XML is fetched from its port (`local:` padded or zipped, or `file:`).
+    - Buffers are announced on start and revoked on stop. `TLParamsLocked` is held while streaming, and the camera's `AcquisitionStart`/`AcquisitionStop` are executed.
+    - The stream is set to `NewestOnly` when its node map has the mode, and older frames are drained anyway.
+    - Waits are cut into 100 ms slices (harvesters #508).
+  - `tests/test_gentl_library.py` drives the node-map code through real `genapi` 1.6.0 with a hand-written camera XML. It skips without `genicam`. Checked under Python 3.12: `symbolics` leaves out unavailable entries, and locks make nodes read-only.
+  - The hardware checks are now shared: `tests/contracts/genicam_hardware.py` (`GenICamHardwareTests`) is subclassed by `test_aravis_hardware.py` (which adds the arrival-timing check) and by `test_gentl_hardware.py` (`GENTL_SERIAL`).
+  - `[gentl]` = `genicam>=1.6` was added to `pyproject.toml` now (part of Task 5.3), because the driver's install hint names it. It is included in `[all]`.
 
 ### Verification
 
 - [ ] CI is green.
+- [x] Under Python 3.12, the full suite and the real-`genapi` node-map test pass (2026-10-22).
 - [ ] IDS hardware tests pass on Linux through IDS peak, and on Windows if a Windows machine is available. Otherwise the Windows check is recorded as outstanding.
 
 ## Phase 5: CLI, docs and hardware checks

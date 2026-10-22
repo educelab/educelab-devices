@@ -23,6 +23,7 @@ from typing import Any, Literal
 import numpy as np
 import numpy.typing as npt
 
+from educelab.devices.cameras import _genicam
 from educelab.devices.cameras._genicam import BufferStatus
 from educelab.devices.device import DeviceInfo
 from educelab.devices.errors import DeviceBusy, DeviceError, DeviceTimeout
@@ -176,7 +177,8 @@ class FakeCamera:
         width: Image width in pixels.
         height: Image height in pixels.
         buffer_count: Buffers in the stream; grabs time out once all are held.
-        clock: Host clock, in seconds since the epoch.
+        clock: Host clock, in seconds since the epoch. Defaults to the
+            core's `host_time()`, which is fine-grained on every platform.
         uptime: Seconds the camera's timestamp counter has been running.
         timestamp_node: ``"Timestamp"`` or the older ``"TimestampLatchValue"``.
         exposure_node: ``"ExposureTime"`` or the older ``"ExposureTimeAbs"``.
@@ -214,7 +216,7 @@ class FakeCamera:
         width: int = 8,
         height: int = 6,
         buffer_count: int = 10,
-        clock: Callable[[], float] = time.time,
+        clock: Callable[[], float] | None = None,
         uptime: float = 1000.0,
         timestamp_node: str = "Timestamp",
         exposure_node: str = "ExposureTime",
@@ -239,8 +241,8 @@ class FakeCamera:
         self.width = width
         self.height = height
         self.buffer_count = buffer_count
-        self.clock = clock
-        self.device_epoch = clock() - uptime
+        self.clock = clock or (lambda: _genicam.host_time())
+        self.device_epoch = self.clock() - uptime
         self.timestamp_node = timestamp_node
         self.exposure_node = exposure_node
         self.attached = True
@@ -558,7 +560,7 @@ class FakeCamera:
             arrival_ns,
         )
         self.held.append(frame)
-        self.frame_handed_out_at = time.monotonic()
+        self.frame_handed_out_at = time.perf_counter()
         return frame
 
     # --- Internals ----------------------------------------------------------------
@@ -592,7 +594,7 @@ class FakeCamera:
                 "access", f"camera {self.serial} isn't acquiring in trigger mode"
             )
         self.trigger_calls += 1
-        if time.monotonic() - self.frame_handed_out_at < self.busy_after_frame:
+        if time.perf_counter() - self.frame_handed_out_at < self.busy_after_frame:
             self.ignored_while_busy += 1
         elif self.ignore_triggers:
             self.ignore_triggers -= 1

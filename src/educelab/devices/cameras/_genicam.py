@@ -572,10 +572,10 @@ class GenICamCamera(FrameCamera):
         """
         conn = self._connection
         exposure = self._exposure() or 0.0
-        deadline = time.monotonic() + self.capture_timeout
+        deadline = time.perf_counter() + self.capture_timeout
         fired = 0
-        while (remaining := deadline - time.monotonic()) > 0:
-            started = time.monotonic()
+        while (remaining := deadline - time.perf_counter()) > 0:
+            started = time.perf_counter()
             self._fire()
             fired += 1
             wait = min(remaining, exposure + _PRIME_WAIT_S)
@@ -583,8 +583,8 @@ class GenICamCamera(FrameCamera):
                 buffer = self._call("get a frame", functools.partial(conn.grab, wait))
             except DeviceTimeout:
                 continue
-            self._last_frame_at = time.monotonic()
-            self._trigger_turnaround = time.monotonic() - started
+            self._last_frame_at = time.perf_counter()
+            self._trigger_turnaround = time.perf_counter() - started
             self._call("release a frame", buffer.release)
             self._delivered = True
             logger.info(
@@ -632,8 +632,8 @@ class GenICamCamera(FrameCamera):
         self._timestamp_source = None
         if self._software_trigger:
             self._discard_waiting_frames()
-        deadline = time.monotonic() + self.capture_timeout
-        while (remaining := deadline - time.monotonic()) > 0:
+        deadline = time.perf_counter() + self.capture_timeout
+        while (remaining := deadline - time.perf_counter()) > 0:
             if self._software_trigger:
                 self._fire()
             buffer = self._next_buffer(remaining)
@@ -885,7 +885,7 @@ class GenICamCamera(FrameCamera):
         and the next one taken until ``timeout`` runs out; the timestamp offset
         is re-measured after every `RETRIES_BEFORE_REMEASURE` stale frames.
         """
-        deadline = time.monotonic() + timeout
+        deadline = time.perf_counter() + timeout
         if not_before is not None:
             if self._timestamp_offset is None:
                 raise DeviceError(
@@ -931,7 +931,7 @@ class GenICamCamera(FrameCamera):
         stale = incomplete = retriggers = 0
         remeasured = False
         while True:
-            remaining = deadline - time.monotonic()
+            remaining = deadline - time.perf_counter()
             if remaining <= 0:
                 raise DeviceTimeout(
                     f"{self!r}: no usable frame in {timeout:g} s "
@@ -998,14 +998,14 @@ class GenICamCamera(FrameCamera):
             error = DeviceTimeout(f"{exc} ({self._no_frame_hint})")
         else:
             self._delivered = True
-            self._last_frame_at = time.monotonic()
+            self._last_frame_at = time.perf_counter()
             return buffer
         raise error
 
     def _fire(self) -> float:
         """Execute ``TriggerSoftware``; returns the host time just before."""
         conn = self._connection
-        settle = self._last_frame_at + _TRIGGER_SETTLE_S - time.monotonic()
+        settle = self._last_frame_at + _TRIGGER_SETTLE_S - time.perf_counter()
         if settle > 0:
             time.sleep(settle)
         fired_at = host_time()
@@ -1021,7 +1021,7 @@ class GenICamCamera(FrameCamera):
                 buffer = self._call("discard a waiting frame", lambda: conn.grab(0))
             except DeviceTimeout:
                 return
-            self._last_frame_at = time.monotonic()
+            self._last_frame_at = time.perf_counter()
             self._call("release a frame", buffer.release)
             logger.debug("%r: discarded a frame from before the trigger", self)
 

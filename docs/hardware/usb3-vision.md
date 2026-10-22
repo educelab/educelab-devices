@@ -34,7 +34,7 @@ Behaviour the drivers add or change, and why. Each point was verified on the har
 - Captures are newest-only and honour `not_before`, as with `SpinnakerCamera`; stale and incomplete frames are dropped and counted in the metadata.
 - Without a timestamp latch, the device-to-host offset comes from frame arrivals (Aravis only), and frames a camera stamps before their trigger are dated by the trigger (IDS).
 - A software trigger waits until 10 ms after the last frame, because the IDS camera ignores triggers for about 3 ms after one.
-- Host time comes from `host_time()`: `time.time()` where that is fine-grained, and otherwise `time.perf_counter()` lined up with the wall clock at one of its ticks and again every minute. Before Python 3.13, `time.time()` on Windows ticks every 15.6 ms, which threw the latched timestamp offset off by up to 8 ms. See the Windows run below.
+- Host time comes from `host_time()`: `time.time()` where that is fine-grained, and otherwise `time.perf_counter()` lined up with the wall clock at one of its ticks and again every minute. Before Python 3.13, `time.time()` on Windows ticks every 15.6 ms, which threw the latched timestamp offset off by up to 8 ms. See the Windows run below. Short intervals (trigger turnaround, the settle wait) use `time.perf_counter()`, since `time.monotonic()` ticks every 15.6 ms there too.
 - `ExposureTimeAbs` stands in for `ExposureTime`, and `TimestampLatchValue` for `Timestamp`, on cameras with the older names. `AcquisitionMode`, `ExposureAuto`, `GainAuto` and the throughput nodes are optional.
 - Mono10g40IDS is unpacked to `uint16`; packed formats the core can't unpack (e.g. Mono12Packed) come back as raw bytes.
 
@@ -164,8 +164,8 @@ Loading it makes genicam print five lines such as "GenTL producer does not imple
 
 - **Coarse clock.** The timestamp offset spread over 5 measurements was 8.2 ms, against 2–35 µs on the Mac: `test_timestamp_offset_is_stable` failed. Python 3.12's `time.time()` on Windows ticks every 15.6 ms, and the latch measurement read it either side of each latch.
 - **Stale triggered frames, from the same cause.** In `el-devices genicam --trigger software`, every one of 20 captures dropped its first frame as stale and took the next: exposures began a median 77 ms after the request (61–146 ms in the hardware test), against 2–3 ms on the Mac. An offset several milliseconds off dates a triggered frame more than the 1 ms tolerance before its trigger.
-- The driver now reads host time from `host_time()` (see [How the drivers differ](#how-the-drivers-differ-from-aravis-and-gentl)). **Not yet rerun** on Windows.
-- **Other results.** Busy detection, reopening, pixel formats (Mono8 and Mono16), throughput limit and newest-only all passed. 300 `not_before` captures met 563 stale frames, at 13.4 captures per second. Switching to software trigger took 1.23 s, with a 47 ms turnaround. genapi refused an out-of-range exposure.
+- The driver now reads host time from `host_time()`, and times short intervals with `perf_counter()` (see [How the drivers differ](#how-the-drivers-differ-from-aravis-and-gentl)). The unit tests pass under a simulated 15.6 ms clock. **Not yet rerun** on Windows hardware.
+- **Other results.** Busy detection, reopening, pixel formats (Mono8 and Mono16), throughput limit and newest-only all passed. 300 `not_before` captures met 563 stale frames, at 13.4 captures per second. Switching to software trigger took 1.23 s, with a "47 ms" turnaround: exactly three ticks of `time.monotonic()`, which the driver then used to time it. genapi refused an out-of-range exposure.
 - **Serial and address.** `discover()` lists the FLIR serial (`20305122`) at an address like `USB\VID_1E10&PID_3300&MI_00\7&C357BFF&0&0000_0`.
 
 ### 2026-10-22, Linux (Fedora, arm64), GenTL

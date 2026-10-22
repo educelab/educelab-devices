@@ -248,9 +248,11 @@ def test_triggered_frames_stamped_before_their_trigger_are_dated_by_it():
     with GenICamCamera(MONO, backend) as camera:
         camera.set_setting(TRIGGER, "Software")
         time.sleep(0.01)
-        request = datetime.now(UTC)
+        # The host clock, not datetime.now(): on Windows before Python 3.13 that
+        # ticks every 15.6 ms, so done could read earlier than the trigger.
+        request = datetime.fromtimestamp(_genicam.host_time(), UTC)
         frame = camera.capture_frame(not_before=request)
-        done = datetime.now(UTC)
+        done = datetime.fromtimestamp(_genicam.host_time(), UTC)
     assert frame.metadata["stale_frames"] == 0
     assert frame.metadata["retriggers"] == 0
     assert request <= frame.timestamp <= done

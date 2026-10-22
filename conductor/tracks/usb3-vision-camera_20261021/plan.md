@@ -55,7 +55,7 @@ Settle the open choices and the seam first. Then move the Spinnaker driver onto 
 ### Verification
 
 - [x] Every existing Spinnaker unit and contract test passes unmodified.
-- [ ] `pytest -m hardware` passes on a CM3-U3-50S5M. Outstanding: no PySpin or camera on the dev machine; the maintainer chose to continue to Phase 3 (2026-10-22).
+- [x] `pytest -m hardware` passes on a CM3-U3-50S5M: 16 of 16 through Spinnaker on 2026-10-22 (spinnaker.md, Last run).
 - [x] `docs/hardware/spinnaker.md` is unchanged except for links to the core.
 
 ## Phase 3: Aravis backend (Linux, macOS)
@@ -79,8 +79,8 @@ Settle the open choices and the seam first. Then move the Spinnaker driver onto 
 
 - [ ] CI is green.
 - [x] Real Aravis 0.8.36 on macOS, without a camera (2026-10-22). The drift tests pass, and `tests/test_aravis_library.py` drives `AravisCamera` through Aravis's simulated camera. This found two changes: falling back to `ExposureTimeAbs`, and skipping the 1 s device-list update when reopening.
-- [ ] IDS U3-36P0XCP-M-GL hardware tests pass on macOS and Linux.
-- [ ] The rolling-shutter timestamp behaviour is checked.
+- [ ] IDS U3-36P0XCP-M-GL hardware tests pass on macOS and Linux. macOS passes (2026-10-22); Linux not yet run.
+- [ ] The rolling-shutter timestamp behaviour is checked. Trigger mode is settled (the stamp marks when the camera is ready, so frames are dated by their trigger); free-running is still unknown, and ids-u3-36p0xcp.md gives the measurement.
 
 ## Phase 4: GenTL backend (Windows, Linux)
 
@@ -122,7 +122,7 @@ Made after the first runs on the IDS U3-36PxXCP-M and CM3-U3-50S5Ms; details are
 - [x] Once open, `info.serial_number` is the camera's own `DeviceSerialNumber` (option 1). The USB serial stays available through `discover()`.
 - [x] Cameras without a timestamp latch take the offset from frame arrivals where the library reports them (Aravis). Cameras report `timestamp_source`, and frames carry it in `metadata["timestamp_source"]`.
 - [x] Deviation from the spec, which ruled out packed formats: Mono10g40IDS is unpacked to `uint16` (values 0–1023). Every frame now carries `metadata["bit_depth"]`, and previews scale by it.
-- [ ] Document `bit_depth`, `timestamp_source` and the serial behaviour for callers (Task 5.2/5.3).
+- [x] Document `bit_depth`, `timestamp_source` and the serial behaviour for callers (usb3-vision.md, The drivers; guide.md for `bit_depth`).
 
 ## Phase 5: CLI, docs and hardware checks
 
@@ -136,8 +136,10 @@ Made after the first runs on the IDS U3-36PxXCP-M and CM3-U3-50S5Ms; details are
   - The IDS U3-36P0XCP-M-GL doc: identity, nodes, timing, rolling shutter, rig steps.
   - `usb3-vision.md` now leads with the drivers, backends, how they differ from Aravis and GenTL, hazards and the manual check; the Phase 1 research follows as reference. The IDS camera's findings moved to `ids-u3-36p0xcp.md`. Still **unknown**: where the IDS stamps a free-running frame relative to its exposure (the rig was disconnected before it could be measured; the doc gives the measurement).
 - [x] Task 5.3: Update `pyproject.toml` extras, `CLAUDE.md`, `tech-stack.md`, the README, and `docs/guide.md` (only if callers can notice the difference).
-- [ ] Task 5.4: Run the manual checks on the IDS camera: Aravis on macOS and Linux, GenTL on Linux and Windows. Record the results in the hardware doc.
-- [ ] Task 5.5 (stretch): Run the CM3-U3-50S5M through both generic backends and compare it with the Spinnaker driver.
+- [~] Task 5.4: Run the manual checks on the IDS camera: Aravis on macOS and Linux, GenTL on Linux and Windows. Record the results in the hardware doc.
+  - Aravis on macOS: done and recorded (ids-u3-36p0xcp.md, Last run). Linux and Windows: not yet run.
+- [x] Task 5.5 (stretch): Run the CM3-U3-50S5M through both generic backends and compare it with the Spinnaker driver.
+  - Compared in usb3-vision.md (Hardware runs): all hardware tests pass on all three; the FLIR cameras work without PySpin.
 
 ### Verification
 

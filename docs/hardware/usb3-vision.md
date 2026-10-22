@@ -157,6 +157,23 @@ Spinnaker installs a GenTL producer on macOS, in `/usr/local/lib/spinnaker-gentl
 
 Loading it makes genicam print five lines such as "GenTL producer does not implement DSGetNumFlows" to stderr, one for each optional GenTL 1.6 function the producer lacks. They are harmless. The driver logs them at debug level instead of letting them reach the console.
 
+### CM3-U3-50S5M: three backends compared
+
+The same camera (`20298452`, firmware `1.12.3.00`) on the same Mac, Python 3.12, 2026-10-22, through each driver's hardware tests. [V] for each figure, from the runs above and `spinnaker.md` (Last run):
+
+| | `SpinnakerCamera` | `AravisCamera` | `GenTLCamera` (FLIR's producer) |
+|---|---|---|---|
+| Hardware tests | 16 of 16 | 23 of 23 | 23 of 23 |
+| Serial listed by `discover()` | `20298452` | `0135BAD4` (USB serial) | `20298452` |
+| Timestamp offset spread (5 measurements) | 35 µs | 6 µs | 2 µs |
+| 300 `not_before` captures | 600 stale, about 11.9/s | 301 stale, 17.8/s | 600 stale, 11.9/s |
+| Switching to software trigger | 0.19 s | 1.1 s | 1.27 s |
+| Trigger turnaround | 58 ms | 57 ms | 59 ms |
+| Triggered exposure start after the request | 1.8–3.3 ms | 0.7–1.0 ms (one at 57 ms) | 2.2–3.1 ms (one at 116 ms) |
+| Out-of-range exposure write | refused by the core | accepted by the camera (range check off), refused by the core | refused by genapi |
+
+The Spinnaker 11.9/s is as the GenTL run reported it ("matches Spinnaker"). So the FLIR cameras work fully without PySpin through either generic driver. Aravis's newest-only callback met half the stale frames of the other two, and captured about 50% faster; why is **unknown**.
+
 ---
 
 The numbered sections below are the research notes from Phase 1 of the `usb3-vision-camera` track (2026-10-21), kept as reference for installing and for the libraries' APIs.

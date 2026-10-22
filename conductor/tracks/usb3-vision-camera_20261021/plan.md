@@ -26,7 +26,7 @@ Settle the open choices and the seam first. Then move the Spinnaker driver onto 
   - Classes `SpinnakerCamera`, `AravisCamera`, `GenTLCamera`. `DeviceInfo.backend` is `"spinnaker"`, `"aravis"` or `"gentl"`.
   - Aravis and PyGObject are installed manually, like PySpin, with no extra.
   - CLI: `el-devices genicam --backend aravis|gentl`. The default is Aravis on Linux/macOS and GenTL on Windows.
-  - Open: whether to declare `genicam` as a `[gentl]` extra, given its non-OSI licence. Decide by Task 5.3.
+  - `genicam` becomes a `[gentl]` extra, included in `[all]` (decided 2026-10-22). Its licence isn't OSI-approved, but declaring it as an extra carries the same risk as PySpin.
 - [x] Task 1.4: Define the backend seam:
   - Node map: read/write float, int, enum, and command nodes, with their ranges and access mode.
   - Stream: start/stop, grab with a timeout, buffer status, device timestamp, release.
@@ -44,7 +44,7 @@ Settle the open choices and the seam first. Then move the Spinnaker driver onto 
 
 ### Tasks
 
-- [ ] Task 2.1: Write core tests against the fake backend. They cover settings (units, snap/clamp, auto modes), pausing acquisition for some writes, software trigger priming and re-firing, the timestamp offset, the `not_before` loop, and handling of incomplete and missing-trailer frames.
+- [~] Task 2.1: Write core tests against the fake backend. They cover settings (units, snap/clamp, auto modes), pausing acquisition for some writes, software trigger priming and re-firing, the timestamp offset, the `not_before` loop, and handling of incomplete and missing-trailer frames.
 - [ ] Task 2.2: Move that logic out of `spinnaker.py` into the core.
 - [ ] Task 2.3: Implement the PySpin backend on the seam: `System` lifecycle, node access, image status, and exception codes.
 - [ ] Task 2.4: Add probing for optional features (trigger, throughput limit, timestamp node, auto modes, `AcquisitionResultingFrameRate`). Settings for missing features are left out.

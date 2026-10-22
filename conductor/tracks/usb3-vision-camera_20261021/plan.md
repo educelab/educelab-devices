@@ -54,15 +54,15 @@ Settle the open choices and the seam first. Then move the Spinnaker driver onto 
 
 ### Verification
 
-- [ ] Every existing Spinnaker unit and contract test passes unmodified.
-- [ ] `pytest -m hardware` passes on a CM3-U3-50S5M.
-- [ ] `docs/hardware/spinnaker.md` is unchanged except for links to the core.
+- [x] Every existing Spinnaker unit and contract test passes unmodified.
+- [ ] `pytest -m hardware` passes on a CM3-U3-50S5M. Outstanding: no PySpin or camera on the dev machine; the maintainer chose to continue to Phase 3 (2026-10-22).
+- [x] `docs/hardware/spinnaker.md` is unchanged except for links to the core.
 
 ## Phase 3: Aravis backend (Linux, macOS)
 
 ### Tasks
 
-- [ ] Task 3.1: Build a fake `gi.repository.Aravis` covering discovery, the device feature API, streams and buffers with release tracking, buffer status, and timestamps.
+- [~] Task 3.1: Build a fake `gi.repository.Aravis` covering discovery, the device feature API, streams and buffers with release tracking, buffer status, and timestamps.
 - [ ] Task 3.2: Write tests for the lazy import and for the install hint that links to the per-OS steps; implement.
 - [ ] Task 3.3: Write tests for discovery and open/close by serial, including what `open()` configures; implement.
 - [ ] Task 3.4: Write tests for the stream (buffer pool, newest-only behaviour, timeouts, incomplete buffers) and error mapping (busy, not found, timeout); implement.

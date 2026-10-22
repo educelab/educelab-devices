@@ -62,12 +62,17 @@ Settle the open choices and the seam first. Then move the Spinnaker driver onto 
 
 ### Tasks
 
-- [~] Task 3.1: Build a fake `gi.repository.Aravis` covering discovery, the device feature API, streams and buffers with release tracking, buffer status, and timestamps.
-- [ ] Task 3.2: Write tests for the lazy import and for the install hint that links to the per-OS steps; implement.
-- [ ] Task 3.3: Write tests for discovery and open/close by serial, including what `open()` configures; implement.
-- [ ] Task 3.4: Write tests for the stream (buffer pool, newest-only behaviour, timeouts, incomplete buffers) and error mapping (busy, not found, timeout); implement.
-- [ ] Task 3.5: Run the `Camera`/`FrameCamera` contract suites against the fake.
-- [ ] Task 3.6: Add hardware tests, mirroring the Spinnaker set where it applies.
+- [x] Task 3.1: Build a fake `gi.repository.Aravis` covering discovery, the device feature API, streams and buffers with release tracking, buffer status, and timestamps.
+- [x] Task 3.2: Write tests for the lazy import and for the install hint that links to the per-OS steps; implement.
+- [x] Task 3.3: Write tests for discovery and open/close by serial, including what `open()` configures; implement.
+- [x] Task 3.4: Write tests for the stream (buffer pool, newest-only behaviour, timeouts, incomplete buffers) and error mapping (busy, not found, timeout); implement.
+- [x] Task 3.5: Run the `Camera`/`FrameCamera` contract suites against the fake.
+  - The Aravis backend opens by serial, turns on Aravis's range and access checks (they're off by default), and keeps a pool of `BUFFER_COUNT` buffers. It allocates a new pool when a pixel-format change alters the payload, and empties the output queue on stop. "Newest only" works by draining frames that have already arrived and pushing the older ones back. `tests/test_fake_aravis.py` checks the fake against real Aravis when it's installed.
+  - Assumed until the hardware run (Phase 3 verification):
+    - A camera that is listed but won't open is held by another process (`DeviceBusy`).
+    - `get_feature_access_mode` reflects locking (e.g. `ExposureTime` under auto).
+    - Buffer timestamps are the device counter and aren't 0.
+- [~] Task 3.6: Add hardware tests, mirroring the Spinnaker set where it applies.
 
 ### Verification
 

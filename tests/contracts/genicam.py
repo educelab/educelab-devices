@@ -224,6 +224,8 @@ class BackendContract:
         assert sim.trigger_calls == 1
 
     def test_holding_every_buffer_starves_the_stream(self, streaming, sim):
+        # Fewer than any backend's own pool, so the camera's limit is what binds.
+        sim.buffer_count = 2
         held = [streaming.grab(1.0) for _ in range(sim.buffer_count)]
         with pytest.raises(DeviceTimeout):
             streaming.grab(0.05)

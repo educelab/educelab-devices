@@ -27,6 +27,7 @@ class Backend:
 # Each driver track adds its backend here.
 BACKENDS: tuple[Backend, ...] = (
     Backend("acroname", "educelab.devices.hubs.acroname", "AcronameHub"),
+    Backend("aravis", "educelab.devices.cameras.aravis", "AravisCamera"),
     Backend("foldio360", "educelab.devices.stages.foldio360", "Foldio360"),
     Backend("gphoto2", "educelab.devices.cameras.gphoto2", "GPhoto2Camera"),
     Backend("misha", "educelab.devices.lights.misha", "MishaLight"),

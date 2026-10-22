@@ -1,5 +1,6 @@
 """Cameras: devices that capture frames or camera files."""
 
+from educelab.devices.cameras.aravis import AravisCamera
 from educelab.devices.cameras.base import (
     APERTURE,
     CANONICAL_UNITS,
@@ -31,6 +32,7 @@ __all__ = [
     "GAIN",
     "ISO",
     "PIXEL_FORMAT",
+    "AravisCamera",
     "Camera",
     "CameraFile",
     "FileCamera",

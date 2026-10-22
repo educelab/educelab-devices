@@ -86,7 +86,7 @@ Settle the open choices and the seam first. Then move the Spinnaker driver onto 
 
 ### Tasks
 
-- [ ] Task 4.1: Build a fake for the chosen library (Harvesters or `genicam`), covering producer loading, discovery, the node map, buffers, and error codes.
+- [~] Task 4.1: Build a fake for the chosen library (Harvesters or `genicam`), covering producer loading, discovery, the node map, buffers, and error codes.
 - [ ] Task 4.2: Write tests for the lazy import, the install hint, and a missing producer (`GENICAM_GENTL64_PATH`); implement.
 - [ ] Task 4.3: Write tests for discovery, open/close, the stream, and error mapping; implement.
 - [ ] Task 4.4: Run the contract suites against the fake.

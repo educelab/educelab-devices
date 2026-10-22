@@ -289,6 +289,11 @@ class FakeCamera:
             enum("TriggerMode", "Off"),
             enum("TriggerSource", "Line0", access=when_off("TriggerMode")),
             Node("TriggerSoftware", "command", access="WO", action=self._trigger),
+            # What a GenTL consumer executes on the camera itself; PySpin and
+            # Aravis do it for the driver.
+            Node("AcquisitionStart", "command", access="WO", action=self.start),
+            Node("AcquisitionStop", "command", access="WO", action=self.stop),
+            Node("TLParamsLocked", "int", 0, 0, 1, access="RW"),
             Node("TimestampLatch", "command", access="WO", action=self._latch),
             Node(
                 timestamp_node,

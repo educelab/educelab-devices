@@ -6,7 +6,7 @@ installed, as on a rig machine; CI has neither.
 
 import pytest
 
-from educelab.devices.cameras import aravis
+from educelab.devices.cameras import _genicam, aravis
 from fakes.aravis import (
     PFNC,
     FakeArvBuffer,
@@ -125,7 +125,7 @@ def test_pixel_format_codes_match_aravis(real):
         "BayerGB16": "BAYER_GB_16",
         "BayerBG16": "BAYER_BG_16",
     }
-    for code, fmt in aravis._PIXEL_FORMATS.items():
+    for code, fmt in _genicam._PFNC.items():
         assert getattr(real, f"PIXEL_FORMAT_{names[fmt]}") == code, fmt
     for fmt, code in PFNC.items():
         if fmt in names:

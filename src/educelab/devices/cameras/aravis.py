@@ -15,10 +15,14 @@ from collections.abc import Callable
 from types import ModuleType
 from typing import Any, TypeVar
 
-import numpy as np
 import numpy.typing as npt
 
-from educelab.devices.cameras._genicam import BufferStatus, GenICamCamera
+from educelab.devices.cameras._genicam import (
+    BufferStatus,
+    GenICamCamera,
+    pfnc_name,
+    shaped_pixels,
+)
 from educelab.devices.device import DeviceInfo
 from educelab.devices.errors import (
     DeviceBusy,
@@ -56,21 +60,6 @@ ARAVIS_INSTALL_HINT = (
 BUFFER_COUNT = 4
 """Buffers in each stream. A 20 MP Mono8 frame is about 20 MB, so a few is
 plenty; Aravis drops frames when none is free (usb3-vision.md, Newest only)."""
-
-# PFNC codes of the formats the core can shape, as in Aravis's arvenums.h.
-_PIXEL_FORMATS = {
-    0x01080001: "Mono8",
-    0x01100007: "Mono16",
-    0x02180014: "RGB8",
-    0x01080008: "BayerGR8",
-    0x01080009: "BayerRG8",
-    0x0108000A: "BayerGB8",
-    0x0108000B: "BayerBG8",
-    0x0110002E: "BayerGR16",
-    0x0110002F: "BayerRG16",
-    0x01100030: "BayerGB16",
-    0x01100031: "BayerBG16",
-}
 
 _DEVICE_ERROR_DOMAIN = "arv-device-error-quark"
 
@@ -359,23 +348,15 @@ class _AravisBuffer:
         return int(self._buffer.get_frame_id())
 
     def pixel_format(self) -> str:
-        code = int(self._buffer.get_image_pixel_format())
-        try:
-            return _PIXEL_FORMATS[code]
-        except KeyError:
-            raise DeviceError(f"unsupported pixel format 0x{code:08x}") from None
+        return pfnc_name(int(self._buffer.get_image_pixel_format()))
 
     def pixels(self) -> npt.NDArray[Any]:
-        fmt = self.pixel_format()
-        dtype = np.uint16 if fmt.endswith("16") else np.uint8
-        shape: tuple[int, ...] = (
-            self._buffer.get_image_height(),
+        return shaped_pixels(
+            self._buffer.get_data(),
+            self.pixel_format(),
             self._buffer.get_image_width(),
+            self._buffer.get_image_height(),
         )
-        if fmt == "RGB8":
-            shape += (3,)
-        data = self._buffer.get_data()
-        return np.frombuffer(data, dtype=dtype).reshape(shape).copy()
 
     def release(self) -> None:
         self._stream.push_buffer(self._buffer)

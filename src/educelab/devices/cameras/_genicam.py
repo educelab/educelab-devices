@@ -238,6 +238,21 @@ _PIXEL_FORMATS = frozenset(
     {"Mono8", "Mono16", "RGB8"}
     | {f"Bayer{order}{bits}" for order in ("RG", "GB", "GR", "BG") for bits in (8, 16)}
 )
+# PFNC codes of those formats, for libraries that report a buffer's format as a
+# number (Aravis, GenTL). Values from the PFNC, as in Aravis's arvenums.h.
+_PFNC = {
+    0x01080001: "Mono8",
+    0x01100007: "Mono16",
+    0x02180014: "RGB8",
+    0x01080008: "BayerGR8",
+    0x01080009: "BayerRG8",
+    0x0108000A: "BayerGB8",
+    0x0108000B: "BayerBG8",
+    0x0110002E: "BayerGR16",
+    0x0110002F: "BayerRG16",
+    0x01100030: "BayerGB16",
+    0x01100031: "BayerBG16",
+}
 # "Once" isn't offered: it reverts to "Off" by itself, so it never reads back.
 _AUTO_MODES = ("Off", "Continuous")
 _US_PER_S = 1e6
@@ -958,6 +973,30 @@ class _Taken:
     device_timestamp_ns: int
     frame_id: int
     missing_trailer: bool
+
+
+def pfnc_name(code: int) -> str:
+    """The SFNC name of a pixel format the core can shape, from its PFNC code.
+
+    Raises:
+        DeviceError: The format isn't one the core can shape.
+    """
+    try:
+        return _PFNC[code]
+    except KeyError:
+        raise DeviceError(f"unsupported pixel format 0x{code:08x}") from None
+
+
+def shaped_pixels(
+    data: Any, pixel_format: str, width: int, height: int
+) -> npt.NDArray[Any]:
+    """A copy of a frame's bytes as an array shaped by its pixel format."""
+    dtype = np.uint16 if pixel_format.endswith("16") else np.uint8
+    shape: tuple[int, ...] = (height, width)
+    if pixel_format == "RGB8":
+        shape += (3,)
+    count = math.prod(shape)
+    return np.frombuffer(data, dtype=dtype, count=count).reshape(shape).copy()
 
 
 def _snap(value: float, low: int, high: int, inc: int) -> int:

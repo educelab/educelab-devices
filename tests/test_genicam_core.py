@@ -241,6 +241,48 @@ def test_remeasuring_from_arrivals_follows_a_jump():
         assert camera.timestamp_offset == pytest.approx(expected, abs=1e-6)
 
 
+def test_triggered_frames_stamped_before_their_trigger_are_dated_by_it():
+    # The IDS U3-36PxXCP stamps a frame when it's ready for it, before the
+    # trigger that exposes it (usb3-vision.md, Hardware runs).
+    backend = arrival_only(ready_after=0.001)
+    with GenICamCamera(MONO, backend) as camera:
+        camera.set_setting(TRIGGER, "Software")
+        time.sleep(0.01)
+        request = datetime.now(UTC)
+        frame = camera.capture_frame(not_before=request)
+        done = datetime.now(UTC)
+    assert frame.metadata["stale_frames"] == 0
+    assert frame.metadata["retriggers"] == 0
+    assert request <= frame.timestamp <= done
+    assert frame.metadata["timestamp_source"] == "trigger"
+
+
+def test_triggers_wait_for_a_camera_busy_just_after_a_frame():
+    # The IDS U3-36PxXCP ignores triggers for about 3 ms after a frame.
+    backend = only(busy_after_frame=0.005)
+    fake = backend.cameras[0]
+    with GenICamCamera(MONO, backend) as camera:
+        camera.set_setting(TRIGGER, "Software")
+        frames = [camera.capture_frame() for _ in range(3)]
+    assert fake.ignored_while_busy == 0
+    assert all(f.metadata["retriggers"] == 0 for f in frames)
+
+
+def test_a_frame_stamped_before_an_older_trigger_is_still_stale(monkeypatch):
+    backend = arrival_only(ready_after=0.001)
+    with GenICamCamera(MONO, backend) as camera:
+        camera.set_setting(TRIGGER, "Software")
+        time.sleep(0.01)
+        camera.trigger()
+        time.sleep(0.01)
+        request = datetime.now(UTC)
+        # Its frame is still on the way, so discarding waiting frames misses it.
+        monkeypatch.setattr(camera, "_discard_waiting_frames", lambda: None)
+        frame = camera.capture_frame(not_before=request)
+    assert frame.metadata["stale_frames"] == 1
+    assert frame.timestamp >= request
+
+
 def test_with_neither_a_latch_nor_arrivals_there_is_no_source():
     with GenICamCamera(MONO, only(without=["TimestampLatch"])) as camera:
         assert camera.timestamp_source is None

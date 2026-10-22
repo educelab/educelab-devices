@@ -291,6 +291,12 @@ _PRIME_WAIT_S = 1.0
 _RETRIGGER_TURNAROUNDS = 3
 # More than any stream's buffer pool, so discarding waiting frames always ends.
 _MAX_DISCARDED = 100
+# A software trigger waits this long after the last frame: the IDS U3-36PxXCP
+# ignores triggers for about 3 ms after one (usb3-vision.md, Hardware runs).
+_TRIGGER_SETTLE_S = 0.01
+# Recent software triggers kept for dating frames by trigger; more than a
+# frame can be in flight across.
+_FIRES_KEPT = 16
 
 
 class GenICamCamera(FrameCamera):
@@ -342,6 +348,8 @@ class GenICamCamera(FrameCamera):
         self._delivered = False
         self._software_trigger = False
         self._fired_at: float | None = None
+        self._fires: deque[float] = deque(maxlen=_FIRES_KEPT)
+        self._last_frame_at = -math.inf
         self._trigger_turnaround: float | None = None
 
     def __repr__(self) -> str:
@@ -377,6 +385,10 @@ class GenICamCamera(FrameCamera):
         timestamp latch, ``"arrival"`` from when frames reach the host (for
         cameras without a latch; about a millisecond less exact), or ``None``
         if it can't be.
+
+        A frame's ``metadata["timestamp_source"]`` is ``"trigger"`` instead when
+        it was dated by the software trigger that exposed it, because the
+        camera stamped it before that trigger.
         """
         return self._timestamp_source
 
@@ -508,6 +520,7 @@ class GenICamCamera(FrameCamera):
                 buffer = self._call("get a frame", functools.partial(conn.grab, wait))
             except DeviceTimeout:
                 continue
+            self._last_frame_at = time.monotonic()
             self._trigger_turnaround = time.monotonic() - started
             self._call("release a frame", buffer.release)
             self._delivered = True
@@ -890,7 +903,7 @@ class GenICamCamera(FrameCamera):
                     "retriggers": retriggers,
                     "missing_trailer": taken.missing_trailer,
                     "timestamp_remeasured": remeasured,
-                    "timestamp_source": self._timestamp_source,
+                    "timestamp_source": taken.timestamp_source,
                     "bit_depth": bit_depth(taken.pixel_format),
                 }
                 return Frame(
@@ -921,14 +934,19 @@ class GenICamCamera(FrameCamera):
             error = DeviceTimeout(f"{exc} ({self._no_frame_hint})")
         else:
             self._delivered = True
+            self._last_frame_at = time.monotonic()
             return buffer
         raise error
 
     def _fire(self) -> float:
         """Execute ``TriggerSoftware``; returns the host time just before."""
         conn = self._connection
+        settle = self._last_frame_at + _TRIGGER_SETTLE_S - time.monotonic()
+        if settle > 0:
+            time.sleep(settle)
         fired_at = time.time()
         self._call("fire a software trigger", lambda: conn.execute("TriggerSoftware"))
+        self._fires.append(fired_at)
         return fired_at
 
     def _discard_waiting_frames(self) -> None:
@@ -939,6 +957,7 @@ class GenICamCamera(FrameCamera):
                 buffer = self._call("discard a waiting frame", lambda: conn.grab(0))
             except DeviceTimeout:
                 return
+            self._last_frame_at = time.monotonic()
             self._call("release a frame", buffer.release)
             logger.debug("%r: discarded a frame from before the trigger", self)
 
@@ -957,11 +976,16 @@ class GenICamCamera(FrameCamera):
         # Accepted as complete, as in pgs-scan dev (assumed; spinnaker.md).
         missing_trailer = status is BufferStatus.MISSING_TRAILER
         device_ns = buffer.device_timestamp_ns()
-        if self._timestamp_source == "arrival":
+        source = self._timestamp_source
+        triggered_at = None
+        if source == "arrival":
             arrival = buffer.host_timestamp_ns()
             if arrival is not None:
                 self._note_arrival(arrival, device_ns)
-        if self._timestamp_offset is None:
+                triggered_at = self._first_fire_after(arrival / 1e9)
+        if triggered_at is not None:
+            host_time, source = triggered_at, "trigger"
+        elif self._timestamp_offset is None:
             host_time = time.time() - exposure
         else:
             host_time = self._timestamp_offset + device_ns / 1e9 - exposure
@@ -976,7 +1000,20 @@ class GenICamCamera(FrameCamera):
             device_timestamp_ns=device_ns,
             frame_id=buffer.frame_id(),
             missing_trailer=missing_trailer,
+            timestamp_source=source,
         )
+
+    def _first_fire_after(self, arrival: float) -> float | None:
+        """When the trigger that exposed a frame arriving at ``arrival`` fired,
+        for a camera that stamps a frame before its trigger; None otherwise.
+
+        Some cameras send a frame's leader, and so its stamp and arrival time,
+        once ready for it, before the trigger (the IDS U3-36PxXCP; usb3-vision.md).
+        The first trigger fired after that is the one that exposed it.
+        """
+        if not self._software_trigger:
+            return None
+        return next((t for t in self._fires if t >= arrival), None)
 
     # --- Node access -------------------------------------------------------------
 
@@ -1053,6 +1090,7 @@ class _Taken:
     device_timestamp_ns: int
     frame_id: int
     missing_trailer: bool
+    timestamp_source: str | None
 
 
 def _times(buffer: Buffer) -> tuple[BufferStatus, int | None, int]:

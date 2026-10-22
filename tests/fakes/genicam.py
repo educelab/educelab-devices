@@ -13,6 +13,7 @@ stopped, and once every buffer is held a grab times out. Released buffers'
 pixels are overwritten, so arrays used without a copy show garbage.
 """
 
+import math
 import time
 from collections import deque
 from collections.abc import Callable, Iterable
@@ -189,6 +190,12 @@ class FakeCamera:
         without: Names of nodes the camera lacks, e.g. ``["TriggerSoftware"]``.
         arrival_latency: Seconds from a frame's device timestamp to the host
             seeing it arrive, or None if the library reports no arrival time.
+        ready_after: In trigger mode, stamp each frame this many seconds after
+            the previous frame's trigger, when the camera is ready for it, as
+            the IDS U3-36PxXCP stamps a frame's leader before its own trigger.
+            None stamps frames at the end of their exposure.
+        busy_after_frame: Seconds after handing out a frame during which the
+            camera ignores triggers, as the IDS U3-36PxXCP does for about 3 ms.
     """
 
     # Made-up figures, roughly a USB3 camera; nothing tests them against hardware.
@@ -218,8 +225,14 @@ class FakeCamera:
         throughput_while_streaming: bool = True,
         without: Iterable[str] = (),
         arrival_latency: float | None = None,
+        ready_after: float | None = None,
+        busy_after_frame: float = 0.0,
     ) -> None:
         self.arrival_latency = arrival_latency
+        self.ready_after = ready_after
+        self.last_trigger_ns: int | None = None
+        self.busy_after_frame = busy_after_frame
+        self.frame_handed_out_at = -math.inf
         self.serial = serial
         self.model = model
         self.vendor = vendor
@@ -245,6 +258,7 @@ class FakeCamera:
         # Triggers to ignore before answering again, as a real camera ignores
         # one it isn't ready for.
         self.ignore_triggers = 0
+        self.ignored_while_busy = 0
         self.respond_to_triggers = True
         # Operations to fail, e.g. {"write Gain": FakeCameraError(...)}. Keys are
         # "read <node>", "write <node>", "execute <node>", "start", "stop", "close".
@@ -513,6 +527,11 @@ class FakeCamera:
             fresh = self.device_time_ns()
         spec = self.queue.popleft() if self.queue else FrameSpec()
         timestamp = spec.timestamp_ns
+        if self.triggered and not waiting:
+            previous, self.last_trigger_ns = self.last_trigger_ns, fresh
+            if timestamp is None and self.ready_after is not None:
+                ready = fresh if previous is None else previous
+                timestamp = ready + round(self.ready_after * 1e9)
         if timestamp is None:
             exposure_us = (
                 self.get(self.exposure_node) if self.has(self.exposure_node) else 0
@@ -539,6 +558,7 @@ class FakeCamera:
             arrival_ns,
         )
         self.held.append(frame)
+        self.frame_handed_out_at = time.monotonic()
         return frame
 
     # --- Internals ----------------------------------------------------------------
@@ -572,7 +592,9 @@ class FakeCamera:
                 "access", f"camera {self.serial} isn't acquiring in trigger mode"
             )
         self.trigger_calls += 1
-        if self.ignore_triggers:
+        if time.monotonic() - self.frame_handed_out_at < self.busy_after_frame:
+            self.ignored_while_busy += 1
+        elif self.ignore_triggers:
             self.ignore_triggers -= 1
         elif self.respond_to_triggers:
             self.pending_triggers.append(self.device_time_ns())

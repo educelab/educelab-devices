@@ -101,6 +101,17 @@ def test_a_camera_without_auto_exposure_takes_an_exposure(monkeypatch, capsys):
     assert "exposure 2 ms" in capsys.readouterr().out
 
 
+def test_reports_frames_dated_by_their_trigger(monkeypatch, capsys):
+    sim = FakeCamera(MONO, without={"TimestampLatch"}, ready_after=0.0)
+    repository = FakeRepository([sim])
+    monkeypatch.setattr(aravis, "load_aravis", lambda: repository)
+    args = ["--frames", "2", "--trigger", "software"]
+    assert main(["genicam", "--backend", "aravis", *args]) == 0
+    out = capsys.readouterr().out
+    assert "2 frame(s) dated by their trigger" in out
+    assert "dropped 0 stale" in out
+
+
 def test_reports_dropped_frames(repository, capsys):
     sim = repository.cameras[0]
     sim.queue_frames(FrameSpec(timestamp_ns=sim.device_time_ns() - 10**9))

@@ -130,7 +130,7 @@ Made after the first runs on the IDS U3-36PxXCP-M and CM3-U3-50S5Ms; details are
 
 - [x] Task 5.1: Add the `el-devices` subcommand with backend selection: list cameras, capture N frames, and a latency benchmark, matching `el-devices spinnaker`.
   - `el-devices genicam --backend aravis|gentl` shares its benchmark with `el-devices spinnaker` through `app/_capture.py`. It reports each frame's bit depth and how the timestamp offset was measured, and counts packed pixels as sent when estimating USB bandwidth.
-  - **Open (IDS, software trigger):** the camera sends each frame's leader, with its device timestamp, as soon as the previous frame ends, before the trigger that exposes it. Arrival timing therefore dates triggered frames too early, so every capture drops its first frame as stale and fires again (about 660 ms per capture instead of 130 ms). Captures stay newer than `not_before`, but their timestamps are early. A fix is awaiting the maintainer's decision.
+  - **IDS, software trigger (fixed):** the camera sends each frame's leader, with its device timestamp, as soon as the previous frame ends, before the trigger that exposes it, and ignores triggers for about 3 ms after a frame. Frames timed by arrival are now dated by the first trigger fired after their leader (`timestamp_source = "trigger"`), and triggers wait 10 ms after the last frame. Captures went from about 660 ms to 132 ms. Approved by the maintainer; details in usb3-vision.md.
 - [ ] Task 5.2: Write the hardware docs:
   - USB3 Vision backends: install per OS, how the driver differs from Aravis and GenTL, hazards.
   - The IDS U3-36P0XCP-M-GL doc: identity, nodes, timing, rolling shutter, rig steps.

@@ -300,6 +300,18 @@ The lab Mac with five Chameleon3 CM3-U3-50S5M cameras and one IDS camera, via `t
   - Switching to software trigger took 0.38 s.
 - **All six cameras at once.** Streaming the six cameras together through the one Acroname hub, uncapped, gave this camera only `size-mismatch` frames. The demand is about 5 × 181 MB/s plus 162 MB/s on one USB 3 upstream link, the saturation `spinnaker.md` describes for uncapped FLIR runs.
 
+**IDS U3-36PxXCP-M, software trigger** (2026-10-22, Python 3.12, firmware `3.90.27889`; `el-devices genicam` and Aravis's packet log). [V] for each point below, on this unit:
+
+- **The leader comes before the trigger.** The camera sends the next frame's leader, with its device timestamp, about 1 ms after the previous frame's trailer, before any trigger. The pixel data follows only when a trigger is accepted, about 130 ms later for a 19.6 MB Mono8 frame at 162 MB/s. So a triggered frame's stamp and arrival time mark when the camera became ready, not when it exposed.
+  - Before the fix, arrival timing dated every triggered frame before its trigger. Each capture dropped its first frame as stale and fired again, taking about 660 ms; the frame kept was dated about 270 ms before its exposure.
+  - The driver now dates a frame of a camera timed by arrival, in software-trigger mode, by the first trigger fired after its leader arrived. Frames carry `metadata["timestamp_source"] = "trigger"`. 20 triggered captures then took a median 132 ms, with no stale frames.
+  - If the camera ignores that trigger and the driver fires again, the frame is dated by the ignored trigger: early by the retry interval (exposure plus three turnarounds, about 0.4 s), but still after `not_before`.
+- **Busy just after a frame.** The camera ignores a software trigger fired within about 3 ms of a frame arriving: all of 12 at 0–2.5 ms, none of 36 at 3–50 ms except one at 4.5 ms. The driver waits until 10 ms after the last frame before firing (`_TRIGGER_SETTLE_S`). The hardware tests' 20 triggered captures then needed no second trigger, against 9 of 20 before.
+- **No other exposure timestamp.** The camera has no chunk data and no exposure-start or frame-start events. `TriggerSelector = ExposureStart` is offered, but the camera then delivered frames without being triggered.
+- **Occasional `size-mismatch` frames** (2 of 22 and 4 of 25 in two runs) with only this camera streaming. Their cause is **unknown**; the driver drops them as incomplete.
+- **Firmware.** IDS lists uEye+ firmware 3.94 with IDS peak 26.06, against this unit's 3.90. **Unknown** whether it changes the leader timing; no changelog was found. Updating needs IDS peak's tools on Linux or Windows.
+- **GenTL can't time this camera.** genicam's buffers carry no host arrival time, so without a latch `GenTLCamera` refuses `not_before` on it. Not yet tried with IDS's producer.
+
 **CM3-U3-50S5M** (serial `0135BAD4` in Aravis, `20298452` in Spinnaker; firmware `1.12.3.00`), Python 3.12 (`aravis-test-flir-1.log`): 20 of 23 passed. All 23 pass after these fixes, each verified on this unit:
 
 - **Serial numbers differ between libraries.** Aravis lists FLIR cameras by their USB serial (`0135BAD4`, also the end of the address `1E100135BAD4`), not FLIR's decimal serial number. Address a camera by the serial its own backend's `discover()` reports.

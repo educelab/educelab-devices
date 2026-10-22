@@ -125,6 +125,7 @@ class _Results:
     stamps: list[tuple[int, int]] = field(default_factory=list)
     frame_bytes: int = 0
     bit_depth: int | None = None
+    dated_by_trigger: int = 0
     saved: int = 0
     stale: int = 0
     incomplete: int = 0
@@ -301,6 +302,7 @@ def _benchmark(
         # What crossed the link: 10-bit pixels arrive packed, but unpack to uint16.
         depth = result.bit_depth or 8 * frame.pixels.itemsize
         result.frame_bytes = frame.pixels.size * depth // 8
+        result.dated_by_trigger += frame.metadata.get("timestamp_source") == "trigger"
         result.stale += frame.metadata["stale_frames"]
         result.incomplete += frame.metadata["incomplete_frames"]
         result.retriggers += frame.metadata["retriggers"]
@@ -351,6 +353,8 @@ def _report(camera: "GenICamCamera", result: _Results, frames: int) -> int:
     )
     if result.retriggers:
         print(f"  fired {result.retriggers} trigger(s) again after no frame came")
+    if result.dated_by_trigger:
+        print(f"  {result.dated_by_trigger} frame(s) dated by their trigger")
     if result.saved:
         print(f"  saved {result.saved} frame(s)")
     streamed = _streaming_rate(result.stamps, result.frame_bytes)

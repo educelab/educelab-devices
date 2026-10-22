@@ -11,7 +11,7 @@
 ## Progress
 
 - Phases: 2/5 complete
-- Tasks: 9/25 complete
+- Tasks: 15/25 complete
 
 ## Quick Links
 

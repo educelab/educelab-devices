@@ -72,7 +72,8 @@ Settle the open choices and the seam first. Then move the Spinnaker driver onto 
     - A camera that is listed but won't open is held by another process (`DeviceBusy`).
     - `get_feature_access_mode` reflects locking (e.g. `ExposureTime` under auto).
     - Buffer timestamps are the device counter and aren't 0.
-- [~] Task 3.6: Add hardware tests, mirroring the Spinnaker set where it applies.
+- [x] Task 3.6: Add hardware tests, mirroring the Spinnaker set where it applies.
+  - `tests/test_aravis_hardware.py` (`ARAVIS_SERIAL` picks the camera). Beyond the Spinnaker set, it checks each Phase 3 assumption: a second open raises `DeviceBusy`, auto exposure locks `ExposureTime`, buffer timestamps aren't 0, and Aravis's range check refuses out-of-range writes. It also prints the gap between the device's stamp and the buffer's arrival time, for the rolling-shutter question, and the newest frame's age after a pause. Run with `-s`.
 
 ### Verification
 

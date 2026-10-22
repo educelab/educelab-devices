@@ -18,7 +18,7 @@ class TestAravisHardware(GenICamHardwareTests):
 
     def test_device_timestamp_against_buffer_arrival(self, camera):
         # What moment the device stamps, relative to when the host had the whole
-        # frame. Settles the rolling-shutter question in usb3-vision.md, Timestamps.
+        # frame. Bears on the open question in ids-u3-36p0xcp.md, Timestamps.
         conn = camera._connection
         exposure = camera.setting(EXPOSURE_TIME).value
         gaps = []

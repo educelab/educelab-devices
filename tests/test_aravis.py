@@ -219,8 +219,8 @@ def test_a_camera_unplugged_since_the_last_listing_is_not_found(repository, sim)
 
 
 def test_a_camera_open_in_this_process_is_refused_without_asking_aravis(repository):
-    # On macOS, Aravis's failed second open releases the first handle's USB
-    # interfaces, and the camera then streams nothing (usb3-vision.md).
+    # Aravis's failed second open releases USB interfaces it never claimed;
+    # refusing it ourselves is a precaution (usb3-vision.md).
     with AravisCamera(MONO, repository=repository):
         attempts = repository.open_attempts
         with pytest.raises(DeviceBusy, match="already open"):

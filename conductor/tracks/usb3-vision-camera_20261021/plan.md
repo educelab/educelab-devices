@@ -131,9 +131,10 @@ Made after the first runs on the IDS U3-36PxXCP-M and CM3-U3-50S5Ms; details are
 - [x] Task 5.1: Add the `el-devices` subcommand with backend selection: list cameras, capture N frames, and a latency benchmark, matching `el-devices spinnaker`.
   - `el-devices genicam --backend aravis|gentl` shares its benchmark with `el-devices spinnaker` through `app/_capture.py`. It reports each frame's bit depth and how the timestamp offset was measured, and counts packed pixels as sent when estimating USB bandwidth.
   - **IDS, software trigger (fixed):** the camera sends each frame's leader, with its device timestamp, as soon as the previous frame ends, before the trigger that exposes it, and ignores triggers for about 3 ms after a frame. Frames timed by arrival are now dated by the first trigger fired after their leader (`timestamp_source = "trigger"`), and triggers wait 10 ms after the last frame. Captures went from about 660 ms to 132 ms. Approved by the maintainer; details in usb3-vision.md.
-- [ ] Task 5.2: Write the hardware docs:
+- [x] Task 5.2: Write the hardware docs:
   - USB3 Vision backends: install per OS, how the driver differs from Aravis and GenTL, hazards.
   - The IDS U3-36P0XCP-M-GL doc: identity, nodes, timing, rolling shutter, rig steps.
+  - `usb3-vision.md` now leads with the drivers, backends, how they differ from Aravis and GenTL, hazards and the manual check; the Phase 1 research follows as reference. The IDS camera's findings moved to `ids-u3-36p0xcp.md`. Still **unknown**: where the IDS stamps a free-running frame relative to its exposure (the rig was disconnected before it could be measured; the doc gives the measurement).
 - [ ] Task 5.3: Update `pyproject.toml` extras, `CLAUDE.md`, `tech-stack.md`, the README, and `docs/guide.md` (only if callers can notice the difference).
 - [ ] Task 5.4: Run the manual checks on the IDS camera: Aravis on macOS and Linux, GenTL on Linux and Windows. Record the results in the hardware doc.
 - [ ] Task 5.5 (stretch): Run the CM3-U3-50S5M through both generic backends and compare it with the Spinnaker driver.

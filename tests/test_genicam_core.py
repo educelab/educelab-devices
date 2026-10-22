@@ -243,7 +243,7 @@ def test_remeasuring_from_arrivals_follows_a_jump():
 
 def test_triggered_frames_stamped_before_their_trigger_are_dated_by_it():
     # The IDS U3-36PxXCP stamps a frame when it's ready for it, before the
-    # trigger that exposes it (usb3-vision.md, Hardware runs).
+    # trigger that exposes it (ids-u3-36p0xcp.md, Timestamps).
     backend = arrival_only(ready_after=0.001)
     with GenICamCamera(MONO, backend) as camera:
         camera.set_setting(TRIGGER, "Software")
@@ -726,7 +726,7 @@ def test_close_after_captures_releases_everything(backend, fake):
 
 def test_mono10g40ids_unpacks_four_pixels_from_five_bytes():
     # Bytes 0-3 hold each pixel's upper 8 bits; byte 4 their low 2 bits, pixel 0
-    # in its lowest bits (verified; usb3-vision.md, Pixel formats).
+    # in its lowest bits (verified; ids-u3-36p0xcp.md, Pixel formats).
     values = np.array([[1023, 0, 514, 3]], dtype=np.uint16)
     upper = (values >> 2).astype(np.uint8).ravel()
     low = sum(int(v & 3) << (2 * i) for i, v in enumerate(values.ravel()))

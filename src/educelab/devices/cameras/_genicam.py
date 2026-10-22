@@ -292,7 +292,7 @@ _RETRIGGER_TURNAROUNDS = 3
 # More than any stream's buffer pool, so discarding waiting frames always ends.
 _MAX_DISCARDED = 100
 # A software trigger waits this long after the last frame: the IDS U3-36PxXCP
-# ignores triggers for about 3 ms after one (usb3-vision.md, Hardware runs).
+# ignores triggers for about 3 ms after one (ids-u3-36p0xcp.md, Software trigger).
 _TRIGGER_SETTLE_S = 0.01
 # Recent software triggers kept for dating frames by trigger; more than a
 # frame can be in flight across.
@@ -1008,7 +1008,7 @@ class GenICamCamera(FrameCamera):
         for a camera that stamps a frame before its trigger; None otherwise.
 
         Some cameras send a frame's leader, and so its stamp and arrival time,
-        once ready for it, before the trigger (the IDS U3-36PxXCP; usb3-vision.md).
+        once ready for it, before the trigger (ids-u3-36p0xcp.md, Timestamps).
         The first trigger fired after that is the one that exposed it.
         """
         if not self._software_trigger:
@@ -1137,7 +1137,7 @@ def shaped_pixels(
 def _unpack_10g40(data: Any, width: int, height: int) -> npt.NDArray[np.uint16]:
     """Unpack IDS's Mono10g40IDS: per 4 pixels, their upper 8 bits in 4 bytes,
     then one byte of low 2-bit pairs, pixel 0's lowest (verified on the
-    U3-36PxXCP-M; usb3-vision.md, Pixel formats)."""
+    U3-36PxXCP-M; ids-u3-36p0xcp.md, Pixel formats)."""
     count = width * height
     groups = np.frombuffer(data, dtype=np.uint8, count=count * 5 // 4).reshape(-1, 5)
     pixels = groups[:, :4].astype(np.uint16) << 2

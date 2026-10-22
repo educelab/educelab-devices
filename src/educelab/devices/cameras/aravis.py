@@ -67,9 +67,9 @@ _DEVICE_ERROR_DOMAIN = "arv-device-error-quark"
 # Aravis is not thread safe across interfaces, and device discovery goes
 # through them (usb3-vision.md, Thread safety).
 _system_lock = threading.Lock()
-# Cameras this process has open, by (Aravis module, device ID). On macOS a
-# second open fails, but releases the first handle's USB interfaces as it goes,
-# and the camera then streams nothing until power-cycled (usb3-vision.md).
+# Cameras this process has open, by (Aravis module, device ID). A failed second
+# open releases USB interfaces it never claimed; refusing it ourselves is a
+# precaution (usb3-vision.md, How the drivers differ).
 _open_here: set[tuple[int, str]] = set()
 
 
@@ -202,7 +202,7 @@ class _AravisConnection:
         self._device.set_access_check_policy(arv.AccessCheckPolicy.ENABLE)
         # Synchronous transfers: in async mode, finalizing a stream can deadlock
         # cancelling its transfers, and the U3-36PxXCP-M then streams nothing
-        # until power-cycled (macOS; usb3-vision.md, Hardware runs).
+        # until power-cycled (macOS; usb3-vision.md, Hazards).
         if self._do(camera.is_uv_device):
             self._do(lambda: camera.uv_set_usb_mode(arv.UvUsbMode.SYNC))
 
@@ -305,7 +305,7 @@ class _AravisConnection:
 
     def start_acquisition(self) -> None:
         # TLParamsLocked is left alone, as Aravis's own tools do: with it set,
-        # the U3-36PxXCP-M streams nothing (usb3-vision.md, Hardware runs).
+        # the U3-36PxXCP-M streams nothing (ids-u3-36p0xcp.md, Hazards).
         # A stream only while acquiring, sized to the current payload.
         self._allocate()
         self._do(self._camera.start_acquisition)
@@ -320,7 +320,8 @@ class _AravisConnection:
         finally:
             # Dropping the stream disables its channel, without which the
             # U3-36PxXCP-M refuses PixelFormat writes. It also discards frames
-            # from before the stop. Nothing else may hold it (usb3-vision.md).
+            # from before the stop. Nothing else may hold it (ids-u3-36p0xcp.md,
+            # Pixel formats).
             self._stream = None
 
     def grab(self, timeout: float | None) -> "_AravisBuffer":

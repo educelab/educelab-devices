@@ -1,8 +1,165 @@
 # USB3 Vision cameras (Aravis and GenTL)
 
-Status: research notes from Phase 1 of the `usb3-vision-camera` track (2026-10-21). Nothing here has been checked on the IDS camera yet. Phase 5 rewrites this doc into the usual hardware-doc shape and adds what the hardware runs teach us.
+The generic GenICam frame-camera drivers: `AravisCamera` (`educelab.devices.cameras.aravis`) and `GenTLCamera` (`educelab.devices.cameras.gentl`). Both share their behaviour with `SpinnakerCamera` through `GenICamCamera` (ADR 0006), so a camera behaves the same whichever library reaches it. This doc covers the libraries, what the drivers add on top of them, and the backend runs. Each camera model has its own doc:
 
-Tags: **[V]** verified against a primary source (source file, official doc, formula, PyPI metadata) or tested on a lab Mac (macOS 27.0.1, arm64, Homebrew); **[I]** inferred or taken from secondary sources, which makes it a hazard until checked on hardware (see [README](README.md#how-sure-we-are)).
+- IDS U3-36P0XCP-M-GL: [ids-u3-36p0xcp.md](ids-u3-36p0xcp.md)
+- FLIR Chameleon3 CM3-U3-50S5M: [spinnaker.md](spinnaker.md), with its runs through these drivers [below](#hardware-runs)
+
+Tags: **[V]** verified against a primary source (source file, official doc, formula, PyPI metadata) or tested on a lab Mac (macOS 27, arm64, Homebrew); **[I]** inferred or taken from secondary sources, which makes it a hazard until checked on hardware (see [README](README.md#how-sure-we-are)).
+
+## The drivers
+
+- **Addressing.** Open a camera by the serial number its backend's `discover()` lists. Aravis lists a FLIR camera by its USB serial (`0135BAD4`), while GenTL and Spinnaker list FLIR's decimal serial (`20298452`). After open, `info.serial_number` is always the camera's own `DeviceSerialNumber`, so code that maps saved settings to cameras sees the same serial from every backend. IDS cameras report the same serial everywhere. [V]
+- **Installing.** Aravis and PyGObject are installed by hand, like PySpin: sections [1](#1-aravis--pygobject-on-macos-homebrew-apple-silicon) and [2](#2-aravis--pygobject-on-linux-ubuntu-2404-noble). GenTL needs the `[gentl]` extra (`pip install 'educelab-devices[gentl]'`, which installs `genicam`) and a vendor producer whose folder is in `GENICAM_GENTL64_PATH`: section [4](#4-ids-peak-gentl-producer) for IDS. Both drivers import their library only when used, and say where these steps are when it's missing. [V]
+- **What frames carry.** Every frame's metadata includes `bit_depth` (significant bits per value: 8, 10 or 16) and `timestamp_source`: `"latch"` from the camera's timestamp latch, `"arrival"` from when frames reach the host (for cameras without a latch), or `"trigger"` for a triggered frame dated by its trigger (see [ids-u3-36p0xcp.md](ids-u3-36p0xcp.md#timestamps)). [V]
+
+## Backends
+
+| OS | Aravis 0.8 (PyGObject) | GenTL (`genicam` + a vendor `.cti`) |
+|---|---|---|
+| macOS arm64 | Yes: Homebrew `aravis` + pip PyGObject. Verified with IDS and FLIR cameras. | FLIR cameras only, through Spinnaker's producer (verified). IDS has no macOS producer. |
+| Linux x86_64/arm64 | Yes: apt `gir1.2-aravis-0.8` + udev rule + usbfs memory. Not yet run on hardware. | Yes: IDS peak's `ids_u3vgentl.cti`. Not yet run on hardware. |
+| Windows | Only through MSYS2 (not pip-friendly), and it conflicts with IDS's driver. | Yes: IDS peak's `ids_u3vgentlk.cti`. Not yet run on hardware. |
+
+- Pick one backend per camera per machine, especially on Windows, where a USB device's driver binding is exclusive. [I]
+- A vendor's producer opens only that vendor's cameras (IDS's says so; FLIR's lists only FLIR cameras). Aravis opens any USB3 Vision camera. [V]
+- GenTL buffers carry no host arrival time, so a camera without a timestamp latch can't be timed through GenTL, and the driver refuses `not_before` on it. Aravis times such cameras by frame arrival. [V from the driver]
+
+## How the drivers differ from Aravis and GenTL
+
+Behaviour the drivers add or change, and why. Each point was verified on the hardware named, in the [Hardware runs](#hardware-runs) below or the camera's own doc.
+
+**Both drivers** (through `GenICamCamera`):
+
+- Captures are newest-only and honour `not_before`, as with `SpinnakerCamera`; stale and incomplete frames are dropped and counted in the metadata.
+- Without a timestamp latch, the device-to-host offset comes from frame arrivals (Aravis only), and frames a camera stamps before their trigger are dated by the trigger (IDS).
+- A software trigger waits until 10 ms after the last frame, because the IDS camera ignores triggers for about 3 ms after one.
+- `ExposureTimeAbs` stands in for `ExposureTime`, and `TimestampLatchValue` for `Timestamp`, on cameras with the older names. `AcquisitionMode`, `ExposureAuto`, `GainAuto` and the throughput nodes are optional.
+- Mono10g40IDS is unpacked to `uint16`; packed formats the core can't unpack (e.g. Mono12Packed) come back as raw bytes.
+
+**Aravis** (`AravisCamera`):
+
+- **Synchronous USB transfers** (`UvUsbMode.SYNC`). Aravis's async mode can hang closing a camera on macOS. See [Hazards](#hazards).
+- **A stream only while acquiring.** Creating a stream enables the camera's stream channel, and the IDS camera then refuses `PixelFormat` and `TriggerMode` writes. The old stream is dropped before a new one is made, because finalizing a stream disables the channel even after a newer stream enabled it.
+- **Newest only, by callback.** Aravis has no newest-only mode: once its buffers fill, it drops the newer frames. A stream callback recycles every finished frame but the newest. Four buffers (`BUFFER_COUNT`).
+- **Access checks on, range checks off.** Aravis's access mode ignores locks (e.g. `ExposureTime` under auto exposure), so the driver also asks `is_locked()`. Its range check refused Mono16 on the CM3-U3-50S5M, whose XML gives `PixelFormat`'s register a stale maximum; the core checks ranges itself.
+- **`TLParamsLocked` is left alone**, as Aravis's own tools do: setting it wedges the IDS camera until a power cycle.
+- **Opening.** The driver opens from the last device listing, and updates the list (about 1 s) only when the serial isn't in it. It refuses to open a camera this process already has open, without asking Aravis: a failed second `Camera.new` releases USB interfaces it never claimed. That was once suspected of wedging the IDS camera (the async-mode hang turned out to be the cause), and the refusal stays as a precaution.
+- **One lock** around all Aravis calls, since Aravis isn't thread safe (section [3](#3-aravis-python-api-essentials-08x-through-gi), Thread safety).
+- Buffers reach the stream only through their connection, so a buffer kept in a traceback can't keep the camera's USB interface after close.
+
+**GenTL** (`GenTLCamera`):
+
+- **Producers** come from `GENICAM_GENTL64_PATH` (or one named with `producer=`). Each producer is loaded once per process and unloaded when its last camera closes. What a producer prints to stderr while loading (e.g. "GenTL producer does not implement DSGetNumFlows") goes to the debug log.
+- **Opening twice** in one process is refused with `DeviceBusy`; FLIR's producer would otherwise allow it.
+- **Feature access** goes through `genicam.genapi`, with the camera's XML read from `local:` or `file:` URLs, plain or zipped.
+- **Buffers** are `bytes` objects, which the producer fills in place: FLIR's producer refuses a `bytearray`. The data stream is set to `NewestOnly` when it has `StreamBufferHandlingMode`; otherwise older frames are drained.
+- **`TLParamsLocked`** is set during acquisition and cleared after, as GenTL consumers do. Unknown on the IDS camera through IDS's producer.
+- **Waits** are cut into 100 ms slices (`_WAIT_SLICE_MS`), in case `genicam` holds the GIL while waiting, as reported for Harvesters (#508).
+
+## Timing
+
+- `Aravis.update_device_list()` takes about 1.0 s every call, on GigE Vision discovery, even with no network cameras. `AravisCamera.discover()` always pays it; opening usually doesn't. [V]
+- GenTL enumeration waits up to 500 ms per interface and device list (`_LIST_TIMEOUT_MS`). The figure is a loose guess. [I]
+- Capture rates through each backend, for the CM3-U3-50S5M, are in the [Hardware runs](#hardware-runs); for the IDS camera, in its doc.
+
+## Hazards
+
+- **Aravis async USB mode on macOS** can hang forever closing a camera, in `arv_uv_stream_finalize`: the stream thread waits for cancelled transfers to complete, while it is the thread that would complete them. When a close doesn't hang, the next session may get only `missing-packets` frames until the camera is power-cycled. The driver uses sync mode; don't switch it. [V on the IDS camera]
+- **`TLParamsLocked` through Aravis.** Setting it wedged the IDS camera until a power cycle. [V]
+- **Several cameras on one USB link.** Uncapped, five CM3-U3-50S5M cameras and the IDS camera on one Acroname hub need more than its USB 3 upstream link carries, and some cameras then get only `size-mismatch` frames. Cap each camera's `throughput_limit`. [V]
+- **Windows driver binding.** IDS peak's kernel driver claims IDS cameras, so nothing libusb-based (Aravis) can open them while it's installed. [I]
+- **Linux usbfs memory.** The kernel's 16 MB default is less than one 20 MP frame. Raise it (section [2](#usbfs-memory)). [I]
+
+## Manual check
+
+`el-devices genicam --backend aravis|gentl` lists cameras through the chosen backend, then captures from them all at once and reports latency, exposure start, dropped frames, bit depth, how frames were timed, and USB bandwidth. It takes the same options as `el-devices spinnaker` (`--serial`, `--frames`, `--exposure`, `--gain`, `--pixel-format`, `--throughput-limit`, `--trigger software`, `--save-missing-trailer`). With `--frames 0` it only lists.
+
+The hardware tests share one suite (`tests/contracts/genicam_hardware.py`):
+
+```bash
+ARAVIS_SERIAL=<serial> pytest -m hardware tests/test_aravis_hardware.py -s
+GENTL_SERIAL=<serial> pytest -m hardware tests/test_gentl_hardware.py -s
+```
+
+Without the variable they use the first camera listed. The multi-camera tests use every attached camera of the same model.
+
+## Checked on a lab Mac, without a camera
+
+Aravis 0.8.36 (Homebrew), PyGObject 3.58.1 and pycairo 1.29.2 built into the project venv (Python 3.15, macOS 27, arm64), 2026-10-22. [V] for everything in this section, on that machine.
+
+### Install
+
+- With Homebrew's `aravis`, `pkgconf`, `cairo`, `glib` and `gobject-introspection` present, `pip install pycairo` and then `pip install PyGObject` built and installed with no environment variables. `gi.require_version("Aravis", "0.8")` found the typelib in `/opt/homebrew/lib/girepository-1.0`.
+- `tests/test_fake_aravis.py` passes against the real module: the fake's method names, the PFNC pixel-format codes in `cameras/aravis.py`, and the buffer-status and error enums all match.
+
+### Measured timing
+
+- `Aravis.update_device_list()` takes about **1.0 s** every call (measured twice). Opening a camera by ID (`Aravis.Camera.new`) takes about 3 ms. The time goes on GigE Vision discovery, which runs even with no network cameras. The driver therefore opens cameras from the last listing and updates the list only when the serial isn't in it, or when opening a stale entry fails. `discover()` always updates, so it always costs about a second.
+
+### Aravis's simulated camera
+
+Aravis ships a simulated camera on its "Fake" interface (`Aravis.enable_interface("Fake")`, ID `Fake_1`, serial `1`). `tests/test_aravis_library.py` drives `AravisCamera` through the real library with it. What it showed:
+
+- It names exposure **`ExposureTimeAbs`**, the pre-SFNC-2.0 name, and has no `ExposureTime`. The core now falls back to `ExposureTimeAbs`, as it does for `TimestampLatchValue`. Some older real cameras use that name too.
+- It has no `TimestampLatch`, `Gain`, `ExposureAuto`, `DeviceFirmwareVersion` or throughput nodes. The driver leaves those settings out. Without the latch, its timestamp offset now comes from frame arrivals, and `not_before` works (`test_without_a_timestamp_latch_frame_arrivals_set_the_offset`).
+- `get_feature_access_mode()` returns an `Aravis.GcAccessMode`, and `get_data()` returns `bytes`.
+- Every pixel format it offers captured with the right shape and dtype (Mono8/16, RGB8, four Bayer 8-bit). The driver allocated new buffers for the larger RGB8 and Mono16 payloads.
+- The software trigger primed in about 38 ms.
+- A second `Camera.new` on the same simulated camera succeeds, so busy detection (`DeviceBusy`) can only be checked on a real USB camera (`test_a_second_open_of_the_same_camera_is_busy`).
+
+### genicam's genapi, without a producer
+
+genicam 1.6.0 in a Python 3.12 venv on the same Mac, 2026-10-22, using a hand-written camera XML served through a stand-in port (`tests/test_gentl_library.py`). [V] for each point below:
+
+- `NodeMap.get_node(name)` returns a typed node (`IFloat`, `IInteger`, `IEnumeration`, `ICommand`, `IString`). A missing node raises `genapi.LogicalErrorException` ("Node not existing"), and `has_node()` doesn't raise.
+- `get_access_mode()` returns `genapi.EAccessMode` (`RO` = 3, `RW` = 4) and follows `pIsLocked`: a float locked by an auto mode reads as `RO`.
+- Writing a locked or read-only node raises `genapi.AccessException`. An unknown enum entry raises `genapi.InvalidArgumentException`. Both derive from `genapi.GenericException`, which is a different class from `gentl.GenericException`.
+- `IEnumeration.symbolics` leaves out entries whose `pIsAvailable` is false, so the driver's enum choices are the available ones.
+- XML loaded with `load_xml_from_string`, from a `local:` URL (NUL-padded, or zipped), works with a `genapi.AbstractPort` subclass passed to `connect()`.
+- `gentl.BufferToken` accepts a `bytearray`.
+
+The GenTL hardware run on FLIR's producer has since checked the stream lifecycle, `TLParamsLocked` and `timestamp_ns` ([GenTL on macOS](#gentl-on-macos)). Still unchecked, pending a run on IDS's producer: the `StreamBufferHandlingMode` node on IDS's data stream, `TLParamsLocked` on the IDS camera, and which exception a camera held by another process raises.
+
+## Hardware runs
+
+### 2026-10-22, macOS, Aravis 0.8.36
+
+The lab Mac with five Chameleon3 CM3-U3-50S5M cameras and one IDS camera, via `tests/test_aravis_hardware.py`.
+
+The IDS camera's results, from the first session (8 of 23 passed) to all passing, are in [ids-u3-36p0xcp.md](ids-u3-36p0xcp.md). What they taught about Aravis itself is above, in [How the drivers differ](#how-the-drivers-differ-from-aravis-and-gentl) and [Hazards](#hazards).
+
+**CM3-U3-50S5M** (serial `0135BAD4` in Aravis, `20298452` in Spinnaker; firmware `1.12.3.00`), Python 3.12 (`aravis-test-flir-1.log`): 20 of 23 passed. All 23 pass after these fixes, each verified on this unit:
+
+- **Serial numbers differ between libraries.** Aravis lists FLIR cameras by their USB serial (`0135BAD4`, also the end of the address `1E100135BAD4`), not FLIR's decimal serial number. Address a camera by the serial its own backend's `discover()` reports.
+- **Locks.** `get_feature_access_mode()` ignores `pIsLocked`. `ExposureTime` read as RW under `ExposureAuto = Continuous`, while `is_locked()` was true. The driver now checks `is_locked()` (Aravis's `arv_gc_feature_node_get_actual_access_mode` never consults the lock).
+- **Range check.** With Aravis's range check on, writing Mono16 failed: "Value '17825799' greater than allowed maximum '17301505'". The camera's XML gives the register behind `PixelFormat` a maximum of Mono8's code. With the check off, Mono16 writes and captures. The driver leaves the check off, since the core already checks ranges. The camera then accepts an out-of-range exposure write without error.
+- **Changing the payload.** Making a new stream before the old one was finalized left the new stream with no frames, intermittently (2 runs in 3). Finalizing a stream disables the camera's stream channel. The driver now drops the old stream first. Mono8 → Mono16 → Mono8 then captured every time.
+- **Newest only.** Before the stream callback, a capture after a 1 s pause got a frame exposed 972 ms before the call: the buffers had filled, and Aravis dropped the newer frames. With the callback recycling older frames as new ones land, 300 `not_before` captures met 301 stale frames rather than 599, and the capture rate rose from 11.9 to 17.8 per second.
+- **Releasing the camera.** A buffer left in a failed test's traceback kept the stream, and with it the USB interface, after close. Reopening then failed with `LIBUSB_ERROR_ACCESS`. Buffers now reach the stream only through their connection.
+- **Timestamps.** The offset spread over 5 measurements was 6 µs. The buffer's arrival time minus the device stamp was 0.8 ms on all 10 frames, at 27.9 ms exposure. Aravis takes the arrival time when the frame's leader packet arrives (`arvuvstream.c`), so the camera stamps the frame just before sending it. That fits the stamp marking the end of exposure, as with Spinnaker.
+- **Software trigger.** Switching to software trigger took 1.1 s, with a 57 ms turnaround. Triggered exposures began 0.7–1.0 ms after the request (one at 57 ms), against 2–3 ms through Spinnaker.
+- **Missing nodes.** There is no `AcquisitionResultingFrameRate` through Aravis (`AcquisitionFrameRate` exists). `PixelFormat` also offers `Mono12Packed` and `Mono12p`, which the driver can't shape.
+
+### GenTL on macOS
+
+Spinnaker installs a GenTL producer on macOS, in `/usr/local/lib/spinnaker-gentl`, and sets `GENICAM_GENTL64_PATH` to it. Through it, `genicam` lists the five CM3-U3-50S5M cameras by FLIR serial number, with addresses like `USB\VID_1E10&SRL_0135D4E2`. [V] So a macOS GenTL producer does exist, for FLIR cameras. The finding that there's no macOS producer (section 6) holds only for IDS cameras.
+
+**CM3-U3-50S5M through it** (`20298452`, Python 3.12, genicam 1.6.0, 2026-10-22): all 23 GenTL hardware tests passed after two fixes. [V] for each point below, on this unit:
+
+- **Buffer memory.** `DSAnnounceBuffer` refuses a `bytearray` ("Parameter not valid or out of range") and accepts `bytes`, as Harvesters uses. The driver now announces `bytes` objects, which the producer fills in place.
+- **Opening twice.** The producer lets one process open a camera it already has open. The driver now refuses that itself, with `DeviceBusy`, and a leftover second instance can no longer stream behind the first.
+- **Things that work as expected.** `DataStream.buffer_alignment` raises `NotImplementedException`. `defines_payload_size()` is true, the payload is 5,013,504 bytes for Mono8 at 2448 × 2048, and `buffer_announce_min` is 2.
+- **Timestamps.** Node `Timestamp`, with an offset spread of 2 µs over 5 measurements.
+- **Captures.** 300 `not_before` captures met 600 stale frames, at 11.9 captures per second, which matches Spinnaker. After a 1 s pause the frame taken was exposed 78 ms before the call, so the stream keeps only the newest frame.
+- **Software trigger.** Switching to software trigger took 1.27 s, with a 59 ms turnaround. Exposures began 2.2–3.1 ms after the request (median 3.1), with one outlier at 115.9 ms.
+- **Ranges.** genapi refuses an out-of-range exposure write itself (`OutOfRangeException`).
+
+Loading it makes genicam print five lines such as "GenTL producer does not implement DSGetNumFlows" to stderr, one for each optional GenTL 1.6 function the producer lacks. They are harmless. The driver logs them at debug level instead of letting them reach the console.
+
+---
+
+The numbered sections below are the research notes from Phase 1 of the `usb3-vision-camera` track (2026-10-21), kept as reference for installing and for the libraries' APIs.
 
 ## 1. Aravis + PyGObject on macOS (Homebrew, Apple Silicon)
 
@@ -207,139 +364,6 @@ stream.get_info_uint64_by_name("n_underruns")
 
 ---
 
-## Checked on a lab Mac, without a camera
-
-Aravis 0.8.36 (Homebrew), PyGObject 3.58.1 and pycairo 1.29.2 built into the project venv (Python 3.15, macOS 27, arm64), 2026-10-22. [V] for everything in this section, on that machine.
-
-### Install
-
-- With Homebrew's `aravis`, `pkgconf`, `cairo`, `glib` and `gobject-introspection` present, `pip install pycairo` and then `pip install PyGObject` built and installed with no environment variables. `gi.require_version("Aravis", "0.8")` found the typelib in `/opt/homebrew/lib/girepository-1.0`.
-- `tests/test_fake_aravis.py` passes against the real module: the fake's method names, the PFNC pixel-format codes in `cameras/aravis.py`, and the buffer-status and error enums all match.
-
-### Timing
-
-- `Aravis.update_device_list()` takes about **1.0 s** every call (measured twice). Opening a camera by ID (`Aravis.Camera.new`) takes about 3 ms. The time goes on GigE Vision discovery, which runs even with no network cameras. The driver therefore opens cameras from the last listing and updates the list only when the serial isn't in it, or when opening a stale entry fails. `discover()` always updates, so it always costs about a second.
-
-### Aravis's simulated camera
-
-Aravis ships a simulated camera on its "Fake" interface (`Aravis.enable_interface("Fake")`, ID `Fake_1`, serial `1`). `tests/test_aravis_library.py` drives `AravisCamera` through the real library with it. What it showed:
-
-- It names exposure **`ExposureTimeAbs`**, the pre-SFNC-2.0 name, and has no `ExposureTime`. The core now falls back to `ExposureTimeAbs`, as it does for `TimestampLatchValue`. Some older real cameras use that name too.
-- It has no `TimestampLatch`, `Gain`, `ExposureAuto`, `DeviceFirmwareVersion` or throughput nodes. The driver leaves those settings out and refuses `not_before`, which needs the latch.
-- `get_feature_access_mode()` returns an `Aravis.GcAccessMode`, and `get_data()` returns `bytes`.
-- Every pixel format it offers captured with the right shape and dtype (Mono8/16, RGB8, four Bayer 8-bit). The driver allocated new buffers for the larger RGB8 and Mono16 payloads.
-- The software trigger primed in about 38 ms.
-- A second `Camera.new` on the same simulated camera succeeds, so busy detection (`DeviceBusy`) can only be checked on a real USB camera (`test_a_second_open_of_the_same_camera_is_busy`).
-
-### genicam's genapi, without a producer
-
-genicam 1.6.0 in a Python 3.12 venv on the same Mac, 2026-10-22, using a hand-written camera XML served through a stand-in port (`tests/test_gentl_library.py`). [V] for each point below:
-
-- `NodeMap.get_node(name)` returns a typed node (`IFloat`, `IInteger`, `IEnumeration`, `ICommand`, `IString`). A missing node raises `genapi.LogicalErrorException` ("Node not existing"), and `has_node()` doesn't raise.
-- `get_access_mode()` returns `genapi.EAccessMode` (`RO` = 3, `RW` = 4) and follows `pIsLocked`: a float locked by an auto mode reads as `RO`.
-- Writing a locked or read-only node raises `genapi.AccessException`. An unknown enum entry raises `genapi.InvalidArgumentException`. Both derive from `genapi.GenericException`, which is a different class from `gentl.GenericException`.
-- `IEnumeration.symbolics` leaves out entries whose `pIsAvailable` is false, so the driver's enum choices are the available ones.
-- XML loaded with `load_xml_from_string`, from a `local:` URL (NUL-padded, or zipped), works with a `genapi.AbstractPort` subclass passed to `connect()`.
-- `gentl.BufferToken` accepts a `bytearray`.
-
-Not yet checked against a real producer: the stream lifecycle (announce, queue, start, events, flush, revoke), `TLParamsLocked`, the `StreamBufferHandlingMode` node on IDS's data stream, `timestamp_ns`, and which exception a camera held elsewhere raises. The hardware run (`tests/test_gentl_hardware.py`) settles these.
-
-## Hardware runs
-
-### 2026-10-22, macOS, Aravis 0.8.36
-
-The lab Mac with five Chameleon3 CM3-U3-50S5M cameras and one IDS camera, via `tests/test_aravis_hardware.py`.
-
-**IDS U3-36PxXCP-M**, Python 3.14 (`aravis-test-1.log`), before the fixes below: 8 of 23 passed. [V] for each point below, on this unit:
-
-- **Identity.** Aravis reports the model as `U3-36PxXCP-M`, serial `4110091493`, firmware `3.90.27889`, USB vendor `1409`. Frames are 5112 × 3840, Mono8.
-- **Missing nodes.**
-  - There is no `Timestamp` or `TimestampLatchValue` node, so the driver measured no timestamp offset and refused every `not_before` capture. That alone caused most of the failures. **Unknown:** how this camera exposes a latched timestamp. Settle it with a feature dump (`arv-tool-0.8 -n <id> features`).
-  - There is no `ExposureAuto`. `Gain` ranges from 1.0 to 8.04 dB.
-- **Settings.**
-  - Of the formats the driver can shape, `PixelFormat` offers only Mono8.
-  - `DeviceLinkThroughputLimit` ranges from 108 to 300 MB/s in 2 MB/s steps, and was at 162.
-- **Pixel-format writes refused.** Every write of `PixelFormat` failed with "USB3Vision write_memory error", even writing back Mono8. **Unknown** cause. A leftover `TLParamsLocked` is suspected, and the driver now releases it whenever acquisition stops.
-- **Busy detection works.** A second open fails with `LIBUSB_ERROR_ACCESS`, which the driver reports as `DeviceBusy`.
-- **Reopening failed** with the same error, after earlier tests failed. The cause is described under the CM3-U3-50S5M below, and is fixed.
-
-**IDS U3-36PxXCP-M, second session** (power-cycled from Acroname port 6, Python 3.12, 2026-10-22). [V] for each point below, on this unit:
-
-- **No timestamp latch.**
-  - The feature dump (`arv-tool-0.8 … features`) has no `Timestamp`, `TimestampLatch` or `TimestampLatchValue`, only event timestamps (`EventErrorTimestamp` and the like).
-  - There is `DeviceClockFrequency`, 171,666,666 Hz, with `DeviceClockSelector = Sensor`.
-  - Buffers do carry a device timestamp. The driver can't relate it to host time, so it refuses `not_before` on this camera. That causes every remaining hardware-test failure (12 of 23).
-- **Pixel formats.**
-  - Available: Mono8 and `Mono10g40IDS`, which is 10-bit, packed four pixels to five bytes. Many other entries are listed but "Not available".
-  - The image is 5112 × 3840; the Mono8 payload is 19,630,080 bytes.
-- **Writes refused while a stream exists.** The camera refuses `PixelFormat` writes ("USB3Vision write_memory error") whenever an Aravis stream exists, even with acquisition stopped. Aravis enables the camera's stream channel when a stream is created, and disables it only when the stream's thread stops or the stream is finalized (`arvuvstream.c`). Writes succeed with no stream, or after `stop_thread()`. The driver therefore has a stream only while acquiring.
-- **`TLParamsLocked`.**
-  - It reads 0. With it set to 1, the camera streams nothing through Aravis, and it stays unable to stream after the flag is cleared, until power-cycled. Payload size is the same either way.
-  - The driver leaves `TLParamsLocked` alone, as Aravis's own tools do.
-- **Hazard: async USB mode.**
-  - In Aravis's default async mode on macOS, closing a camera can hang forever in `arv_uv_stream_finalize`. The stream thread waits for cancelled transfers to complete, while it is the thread that would complete them.
-  - When a close doesn't hang, the next session may still get only `missing-packets` frames, until the camera is power-cycled.
-  - The driver uses `UvUsbMode.SYNC` on USB3 Vision cameras. Six open/capture/close cycles then ran clean, and the CM3-U3-50S5M captured just as fast (11.9 per second either way, 30 `not_before` captures).
-- **Offset from frame arrivals.** With no latch, the driver now takes the device-to-host offset from when frames arrive. That is Aravis's system timestamp, taken as each frame's leader packet arrives. The offset is the smallest arrival-minus-stamp gap over the last 20 frames (`ARRIVAL_SAMPLES`), and frames' `metadata["timestamp_source"]` says `"arrival"`. Measured on this unit:
-  - 20 of 23 hardware tests passed, then 23 of 23 once the hardware tests accepted either source and the multi-camera test kept to one model.
-  - Offset spread over 5 remeasurements was 1.8 ms in one run and 0.46 ms in another (2–30 µs with a latch on the CM3-U3-50S5M).
-  - Arrival minus stamp moved between +0.5 and −1.1 ms over 10 frames as the window settled.
-  - 300 `not_before` captures met 300 stale frames, at 3.2 captures per second, for 19.6 MB frames at a 162 MB/s limit.
-  - After a 1 s pause, the frame taken was exposed 278 ms before the call.
-
-  So this camera's frame timestamps are good to about ±2 ms. **Unknown:** which moment of the rolling-shutter exposure the device stamp marks.
-- **Pixel formats: Mono10g40IDS.**
-  - IDS's code for it is `0x4000000F`, outside the PFNC. The payload is 24,537,600 bytes, 1.25 times Mono8's.
-  - Each group of 5 bytes holds 4 pixels. Bytes 0–3 are their upper 8 bits. Byte 4 holds their low 2 bits, with pixel 0 in bits 0–1, pixel 1 in bits 2–3, and so on.
-  - Verified two ways. On the ColorBar `TestPattern`, the decoded values shifted down 2 bits equal the Mono8 frame on 100% of pixels; that pattern has only levels 0 and 255, so it checks the upper bits only. For the low bits, a live scene was decoded with all 24 orders of the 2-bit pairs, and this order gave the smoothest image: mean row difference 4.59, against 4.77 for the next best and 5.09 for the worst.
-  - The driver unpacks it to `uint16` with values 0–1023, and frames carry `metadata["bit_depth"] = 10`.
-- **Opening twice.** The driver refuses to open a camera this process already has open, without asking Aravis. A failed second `Camera.new` releases USB interfaces it never claimed. That was suspected of wedging the camera, but the async-mode hang above turned out to be the cause. The refusal stays as a precaution.
-- **Also measured.**
-  - After a 1 s pause, the frame taken was exposed 13 ms before the call.
-  - An out-of-range exposure write was accepted, and the camera then read 31.7 µs.
-  - Switching to software trigger took 0.38 s.
-- **All six cameras at once.** Streaming the six cameras together through the one Acroname hub, uncapped, gave this camera only `size-mismatch` frames. The demand is about 5 × 181 MB/s plus 162 MB/s on one USB 3 upstream link, the saturation `spinnaker.md` describes for uncapped FLIR runs.
-
-**IDS U3-36PxXCP-M, software trigger** (2026-10-22, Python 3.12, firmware `3.90.27889`; `el-devices genicam` and Aravis's packet log). [V] for each point below, on this unit:
-
-- **The leader comes before the trigger.** The camera sends the next frame's leader, with its device timestamp, about 1 ms after the previous frame's trailer, before any trigger. The pixel data follows only when a trigger is accepted, about 130 ms later for a 19.6 MB Mono8 frame at 162 MB/s. So a triggered frame's stamp and arrival time mark when the camera became ready, not when it exposed.
-  - Before the fix, arrival timing dated every triggered frame before its trigger. Each capture dropped its first frame as stale and fired again, taking about 660 ms; the frame kept was dated about 270 ms before its exposure.
-  - The driver now dates a frame of a camera timed by arrival, in software-trigger mode, by the first trigger fired after its leader arrived. Frames carry `metadata["timestamp_source"] = "trigger"`. 20 triggered captures then took a median 132 ms, with no stale frames.
-  - If the camera ignores that trigger and the driver fires again, the frame is dated by the ignored trigger: early by the retry interval (exposure plus three turnarounds, about 0.4 s), but still after `not_before`.
-- **Busy just after a frame.** The camera ignores a software trigger fired within about 3 ms of a frame arriving: all of 12 at 0–2.5 ms, none of 36 at 3–50 ms except one at 4.5 ms. The driver waits until 10 ms after the last frame before firing (`_TRIGGER_SETTLE_S`). The hardware tests' 20 triggered captures then needed no second trigger, against 9 of 20 before.
-- **No other exposure timestamp.** The camera has no chunk data and no exposure-start or frame-start events. `TriggerSelector = ExposureStart` is offered, but the camera then delivered frames without being triggered.
-- **Occasional `size-mismatch` frames** (2 of 22 and 4 of 25 in two runs) with only this camera streaming. Their cause is **unknown**; the driver drops them as incomplete.
-- **Firmware.** IDS lists uEye+ firmware 3.94 with IDS peak 26.06, against this unit's 3.90. **Unknown** whether it changes the leader timing; no changelog was found. Updating needs IDS peak's tools on Linux or Windows.
-- **GenTL can't time this camera.** genicam's buffers carry no host arrival time, so without a latch `GenTLCamera` refuses `not_before` on it. Not yet tried with IDS's producer.
-
-**CM3-U3-50S5M** (serial `0135BAD4` in Aravis, `20298452` in Spinnaker; firmware `1.12.3.00`), Python 3.12 (`aravis-test-flir-1.log`): 20 of 23 passed. All 23 pass after these fixes, each verified on this unit:
-
-- **Serial numbers differ between libraries.** Aravis lists FLIR cameras by their USB serial (`0135BAD4`, also the end of the address `1E100135BAD4`), not FLIR's decimal serial number. Address a camera by the serial its own backend's `discover()` reports.
-- **Locks.** `get_feature_access_mode()` ignores `pIsLocked`. `ExposureTime` read as RW under `ExposureAuto = Continuous`, while `is_locked()` was true. The driver now checks `is_locked()` (Aravis's `arv_gc_feature_node_get_actual_access_mode` never consults the lock).
-- **Range check.** With Aravis's range check on, writing Mono16 failed: "Value '17825799' greater than allowed maximum '17301505'". The camera's XML gives the register behind `PixelFormat` a maximum of Mono8's code. With the check off, Mono16 writes and captures. The driver leaves the check off, since the core already checks ranges. The camera then accepts an out-of-range exposure write without error.
-- **Changing the payload.** Making a new stream before the old one was finalized left the new stream with no frames, intermittently (2 runs in 3). Finalizing a stream disables the camera's stream channel. The driver now drops the old stream first. Mono8 → Mono16 → Mono8 then captured every time.
-- **Newest only.** Before the stream callback, a capture after a 1 s pause got a frame exposed 972 ms before the call: the buffers had filled, and Aravis dropped the newer frames. With the callback recycling older frames as new ones land, 300 `not_before` captures met 301 stale frames rather than 599, and the capture rate rose from 11.9 to 17.8 per second.
-- **Releasing the camera.** A buffer left in a failed test's traceback kept the stream, and with it the USB interface, after close. Reopening then failed with `LIBUSB_ERROR_ACCESS`. Buffers now reach the stream only through their connection.
-- **Timestamps.** The offset spread over 5 measurements was 6 µs. The buffer's arrival time minus the device stamp was 0.8 ms on all 10 frames, at 27.9 ms exposure. Aravis takes the arrival time when the frame's leader packet arrives (`arvuvstream.c`), so the camera stamps the frame just before sending it. That fits the stamp marking the end of exposure, as with Spinnaker.
-- **Software trigger.** Switching to software trigger took 1.1 s, with a 57 ms turnaround. Triggered exposures began 0.7–1.0 ms after the request (one at 57 ms), against 2–3 ms through Spinnaker.
-- **Missing nodes.** There is no `AcquisitionResultingFrameRate` through Aravis (`AcquisitionFrameRate` exists). `PixelFormat` also offers `Mono12Packed` and `Mono12p`, which the driver can't shape.
-
-### GenTL on macOS
-
-Spinnaker installs a GenTL producer on macOS, in `/usr/local/lib/spinnaker-gentl`, and sets `GENICAM_GENTL64_PATH` to it. Through it, `genicam` lists the five CM3-U3-50S5M cameras by FLIR serial number, with addresses like `USB\VID_1E10&SRL_0135D4E2`. [V] So a macOS GenTL producer does exist, for FLIR cameras. The finding that there's no macOS producer (section 6) holds only for IDS cameras.
-
-**CM3-U3-50S5M through it** (`20298452`, Python 3.12, genicam 1.6.0, 2026-10-22): all 23 GenTL hardware tests passed after two fixes. [V] for each point below, on this unit:
-
-- **Buffer memory.** `DSAnnounceBuffer` refuses a `bytearray` ("Parameter not valid or out of range") and accepts `bytes`, as Harvesters uses. The driver now announces `bytes` objects, which the producer fills in place.
-- **Opening twice.** The producer lets one process open a camera it already has open. The driver now refuses that itself, with `DeviceBusy`, and a leftover second instance can no longer stream behind the first.
-- **Things that work as expected.** `DataStream.buffer_alignment` raises `NotImplementedException`. `defines_payload_size()` is true, the payload is 5,013,504 bytes for Mono8 at 2448 × 2048, and `buffer_announce_min` is 2.
-- **Timestamps.** Node `Timestamp`, with an offset spread of 2 µs over 5 measurements.
-- **Captures.** 300 `not_before` captures met 600 stale frames, at 11.9 captures per second, which matches Spinnaker. After a 1 s pause the frame taken was exposed 78 ms before the call, so the stream keeps only the newest frame.
-- **Software trigger.** Switching to software trigger took 1.27 s, with a 59 ms turnaround. Exposures began 2.2–3.1 ms after the request (median 3.1), with one outlier at 115.9 ms.
-- **Ranges.** genapi refuses an out-of-range exposure write itself (`OutOfRangeException`).
-
-Loading it makes genicam print five lines such as "GenTL producer does not implement DSGetNumFlows" to stderr, one for each optional GenTL 1.6 function the producer lacks. They are harmless. The driver logs them at debug level instead of letting them reach the console.
-
 ## 4. IDS peak GenTL producer
 
 - **Current version:** IDS switched to year.month numbering. **IDS peak 26.06** is current, with the U3V Transport Layer at **2.0.0.0**. The previous release was 2.21 (U3V TL 1.22.0.0). [V] (https://en.ids-imaging.com/files/downloads/ids-peak/readme/ids-peak-linux-readme-26.06_EN.html and the `-windows-` equivalent)
@@ -438,16 +462,6 @@ The hard part is the absence of documentation. You learn the API from Harvesters
 - No other vendor (Stemmer CVB, MVTec, Euresys, Balluff/MATRIX VISION) is known to ship a third-party-capable USB3 Vision GenTL producer for macOS. [I] FLIR's Spinnaker does ship one for its own cameras (see Hardware runs, GenTL on macOS). [V] On macOS, **Aravis 0.8 is the only practical backend** for the IDS camera.
 
 ---
-
-## Backend matrix (summary)
-
-| OS | Aravis 0.8 (PyGObject) | GenTL (genicam + IDS U3V cti) |
-|---|---|---|
-| macOS arm64 | Yes: brew aravis + pip PyGObject | No producer for IDS (genicam wheel exists) |
-| Linux x86_64/arm64 | Yes: apt gir1.2-aravis-0.8 (noble 0.8.30) + udev + usbfs | Yes: ids-peak deb/tgz, `ids_u3vgentl.cti` |
-| Windows | Only via MSYS2 (not pip-friendly); conflicts with IDS driver | Yes: IDS peak, `C:\Program Files\IDS\ids_peak\ids_u3vgentl\64\ids_u3vgentlk.cti` |
-
-Pick one backend per camera per machine, especially on Windows where the driver binding is exclusive. [I]
 
 ## Sources
 - Aravis 0.8.36 source (headers, `docs/reference/aravis/{usb,thread-safety,building}.md`, `src/aravis.rules`, `src/arvuvstream.c`, `tests/python/*.py`): https://github.com/AravisProject/aravis/tree/0.8.36

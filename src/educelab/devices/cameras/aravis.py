@@ -11,6 +11,7 @@ import importlib
 import logging
 import math
 import threading
+import weakref
 from collections.abc import Callable
 from types import ModuleType
 from typing import Any, TypeVar
@@ -186,9 +187,9 @@ class _AravisConnection:
         self._stream: Any = None
         self._payload = 0
         self._acquiring = False
-        # Without these, Aravis sends out-of-range or read-only writes straight
-        # to the camera (usb3-vision.md, Camera and device).
-        self._device.set_range_check_policy(arv.RangeCheckPolicy.ENABLE)
+        # Refuse writes to read-only nodes before they reach the camera. Range
+        # checks stay off: the core checks ranges itself, and Aravis's check
+        # refuses Mono16 on the CM3-U3-50S5M (usb3-vision.md, Hardware runs).
         self._device.set_access_check_policy(arv.AccessCheckPolicy.ENABLE)
         self._allocate()
 
@@ -206,8 +207,14 @@ class _AravisConnection:
 
     def _allocate(self) -> None:
         """Give the camera a new stream with buffers sized to its payload."""
+        # Drop the old stream first: finalizing it disables the camera's stream
+        # channel, which would stop a new stream made before it went
+        # (verified on the CM3-U3-50S5M; usb3-vision.md, Hardware runs).
+        self._stream = None
         payload = self._do(self._camera.get_payload)
-        stream = self._do(lambda: self._camera.create_stream(None, None))
+        on_buffer, bind = _keep_newest(self._arv)
+        stream = self._do(lambda: self._camera.create_stream(on_buffer, None))
+        bind(stream)
         for _ in range(BUFFER_COUNT):
             stream.push_buffer(self._arv.Buffer.new_allocate(payload))
         self._stream, self._payload = stream, payload
@@ -230,7 +237,12 @@ class _AravisConnection:
 
     def is_writable(self, name: str) -> bool:
         modes = self._arv.GcAccessMode
-        return self._access(name) in (modes.WO, modes.RW)
+        if self._access(name) not in (modes.WO, modes.RW):
+            return False
+        # Aravis's access mode ignores pIsLocked (e.g. ExposureTime under auto
+        # exposure; usb3-vision.md, Hardware runs).
+        feature = self._device.get_feature(name)
+        return not self._do(feature.is_locked)
 
     def get_float(self, name: str) -> float:
         return float(self._do(lambda: self._device.get_float_feature_value(name)))
@@ -279,6 +291,9 @@ class _AravisConnection:
         # A new pixel format may need bigger buffers than the pool has.
         if self._do(self._camera.get_payload) != self._payload:
             self._allocate()
+        # Aravis leaves TLParamsLocked alone; SFNC has the host hold it while
+        # streaming, and release it so payload settings can change.
+        self._lock_tl_params(1)
         self._do(self._camera.start_acquisition)
         self._acquiring = True
 
@@ -287,9 +302,14 @@ class _AravisConnection:
             return
         self._do(self._camera.stop_acquisition)
         self._acquiring = False
+        self._lock_tl_params(0)
         # Frames from before the stop may be in another format; drop them.
         while (buffer := self._stream.try_pop_buffer()) is not None:
             self._stream.push_buffer(buffer)
+
+    def _lock_tl_params(self, value: int) -> None:
+        if self.is_writable("TLParamsLocked"):
+            self.set_int("TLParamsLocked", value)
 
     def grab(self, timeout: float | None) -> "_AravisBuffer":
         if not self._acquiring:
@@ -323,12 +343,40 @@ class _AravisConnection:
             raise DeviceError(problem)
 
 
+def _keep_newest(arv: Any) -> tuple[Callable[..., None], Callable[[Any], None]]:
+    """A stream callback that recycles every finished frame but the newest, and
+    a function that binds it to its stream.
+
+    Without it, frames fill every buffer while nobody grabs, and Aravis then
+    drops the newer ones (usb3-vision.md, Newest only). It runs on Aravis's
+    stream thread, where only push and pop are safe. It holds the stream weakly,
+    since the stream holds it.
+    """
+    stream_ref: list[weakref.ref[Any]] = []
+
+    def on_buffer(user_data: Any, kind: Any, buffer: Any) -> None:
+        if kind != arv.StreamCallbackType.BUFFER_DONE or not stream_ref:
+            return
+        stream = stream_ref[0]()
+        if stream is None:
+            return
+        _, waiting = stream.get_n_buffers()
+        for _ in range(waiting - 1):
+            older = stream.try_pop_buffer()
+            if older is None:
+                break
+            stream.push_buffer(older)
+
+    return on_buffer, lambda stream: stream_ref.append(weakref.ref(stream))
+
+
 class _AravisBuffer:
     """A `Buffer` over one ``Aravis.Buffer``, pushed back to its stream on release."""
 
     def __init__(self, conn: _AravisConnection, buffer: Any) -> None:
+        # Not the stream itself: a buffer left in a traceback would keep it, and
+        # with it the camera's USB interface, after close.
         self._conn = conn
-        self._stream = conn._stream
         self._buffer = buffer
 
     def status(self) -> BufferStatus:
@@ -359,4 +407,6 @@ class _AravisBuffer:
         )
 
     def release(self) -> None:
-        self._stream.push_buffer(self._buffer)
+        stream = self._conn._stream
+        if stream is not None:
+            stream.push_buffer(self._buffer)

@@ -1,6 +1,7 @@
 """`SpinnakerCamera`, tested against the fake PySpin in `fakes.pyspin`."""
 
 import math
+import re
 import sys
 import time
 from datetime import UTC, datetime, timedelta
@@ -657,16 +658,21 @@ class TestSpinnakerCameraContractThroughputMode(TestSpinnakerCameraContract):
 # --- el-devices discover ------------------------------------------------------
 
 
-def test_el_devices_discover_lists_spinnaker_cameras(pyspin, monkeypatch, capsys):
+def test_el_devices_discover_lists_spinnaker_cameras(
+    pyspin, monkeypatch, capsys, discover_only
+):
+    discover_only("spinnaker")
     monkeypatch.setattr(spinnaker, "load_pyspin", lambda: pyspin)
     assert main(["discover"]) == 0
     out = capsys.readouterr().out
-    assert (
-        f"spinnaker: Blackfly S BFS-U3-51S5M at unknown address, serial {MONO}" in out
-    )
+    assert "spinnaker: 2 found" in out
+    assert re.search(rf"Blackfly S BFS-U3-51S5M +{MONO}", out)
 
 
-def test_el_devices_discover_without_pyspin_says_how_to_install(monkeypatch, capsys):
+def test_el_devices_discover_without_pyspin_says_how_to_install(
+    monkeypatch, capsys, discover_only
+):
+    discover_only("spinnaker")
     monkeypatch.setitem(sys.modules, "PySpin", None)
     main(["discover"])
     assert "spinnaker: unavailable" in capsys.readouterr().out

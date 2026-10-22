@@ -22,6 +22,7 @@ already there (in trigger mode, those the triggers asked for).
 
 import enum
 import io
+import os
 import zipfile
 from collections import deque
 from collections.abc import Callable, Iterable
@@ -333,7 +334,8 @@ class FakeGenTLBuffer:
     """A ``gentl.Buffer``: memory the driver announced, filled with a frame."""
 
     def __init__(self, token: "BufferToken") -> None:
-        self.raw_buffer = token.raw_buffer
+        # The producer writes into the token's memory; the fake keeps its own.
+        self.raw_buffer = bytearray(len(token.raw_buffer))
         self.context = token.context
         self.frame: FakeFrame | None = None
         self._complete = False
@@ -432,6 +434,12 @@ class FakeDataStream(_Module):
         return 1
 
     def announce_buffer(self, token: BufferToken) -> FakeGenTLBuffer:
+        # Verified against FLIR's producer: a bytearray is refused, bytes work.
+        if not isinstance(token.raw_buffer, bytes):
+            raise InvalidParameterException(
+                "Parameter not valid or out of range. (Message from the source: "
+                "Error calling GenTL function DSAnnounceBuffer.)"
+            )
         buffer = FakeGenTLBuffer(token)
         self.announced.append(buffer)
         return buffer
@@ -526,6 +534,10 @@ class FakeDevice(_Module):
         self.streams: list[FakeDataStream] = []
 
     def open(self, flags: int) -> None:
+        if self.sim.opened and self._genicam.reopenable:
+            # FLIR's producer lets the same process open a camera again (verified).
+            self._open(self.interface)
+            return
         try:
             self.sim.open()
         except FakeCameraError as exc:
@@ -611,6 +623,9 @@ class FakeProducer(_Module):
         if path not in self._genicam.producers:
             raise LoadLibraryException(f"can't load {path}")
         self.path_name = path
+        if self._genicam.chatter:
+            # Real producers' libraries write straight to the stderr descriptor.
+            os.write(2, self._genicam.chatter)
         self._genicam.producers_opened.append(path)
         self._open(None)
 
@@ -626,6 +641,10 @@ class FakeGenicam:
         producers: Paths of the ``.cti`` files that load.
         zipped_xml: Whether cameras serve their XML zipped.
         stream_nodes: Whether data streams have a ``StreamBufferHandlingMode``.
+        reopenable: Whether a camera this process has open can be opened again,
+            as FLIR's producer allows.
+        chatter: Bytes the producer writes to file descriptor 2 as it loads, as
+            genicam does for functions an older producer lacks.
     """
 
     def __init__(
@@ -635,7 +654,11 @@ class FakeGenicam:
         producers: Iterable[str] = (PRODUCER,),
         zipped_xml: bool = False,
         stream_nodes: bool = True,
+        reopenable: bool = False,
+        chatter: bytes = b"",
     ) -> None:
+        self.reopenable = reopenable
+        self.chatter = chatter
         self.cameras = list(cameras)
         self.producers = list(producers)
         self.zipped_xml = zipped_xml

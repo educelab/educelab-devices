@@ -91,6 +91,13 @@ class BufferStatus(enum.IntEnum):
         return self.name.lower().replace("_", "-")
 
 
+class StreamCallbackType(enum.IntEnum):
+    INIT = 0
+    EXIT = 1
+    START_BUFFER = 2
+    BUFFER_DONE = 3
+
+
 class GcAccessMode(enum.IntEnum):
     UNDEFINED = -1
     RO = 0
@@ -177,8 +184,16 @@ class FakeArvBuffer:
 class FakeArvStream:
     """An ``Aravis.Stream``, with its input and output queues."""
 
-    def __init__(self, camera: "FakeArvCamera") -> None:
+    def __init__(
+        self, camera: "FakeArvCamera", callback: Any = None, user_data: Any = None
+    ) -> None:
         self.camera = camera
+        self.callback = callback
+        self.user_data = user_data
+        # Creating a stream enables the camera's stream channel; finalizing one
+        # disables it, even if a newer stream has enabled it since (assumed from
+        # arv_uv_stream_finalize; usb3-vision.md).
+        camera.channel_enabled = True
         self.input: deque[FakeArvBuffer] = deque()
         self.output: deque[FakeArvBuffer] = deque()
         self.pops: list[tuple[str, int | None]] = []
@@ -202,7 +217,7 @@ class FakeArvStream:
             if self.camera.payload_for_format() > buffer.size:
                 buffer.status = BufferStatus.SIZE_MISMATCH
                 buffer.frame = None
-                self.output.append(buffer)
+                self._land(buffer)
                 landed += 1
                 continue
             frame = self.sim.next_frame()
@@ -212,12 +227,28 @@ class FakeArvStream:
                 if frame.status.name == "COMPLETE"
                 else BufferStatus.MISSING_PACKETS
             )
-            self.output.append(buffer)
+            self._land(buffer)
             landed += 1
         return landed
 
+    def _land(self, buffer: FakeArvBuffer) -> None:
+        # As in arvuvstream.c: queue the buffer, then tell the callback.
+        self.output.append(buffer)
+        if self.callback is not None:
+            self.callback(self.user_data, StreamCallbackType.BUFFER_DONE, buffer)
+
     def _can_arrive(self) -> bool:
-        return bool(self.input) and self.camera.acquiring and self.sim.frame_waiting()
+        return (
+            bool(self.input)
+            and self.camera.acquiring
+            and self.camera.channel_enabled
+            and self.sim.frame_waiting()
+        )
+
+    def __del__(self) -> None:
+        camera = self.__dict__.get("camera")
+        if camera is not None:
+            camera.channel_enabled = False
 
     def try_pop_buffer(self) -> FakeArvBuffer | None:
         self.pops.append(("try", None))
@@ -260,8 +291,8 @@ class FakeArvDevice:
     def set_access_check_policy(self, policy: AccessCheckPolicy) -> None:
         self.access_check = policy
 
-    def get_feature(self, name: str) -> object | None:
-        return self.sim.nodes.get(name)
+    def get_feature(self, name: str) -> "FakeArvFeature | None":
+        return FakeArvFeature(self.sim, name) if name in self.sim.nodes else None
 
     def is_feature_available(self, name: str) -> bool:
         if name not in self.sim.nodes:
@@ -269,8 +300,14 @@ class FakeArvDevice:
         return True
 
     def get_feature_access_mode(self, name: str) -> GcAccessMode:
-        access = self.sim.access(name)
-        return GcAccessMode.UNDEFINED if access == "NA" else GcAccessMode[access]
+        # Like Aravis, this ignores locks: a node whose access changes with other
+        # settings reads as RW, and is_locked() says whether it is locked now.
+        node = self.sim.nodes[name]
+        if callable(node.access):
+            return GcAccessMode.RW
+        return (
+            GcAccessMode.UNDEFINED if node.access == "NA" else GcAccessMode[node.access]
+        )
 
     def _read(self, name: str) -> Any:
         return _translated(lambda: self.sim.read(name))
@@ -317,6 +354,18 @@ class FakeArvDevice:
         _translated(lambda: self.sim.execute(name))
 
 
+class FakeArvFeature:
+    """An ``Aravis.GcFeatureNode``, for its lock state."""
+
+    def __init__(self, sim: FakeCamera, name: str) -> None:
+        self._sim = sim
+        self._name = name
+
+    def is_locked(self) -> bool:
+        node = self._sim.nodes[self._name]
+        return callable(node.access) and self._sim.access(self._name) == "RO"
+
+
 class FakeArvCamera:
     """An ``Aravis.Camera``. Its hardware is let go when the last reference to it,
     its device, or a stream goes."""
@@ -325,6 +374,7 @@ class FakeArvCamera:
         _translated(sim.open)
         self.sim = sim
         self.acquiring = False
+        self.channel_enabled = False
         self.device = FakeArvDevice(sim)
         self.streams_created = 0
 
@@ -356,7 +406,7 @@ class FakeArvCamera:
         self, callback: Any = None, user_data: Any = None
     ) -> FakeArvStream:
         self.streams_created += 1
-        return FakeArvStream(self)
+        return FakeArvStream(self, callback, user_data)
 
     def start_acquisition(self) -> None:
         _translated(self.sim.start)
@@ -374,6 +424,7 @@ class _Aravis:
     GcError = GcError
     BufferStatus = BufferStatus
     GcAccessMode = GcAccessMode
+    StreamCallbackType = StreamCallbackType
     RangeCheckPolicy = RangeCheckPolicy
     AccessCheckPolicy = AccessCheckPolicy
     Stream = FakeArvStream

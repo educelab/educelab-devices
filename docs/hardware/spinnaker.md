@@ -664,6 +664,17 @@ intact. Still open: the same facts for other models, and the frame-ID assumption
 
 ### Last run
 
+**2026-10-22**, after the driver moved onto the shared GenICam core (ADR 0006). Same host
+and cameras, Python 3.12.15, on 20298452 (`spinnaker-tests-refactor-1.log`): all 16
+hardware tests passed. Timestamp node `Timestamp`, offset spread 35 µs over 5
+measurements, 300 captures with 600 stale, 0 incomplete, 0 re-measured, and dtype
+reference drift 0. Throughput limit 180.864 MB/s (range 5.024–180.864, step 5.024).
+Switching to software trigger took 0.193 s, with a 58 ms turnaround, and all 20 triggered
+captures began 1.8–3.3 ms after the request with no re-fires. These match the runs before
+the move, so the move changed nothing callers can see.
+
+### Run of 2026-10-20
+
 **2026-10-20**, same host, SDK and cameras as 2026-10-19. 20305114 negotiated USB 3 this
 time (95 MB/s uncapped), so all five cameras shared the hub's one upstream link.
 Mono16, gain 10, 100 captures per camera, no incomplete frames and no failed captures in

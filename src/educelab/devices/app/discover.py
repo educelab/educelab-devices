@@ -4,7 +4,7 @@ import argparse
 import importlib
 from dataclasses import dataclass
 
-from educelab.devices.device import Device
+from educelab.devices.device import Device, DeviceInfo
 from educelab.devices.errors import DeviceError
 
 
@@ -47,6 +47,7 @@ def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") 
 
 
 def run(args: argparse.Namespace) -> int:
+    sections = []
     found = 0
     for backend in BACKENDS:
         try:
@@ -54,23 +55,51 @@ def run(args: argparse.Namespace) -> int:
             device_class: type[Device] = getattr(module, backend.device_class)
             infos = device_class.discover()
         except ImportError as exc:
-            print(f"{backend.name}: unavailable. {exc}")
+            sections.append(f"{backend.name}: unavailable\n  {exc}")
             continue
         except DeviceError as exc:
-            print(f"{backend.name}: discovery failed. {exc}")
+            sections.append(f"{backend.name}: discovery failed\n  {exc}")
             continue
         except Exception as exc:  # noqa: BLE001
             # One broken backend shouldn't hide the others.
-            print(f"{backend.name}: discovery failed. {type(exc).__name__}: {exc}")
+            sections.append(
+                f"{backend.name}: discovery failed\n  {type(exc).__name__}: {exc}"
+            )
             continue
-        for info in infos:
-            found += 1
-            details = [f"{info.model} at {info.address or 'unknown address'}"]
-            if info.serial_number:
-                details.append(f"serial {info.serial_number}")
-            if info.firmware_version:
-                details.append(f"firmware {info.firmware_version}")
-            print(f"{backend.name}: {', '.join(details)}")
+        found += len(infos)
+        if not infos:
+            sections.append(f"{backend.name}: none found")
+            continue
+        rows = _table(infos)
+        sections.append("\n".join([f"{backend.name}: {len(infos)} found", *rows]))
+    print("\n\n".join(sections))
     if not found:
         print("No devices found.")
     return 0
+
+
+_COLUMNS = (
+    ("MODEL", "model"),
+    ("SERIAL", "serial_number"),
+    ("ADDRESS", "address"),
+    ("FIRMWARE", "firmware_version"),
+)
+
+
+def _table(infos: list[DeviceInfo]) -> list[str]:
+    """Indented, aligned rows for ``infos``, leaving out columns none of them has."""
+    columns = [
+        (title, [getattr(info, field) or "" for info in infos])
+        for title, field in _COLUMNS
+        if any(getattr(info, field) for info in infos)
+    ]
+    widths = [max(len(title), *map(len, values)) for title, values in columns]
+    lines = [[title for title, _ in columns]]
+    lines += [[values[i] for _, values in columns] for i in range(len(infos))]
+    return [
+        "  "
+        + "  ".join(
+            cell.ljust(w) for cell, w in zip(line, widths, strict=True)
+        ).rstrip()
+        for line in lines
+    ]

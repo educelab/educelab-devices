@@ -189,16 +189,24 @@ class GenICamHardwareTests:
         camera.set_setting("ExposureAuto", "Off")
         assert not camera.setting(EXPOSURE_TIME).read_only
 
-    def test_out_of_range_writes_are_refused(self, camera):
-        # The library or the camera must refuse it; the driver's own check is
-        # skipped by writing through the connection.
+    def test_out_of_range_writes_are_refused_or_clamped(self, restore):
+        # Written through the connection, past the driver's own range check, to
+        # record what the library and camera do (usb3-vision.md).
+        camera = restore
+        if "ExposureAuto" in camera.settings():
+            camera.set_setting("ExposureAuto", "Off")
         node = camera._exposure_node
-        if node is None:
-            pytest.skip("this camera has no exposure time")
+        if node is None or not camera._connection.is_writable(node):
+            pytest.skip("this camera has no writable exposure time")
         conn = camera._connection
         low, _ = conn.float_range(node)
-        with pytest.raises(DeviceError):
+        try:
             conn.set_float(node, low / 2)
+        except DeviceError as exc:
+            print(f"out-of-range write refused: {exc}")
+            return
+        print(f"out-of-range write of {low / 2} accepted; reads {conn.get_float(node)}")
+        assert conn.get_float(node) >= low
 
     def test_every_pixel_format_captures(self, restore):
         # Changing the format pauses acquisition and may need new buffers.
@@ -260,9 +268,14 @@ class GenICamHardwareTests:
         assert max(preview.shape[:2]) <= 1280
 
     def test_a_second_open_of_the_same_camera_is_busy(self, camera, serial):
-        with pytest.raises(DeviceBusy) as info:
-            self.make(serial).open()
-        print(f"second open: {info.value}")
+        second = self.make(serial)
+        try:
+            second.open()
+        except DeviceBusy as exc:
+            print(f"second open: {exc}")
+            return
+        second.close()
+        pytest.fail("a second open of the same camera succeeded")
 
     def test_reopening_lets_go_each_time(self, serial, camera):
         camera.close()

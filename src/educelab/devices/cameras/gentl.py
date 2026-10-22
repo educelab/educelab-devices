@@ -8,15 +8,18 @@ in the folders listed in ``GENICAM_GENTL64_PATH``. See
 ``docs/hardware/usb3-vision.md`` for installing a producer on each OS.
 """
 
+import contextlib
 import functools
 import importlib
 import io
 import logging
 import math
 import os
+import sys
+import tempfile
 import threading
 import zipfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import ModuleType
 from typing import Any, TypeVar
@@ -173,9 +176,13 @@ class _Producer:
         self.path = path
         self.users = 0
         self.interfaces: dict[str, Any] = {}
+        # Some producers (FLIR's, verified) let one process open a camera twice;
+        # this refuses it, as other backends do.
+        self.open_serials: set[str] = set()
         try:
             self.producer = gentl.GenTLProducer.create_producer()
-            self.producer.open(path)
+            with _stderr_to_log(path):
+                self.producer.open(path)
         except gentl.GenericException as exc:
             error = ImportError(
                 f"Could not load the GenTL producer {path}: {exc}. {GENTL_INSTALL_HINT}"
@@ -217,6 +224,28 @@ class _Producer:
         self.interfaces.clear()
         if problems:
             raise DeviceError(f"could not unload {self.path}: {'; '.join(problems)}")
+
+
+@contextlib.contextmanager
+def _stderr_to_log(path: str) -> Iterator[None]:
+    """Log what native code writes to the stderr descriptor, rather than show it.
+
+    genicam reports each optional GenTL function an older producer lacks this
+    way as the producer loads (e.g. "does not implement DSGetNumFlows" from
+    FLIR's). Output from other threads in that moment is logged too.
+    """
+    sys.stderr.flush()
+    saved = os.dup(2)
+    with tempfile.TemporaryFile() as captured:
+        os.dup2(captured.fileno(), 2)
+        try:
+            yield
+        finally:
+            os.dup2(saved, 2)
+            os.close(saved)
+            captured.seek(0)
+            for line in captured.read().decode(errors="replace").splitlines():
+                logger.debug("%s: %s", path, line)
 
 
 # One entry per (genicam module, producer path); the module is a fake per test.
@@ -302,6 +331,8 @@ class _GenTLBackend:
                     if info is None:
                         _release(entry)
                         continue
+                    if serial in entry.open_serials:
+                        raise DeviceBusy(f"{info.id_} is already open in this process")
                     device = _translate(genicam, info.create_device)
                     flags = gentl.DEVICE_ACCESS_FLAGS_LIST.DEVICE_ACCESS_EXCLUSIVE
                     try:
@@ -313,7 +344,9 @@ class _GenTLBackend:
                     except gentl.GenericException as exc:
                         error = DeviceError(f"{info.id_} won't open: {exc}")
                     else:
-                        return _GenTLConnection(genicam, entry, device)
+                        conn = _GenTLConnection(genicam, entry, device, serial)
+                        entry.open_serials.add(serial)
+                        return conn
                 except BaseException:
                     _release(entry)
                     raise
@@ -458,7 +491,10 @@ class _Features:
 class _GenTLConnection(_Features):
     """A `Connection` onto one open GenTL device and its first data stream."""
 
-    def __init__(self, genicam: Any, producer: _Producer, device: Any) -> None:
+    def __init__(
+        self, genicam: Any, producer: _Producer, device: Any, serial: str
+    ) -> None:
+        self._serial = serial
         self._genicam = genicam
         self._gentl = genicam.gentl
         self._producer: _Producer | None = producer
@@ -506,7 +542,9 @@ class _GenTLConnection(_Features):
         )
         count = max(BUFFER_COUNT, int(self._do(lambda: stream.buffer_announce_min)))
         for i in range(count):
-            token = gentl.BufferToken(bytearray(payload), i)
+            # Producers refuse a bytearray here (FLIR's, verified); like
+            # Harvesters, hand over bytes, which the producer then fills.
+            token = gentl.BufferToken(bytes(payload), i)
             buffer = self._do(functools.partial(stream.announce_buffer, token))
             self._buffers.append(buffer)
             self._do(functools.partial(stream.queue_buffer, buffer))
@@ -609,6 +647,7 @@ class _GenTLConnection(_Features):
                 problems.append(f"close: {exc}")
         self._stream = self._device = None
         producer, self._producer = self._producer, None
+        producer.open_serials.discard(self._serial)
         try:
             _release(producer)
         except DeviceError as exc:

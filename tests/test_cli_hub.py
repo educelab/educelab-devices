@@ -89,10 +89,13 @@ def test_hub_errors_are_reported(sdk, capsys):
     assert "Timeout occurred" in capsys.readouterr().err
 
 
-def test_discover_includes_acroname_hubs(sdk, capsys):
+def test_discover_includes_acroname_hubs(sdk, capsys, discover_only):
+    discover_only("acroname")
     assert any(b.name == "acroname" for b in discover.BACKENDS)
     assert main(["discover"]) == 0
-    assert "acroname: USBHub3p" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "acroname: 1 found" in out
+    assert "USBHub3p" in out
 
 
 def test_missing_sdk_names_the_extra(monkeypatch, capsys):

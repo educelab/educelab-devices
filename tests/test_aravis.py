@@ -1,6 +1,7 @@
 """`AravisCamera`, tested against the fake ``gi.repository`` in `fakes.aravis`."""
 
 import builtins
+import re
 import subprocess
 import sys
 
@@ -138,10 +139,22 @@ def test_open_finds_the_camera_by_serial(camera, sim):
     assert camera.info.backend == "aravis"
 
 
-def test_open_turns_on_range_and_access_checks(camera, repository):
+def test_open_turns_on_access_checks_but_not_range_checks(camera, repository):
+    # Aravis's range check refuses Mono16 on the CM3-U3-50S5M, whose XML gives the
+    # PixelFormat register a stale maximum (usb3-vision.md). The core checks ranges.
     device = connection_of(camera)._device
-    assert device.range_check == repository.Aravis.RangeCheckPolicy.ENABLE
     assert device.access_check == repository.Aravis.AccessCheckPolicy.ENABLE
+    assert device.range_check == repository.Aravis.RangeCheckPolicy.DISABLE
+
+
+def test_a_locked_node_is_not_writable(camera, sim):
+    # Aravis's access mode ignores locks (usb3-vision.md), so the driver asks.
+    sim.set("ExposureAuto", "Continuous")
+    conn = connection_of(camera)
+    assert conn.is_readable("ExposureTime")
+    assert not conn.is_writable("ExposureTime")
+    sim.set("ExposureAuto", "Off")
+    assert conn.is_writable("ExposureTime")
 
 
 def test_open_queues_a_pool_of_buffers_sized_to_the_payload(camera, sim):
@@ -221,6 +234,42 @@ def test_grab_returns_the_newest_frame_and_recycles_older_ones(camera, sim):
     buffer.release()
     assert sim.held == []
     assert stream.get_n_buffers() == (BUFFER_COUNT, 0)
+
+
+def test_frames_landing_while_nobody_grabs_leave_only_the_newest(camera, sim):
+    # Otherwise Aravis fills every buffer and then drops the newer frames.
+    stream = connection_of(camera)._stream
+    stream.arrive(BUFFER_COUNT * 2)
+    assert len(stream.output) == 1
+    assert stream.output[0].get_frame_id() == sim.frames_grabbed
+    assert len(sim.held) == 1
+
+
+def test_the_stream_callback_does_not_keep_the_camera_alive(repository, sim):
+    camera = AravisCamera(MONO, repository=repository)
+    camera.open()
+    stream = connection_of(camera)._stream
+    assert stream.callback is not None
+    del stream
+    camera.close()
+    assert not sim.opened
+
+
+def test_a_leftover_buffer_does_not_keep_the_camera_alive(repository, sim):
+    # A failed test's traceback can hold one; the camera must still be let go.
+    camera = AravisCamera(MONO, repository=repository)
+    camera.open()
+    leftover = connection_of(camera).grab(1.0)
+    leftover.release()
+    camera.close()
+    assert not sim.opened
+    del leftover
+
+
+def test_tl_params_are_locked_only_while_acquiring(camera, sim):
+    assert sim.get("TLParamsLocked") == 1
+    connection_of(camera).stop_acquisition()
+    assert sim.get("TLParamsLocked") == 0
 
 
 def test_grab_timeout_is_passed_in_microseconds(camera):
@@ -358,9 +407,14 @@ class TestAravisCameraContractSoftwareTrigger(TestAravisCameraContract):
 # --- el-devices discover ------------------------------------------------------
 
 
-def test_el_devices_discover_lists_aravis_cameras(repository, monkeypatch, capsys):
+def test_el_devices_discover_lists_aravis_cameras(
+    repository, monkeypatch, capsys, discover_only
+):
+    discover_only("aravis")
     from educelab.devices.app.cli import main
 
     monkeypatch.setattr(aravis, "load_aravis", lambda: repository)
     assert main(["discover"]) == 0
-    assert f"aravis: U3-36P0XCP-M at usb:1-1, serial {MONO}" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "aravis: 2 found" in out
+    assert re.search(rf"U3-36P0XCP-M +{MONO} +usb:1-1", out)

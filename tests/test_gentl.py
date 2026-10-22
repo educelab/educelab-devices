@@ -1,5 +1,6 @@
 """`GenTLCamera`, tested against the fake ``genicam`` package in `fakes.gentl`."""
 
+import re
 import subprocess
 import sys
 
@@ -117,6 +118,18 @@ def test_a_producer_that_will_not_load_raises_import_error(genicam):
     assert genicam.open_modules == []
 
 
+def test_what_a_producer_prints_as_it_loads_is_logged_not_shown(sim, capfd, caplog):
+    chatter = b"GenTL producer does not implement DSGetNumFlows\n"
+    genicam = FakeGenicam([sim], chatter=chatter)
+    with (
+        caplog.at_level("DEBUG", logger="educelab.devices.cameras.gentl"),
+        make(MONO, genicam),
+    ):
+        pass
+    assert "DSGetNumFlows" not in capfd.readouterr().err
+    assert "DSGetNumFlows" in caplog.text
+
+
 def test_constructing_a_camera_touches_nothing(genicam):
     make(MONO, genicam)
     assert genicam.producers_opened == []
@@ -153,6 +166,14 @@ def test_camera_held_elsewhere_raises_device_busy(genicam, sim):
         make(MONO, genicam).open()
     assert info.value.__context__ is None
     assert genicam.open_modules == []
+
+
+def test_a_camera_open_in_this_process_is_busy_even_if_the_producer_allows_it(sim):
+    genicam = FakeGenicam([sim], reopenable=True)
+    with make(MONO, genicam), pytest.raises(DeviceBusy, match="already open"):
+        make(MONO, genicam).open()
+    with make(MONO, genicam):
+        pass
 
 
 def test_close_releases_every_module(genicam, sim):
@@ -340,12 +361,15 @@ class TestGenTLCameraContractSoftwareTrigger(TestGenTLCameraContract):
 # --- el-devices discover ------------------------------------------------------
 
 
-def test_el_devices_discover_lists_gentl_cameras(genicam, monkeypatch, capsys):
+def test_el_devices_discover_lists_gentl_cameras(
+    genicam, monkeypatch, capsys, discover_only
+):
+    discover_only("gentl")
     from educelab.devices.app.cli import main
 
     monkeypatch.setattr(gentl, "load_genicam", lambda: genicam)
     monkeypatch.setattr(gentl, "find_producers", lambda: [PRODUCER])
     assert main(["discover"]) == 0
-    assert (
-        f"gentl: U3-36P0XCP-M at IDS-{MONO}, serial {MONO}" in capsys.readouterr().out
-    )
+    out = capsys.readouterr().out
+    assert "gentl: 2 found" in out
+    assert re.search(rf"U3-36P0XCP-M +{MONO} +IDS-{MONO}", out)

@@ -23,13 +23,21 @@ Everything here was observed on one unit (serial `4110091493`, firmware `3.90.27
 
 Fedora on an Apple Silicon Mac (Asahi Linux, arm64), IDS peak 26.06.2's `ids_u3vgentl.cti` (archive install), Python 3.14.8, genicam 1.6.0, 2026-10-22. [V for each point below, on this unit]
 
+- **Rerun with the hardware tests that allow for it: 17 passed, 7 skipped** (the timing checks, plus no `ExposureAuto`). 300 captures without `not_before` ran at 7.0 per second with no incomplete frames.
 - **Over USB 3 (5000M in `lsusb -t`): it works, untimed.** 12 of 23 hardware tests passed, 1 skipped. Every failure was the driver refusing `not_before`, because through GenTL this camera's frames can't be timed (see [Transport](#transport)). Captures without `not_before`, settings, pixel formats, the throughput limit, reopening and busy detection all worked. The hardware tests now skip timing checks for a camera that can't be timed, and check the refusal instead.
 - **Over USB 2 it fails badly.** The first runs went through a USB 2 A-to-C adapter: Aravis reported `USB 2.10 (Low bandwidth)`, and its stream completed none of 218 frames. Through GenTL, only 6 of 23 tests passed. The control channel fell out of step (`ListenFailed with 'Input/Output Error'`, `ListenUnexpected command id 0x4356`, `unexpected request id 100<>101`), grabs timed out, and finally the camera disappeared. IDS says uEye XCP cameras don't work on USB 2.0. Check the link with `lsusb -t`: 480M is USB 2, 5000M USB 3.
 - **Discovery** reports model `U3-36PxXCP-M`, serial `4110091493` and address `1409f4fb04e5 U3-36PxXCP-M`. genapi refuses an out-of-range exposure ("must be greater than or equal 31.712621").
 
 ### Aravis on Linux
 
-The same machine and link, Aravis 0.8 built from source. With the driver in sync USB mode, as it then was everywhere, only discovery passed: opening timed out, because every frame arrived incomplete while the driver waited for one complete frame to time the camera's arrivals. `arv-camera-test-0.8` then showed the cause: in sync mode it reported six or more errors, while in async mode the camera streamed cleanly. The driver now uses async mode off macOS. [V, 2026-10-22] **Not yet rerun** through the driver.
+The same machine and link, Aravis 0.8 built from source. With the driver in sync USB mode, as it then was everywhere, only discovery passed: opening timed out, because every frame arrived incomplete while the driver waited for one complete frame to time the camera's arrivals. `arv-camera-test-0.8` then showed the cause: in sync mode it reported six or more errors, while in async mode the camera streamed cleanly. The driver now uses async mode off macOS. [V, 2026-10-22]
+
+Rerun in async mode: 22 of 23 hardware tests passed, 2 skipped (no `ExposureAuto`; the refusal test, since Aravis times this camera). [V for each point below]
+
+- The arrival-timed offset spread over 5 measurements was 0.99 ms.
+- The 20 triggered captures needed no second trigger, and exposures began 1.6–1.7 ms after the request (9.9 ms for the first, with the settle wait).
+- 300 `not_before` captures met 300 stale frames, at 2.5 captures per second, as on the Mac. After a 1 s pause the frame taken was exposed 278 ms before the call.
+- Both pixel formats captured, and the camera clamped an out-of-range exposure write to 31.7 µs, as on the Mac.
 
 ## Nodes
 
@@ -127,6 +135,11 @@ ARAVIS_SERIAL=4110091493 pytest -m hardware tests/test_aravis_hardware.py -s
 6. The hardware tests pass: 20 passed, 1 skipped, with the multi-camera tests deselected or skipped when it is the only camera of its model.
 
 ### Last run
+
+2026-10-22, Fedora on Asahi Linux (arm64), Python 3.14.8, firmware `3.90.27889`, over USB 3:
+
+- `tests/test_aravis_hardware.py` (Aravis 0.8 from source, async USB mode): 22 passed, 2 skipped.
+- `tests/test_gentl_hardware.py` (IDS peak 26.06.2's `ids_u3vgentl.cti`): 17 passed, 7 skipped, the timing checks among them, since GenTL can't time this camera's frames.
 
 2026-10-22, macOS 27 (arm64), Python 3.12, Aravis 0.8.36, firmware `3.90.27889`:
 

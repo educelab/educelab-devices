@@ -79,7 +79,7 @@ Settle the open choices and the seam first. Then move the Spinnaker driver onto 
 
 - [ ] CI is green.
 - [x] Real Aravis 0.8.36 on macOS, without a camera (2026-10-22). The drift tests pass, and `tests/test_aravis_library.py` drives `AravisCamera` through Aravis's simulated camera. This found two changes: falling back to `ExposureTimeAbs`, and skipping the 1 s device-list update when reopening.
-- [ ] IDS U3-36P0XCP-M-GL hardware tests pass on macOS and Linux. macOS passes (2026-10-22); Linux not yet run.
+- [x] IDS U3-36P0XCP-M-GL hardware tests pass on macOS and Linux (2026-10-22; Linux through Aravis needed async USB mode).
 - [ ] The rolling-shutter timestamp behaviour is checked. Trigger mode is settled (the stamp marks when the camera is ready, so frames are dated by their trigger); free-running stamps also come early, so free-running timestamps are early by the frame period minus about 125 ms (safe for `not_before`; measured 2026-10-22). Still unknown: which row of the rolling shutter the trigger marks.
 
 ## Phase 4: GenTL backend (Windows, Linux)
@@ -105,7 +105,7 @@ Settle the open choices and the seam first. Then move the Spinnaker driver onto 
 
 - [ ] CI is green.
 - [x] Under Python 3.12, the full suite and the real-`genapi` node-map test pass (2026-10-22).
-- [ ] IDS hardware tests pass on Linux through IDS peak, and on Windows if a Windows machine is available. Otherwise the Windows check is recorded as outstanding.
+- [~] IDS hardware tests pass on Linux through IDS peak: 17 passed, 7 skipped (untimed), 2026-10-22. Windows: outstanding (the Windows machine was used for the FLIR GenTL run).
 
 ## Hardware-driven changes (2026-10-22, approved by the maintainer)
 
@@ -137,7 +137,7 @@ Made after the first runs on the IDS U3-36PxXCP-M and CM3-U3-50S5Ms; details are
   - `usb3-vision.md` now leads with the drivers, backends, how they differ from Aravis and GenTL, hazards and the manual check; the Phase 1 research follows as reference. The IDS camera's findings moved to `ids-u3-36p0xcp.md`. Free-running timing was measured once the rig was back (see ids-u3-36p0xcp.md, Timestamps).
 - [x] Task 5.3: Update `pyproject.toml` extras, `CLAUDE.md`, `tech-stack.md`, the README, and `docs/guide.md` (only if callers can notice the difference).
 - [~] Task 5.4: Run the manual checks on the IDS camera: Aravis on macOS and Linux, GenTL on Linux and Windows. Record the results in the hardware doc.
-  - Aravis on macOS: done and recorded (ids-u3-36p0xcp.md, Last run). Linux and Windows: not yet run.
+  - Aravis on macOS and Linux, GenTL on Linux: done and recorded (ids-u3-36p0xcp.md, Last run). GenTL on Windows: outstanding.
 - [x] Task 5.5 (stretch): Run the CM3-U3-50S5M through both generic backends and compare it with the Spinnaker driver.
   - Compared in usb3-vision.md (Hardware runs): all hardware tests pass on all three; the FLIR cameras work without PySpin.
 

@@ -217,7 +217,10 @@ class FakeCamera:
             return "RO" if self.streaming else "RW"
 
         def when_off(name: str) -> Callable[[], Access]:
-            return lambda: "RW" if self.get(name) == "Off" else "RO"
+            # A camera without the switch (e.g. no ExposureAuto) is always manual.
+            return lambda: (
+                "RW" if not self.has(name) or self.get(name) == "Off" else "RO"
+            )
 
         def limit_access() -> Access:
             if throughput_mode and self.get("DeviceLinkThroughputLimitMode") != "On":
@@ -227,6 +230,8 @@ class FakeCamera:
             return "RW"
 
         def limit_cap() -> float:
+            if not self.has("DeviceLinkThroughputLimit"):
+                return self.THROUGHPUT_MAX
             on = (
                 not throughput_mode or self.get("DeviceLinkThroughputLimitMode") == "On"
             )
@@ -349,6 +354,8 @@ class FakeCamera:
     @property
     def triggered(self) -> bool:
         """Whether frames wait for a software trigger."""
+        if not (self.has("TriggerMode") and self.has("TriggerSource")):
+            return False
         return self.get("TriggerMode") == "On" and self.get("TriggerSource") == (
             "Software"
         )

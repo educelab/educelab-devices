@@ -408,7 +408,8 @@ class GenICamCamera(FrameCamera):
     def _configure(self) -> None:
         # Free-running; the backend keeps only the newest frame. The fastest way
         # to capture (pgs-scan dev; docs/hardware/spinnaker.md, Acquisition).
-        self._set_enum("AcquisitionMode", "Continuous")
+        if self._connection.has("AcquisitionMode"):
+            self._set_enum("AcquisitionMode", "Continuous")
         if self._connection.is_readable("TriggerMode"):
             # A camera left in trigger mode (e.g. by a vendor viewer) would never
             # send a frame.

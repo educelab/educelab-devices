@@ -49,7 +49,8 @@ Settle the open choices and the seam first. Then move the Spinnaker driver onto 
 - [x] Task 2.3: Implement the PySpin backend on the seam: `System` lifecycle, node access, image status, and exception codes.
   - Deviation: to keep the Spinnaker tests unmodified, `spinnaker.py` still imports `time` and re-exports `_RETRIGGER_TURNAROUNDS`, because the tests reach for both there.
   - Unverified: `is_readable`/`is_writable` pass PySpin an uncast `INode`, where the old code passed typed pointers. Check this in the Phase 2 hardware run.
-- [ ] Task 2.4: Add probing for optional features (trigger, throughput limit, timestamp node, auto modes, `AcquisitionResultingFrameRate`). Settings for missing features are left out.
+- [x] Task 2.4: Add probing for optional features (trigger, throughput limit, timestamp node, auto modes, `AcquisitionResultingFrameRate`). Settings for missing features are left out.
+  - Deviation: features are checked each time settings are read, through `has()` and `is_readable()`, rather than cached at `open()`. Access changes at runtime (e.g. `ExposureTime` is read-only under auto exposure), so a cache would go stale. `AcquisitionMode` is now optional. Tests cover each feature being absent.
 
 ### Verification
 

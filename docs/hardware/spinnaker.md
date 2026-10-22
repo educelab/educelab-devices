@@ -2,7 +2,11 @@
 
 Machine-vision cameras driven through Teledyne FLIR's Spinnaker SDK and its Python
 bindings, PySpin. The lab uses them in the `pgs-scan` rigs (several cameras capturing
-together). Driver: `SpinnakerCamera` in `educelab.devices.cameras.spinnaker`.
+together). Driver: `SpinnakerCamera` in `educelab.devices.cameras.spinnaker`. Its
+acquisition, settings, trigger, and timestamp behaviour lives in the GenICam core
+(`educelab.devices.cameras._genicam`, [ADR 0006](../adr/0006-genicam-cameras-share-a-core.md)),
+which the [USB3 Vision drivers](usb3-vision.md) share, so what this doc records about that
+behaviour applies to them too until their own hardware runs say otherwise.
 
 > Checked on one rig of five Chameleon3 CM3-U3-50S5M cameras, 2026-10-16 to 2026-10-20
 > (see Manual check). Facts marked **assumed** or **unknown** are still open; the rig

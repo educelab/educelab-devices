@@ -293,6 +293,54 @@ def test_a_write_the_camera_refuses_raises_command_rejected(camera, fake):
     assert info.value.__context__ is None
 
 
+ALL_SETTINGS = {
+    EXPOSURE_TIME,
+    "ExposureAuto",
+    GAIN,
+    "GainAuto",
+    PIXEL_FORMAT,
+    THROUGHPUT_LIMIT,
+    TRIGGER,
+    "current_throughput",
+    "resulting_frame_rate",
+}
+
+
+@pytest.mark.parametrize(
+    ("without", "missing"),
+    [
+        (["TriggerSoftware"], {TRIGGER}),
+        (["TriggerMode"], {TRIGGER}),
+        (["TriggerSource"], {TRIGGER}),
+        (["DeviceLinkThroughputLimit"], {THROUGHPUT_LIMIT}),
+        (["DeviceLinkCurrentThroughput"], {"current_throughput"}),
+        (["AcquisitionResultingFrameRate"], {"resulting_frame_rate"}),
+        (["ExposureAuto"], {"ExposureAuto"}),
+        (["Gain", "GainAuto"], {GAIN, "GainAuto"}),
+        (["AcquisitionMode"], set()),
+        (["TriggerSelector"], set()),
+        (["Timestamp"], set()),
+    ],
+)
+def test_a_feature_the_camera_lacks_is_not_a_setting(without, missing):
+    with GenICamCamera(MONO, only(without=without)) as camera:
+        assert set(camera.settings()) == ALL_SETTINGS - missing
+        camera.capture_frame()
+
+
+def test_a_camera_without_gain_reports_none_in_metadata():
+    with GenICamCamera(MONO, only(without=["Gain", "GainAuto"])) as camera:
+        assert camera.capture_frame().metadata[GAIN] is None
+
+
+def test_software_trigger_works_without_a_trigger_selector():
+    backend = only(without=["TriggerSelector"])
+    with GenICamCamera(MONO, backend) as camera:
+        camera.set_setting(TRIGGER, "Software")
+        assert camera.setting(TRIGGER).value == "Software"
+        camera.capture_frame()
+
+
 # --- Acquisition --------------------------------------------------------------
 
 

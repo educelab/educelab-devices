@@ -295,6 +295,17 @@ def test_pixels_survive_requeueing(camera):
     assert pixels.flags.writeable
 
 
+def test_ten_bit_frames_are_unpacked():
+    sim = FakeCamera(MONO, formats=["Mono8", "Mono10g40IDS"])
+    with make(MONO, FakeGenicam([sim])) as camera:
+        camera.set_setting(PIXEL_FORMAT, "Mono10g40IDS")
+        frame = camera.capture_frame()
+    assert frame.pixels.dtype == np.uint16
+    assert frame.pixels.shape == (sim.height, sim.width)
+    assert frame.metadata["bit_depth"] == 10
+    assert frame.pixels.max() == frame.metadata["frame_id"] % 200
+
+
 # --- Errors -------------------------------------------------------------------
 
 

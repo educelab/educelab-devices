@@ -679,6 +679,55 @@ def test_close_after_captures_releases_everything(backend, fake):
     assert_released(backend)
 
 
+# --- Packed and deep formats ---------------------------------------------------
+
+
+def test_mono10g40ids_unpacks_four_pixels_from_five_bytes():
+    # Bytes 0-3 hold each pixel's upper 8 bits; byte 4 their low 2 bits, pixel 0
+    # in its lowest bits (verified; usb3-vision.md, Pixel formats).
+    values = np.array([[1023, 0, 514, 3]], dtype=np.uint16)
+    upper = (values >> 2).astype(np.uint8).ravel()
+    low = sum(int(v & 3) << (2 * i) for i, v in enumerate(values.ravel()))
+    packed = bytes([*upper, low])
+    pixels = _genicam.shaped_pixels(packed, "Mono10g40IDS", width=4, height=1)
+    assert pixels.dtype == np.uint16
+    np.testing.assert_array_equal(pixels, values)
+
+
+@pytest.mark.parametrize(
+    ("pixel_format", "depth"),
+    [
+        ("Mono8", 8),
+        ("Mono16", 16),
+        ("RGB8", 8),
+        ("BayerRG16", 16),
+        ("Mono10g40IDS", 10),
+    ],
+)
+def test_bit_depth_of_each_format(pixel_format, depth):
+    assert _genicam.bit_depth(pixel_format) == depth
+
+
+def test_frames_carry_their_bit_depth(camera):
+    assert camera.capture_frame().metadata["bit_depth"] == 8
+    camera.set_setting(PIXEL_FORMAT, "Mono16")
+    assert camera.capture_frame().metadata["bit_depth"] == 16
+
+
+def test_ten_bit_frames_capture_and_preview():
+    backend = only(formats=["Mono8", "Mono10g40IDS"])
+    with GenICamCamera(MONO, backend) as camera:
+        assert "Mono10g40IDS" in camera.setting(PIXEL_FORMAT).choices
+        camera.set_setting(PIXEL_FORMAT, "Mono10g40IDS")
+        frame = camera.capture_frame()
+        assert frame.pixels.dtype == np.uint16
+        assert frame.metadata["bit_depth"] == 10
+        preview = camera.preview_frame()
+    # Scaled by the real depth, not as if it were 16-bit. Consecutive fake
+    # frames differ by 1 in value.
+    assert abs(int(preview.max()) - (int(frame.pixels.max()) >> 2)) <= 1
+
+
 # --- Preview ------------------------------------------------------------------
 
 

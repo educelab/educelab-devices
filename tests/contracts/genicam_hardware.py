@@ -219,12 +219,14 @@ class GenICamHardwareTests:
         for fmt in camera.setting(PIXEL_FORMAT).choices or ():
             camera.set_setting(PIXEL_FORMAT, fmt)
             frame = camera.capture_frame(not_before=datetime.now(UTC))
-            print(f"{fmt}: {frame.pixels.shape} {frame.pixels.dtype}")
+            depth = frame.metadata["bit_depth"]
+            print(
+                f"{fmt}: {frame.pixels.shape} {frame.pixels.dtype}, {depth} bits, "
+                f"max {frame.pixels.max()}"
+            )
             assert frame.pixel_format == fmt
-            if "16" in str(fmt):
-                assert frame.pixels.dtype == np.uint16
-            else:
-                assert frame.pixels.dtype == np.uint8
+            assert frame.pixels.dtype == (np.uint8 if depth == 8 else np.uint16)
+            assert int(frame.pixels.max()) < 2**depth
 
     def test_throughput_limit_round_trips_and_is_restored(self, camera):
         settings = camera.settings()

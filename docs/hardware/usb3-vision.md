@@ -288,6 +288,11 @@ The lab Mac with five Chameleon3 CM3-U3-50S5M cameras and one IDS camera, via `t
   - After a 1 s pause, the frame taken was exposed 278 ms before the call.
 
   So this camera's frame timestamps are good to about ±2 ms. **Unknown:** which moment of the rolling-shutter exposure the device stamp marks.
+- **Pixel formats: Mono10g40IDS.**
+  - IDS's code for it is `0x4000000F`, outside the PFNC. The payload is 24,537,600 bytes, 1.25 times Mono8's.
+  - Each group of 5 bytes holds 4 pixels. Bytes 0–3 are their upper 8 bits. Byte 4 holds their low 2 bits, with pixel 0 in bits 0–1, pixel 1 in bits 2–3, and so on.
+  - Verified two ways. On the ColorBar `TestPattern`, the decoded values shifted down 2 bits equal the Mono8 frame on 100% of pixels; that pattern has only levels 0 and 255, so it checks the upper bits only. For the low bits, a live scene was decoded with all 24 orders of the 2-bit pairs, and this order gave the smoothest image: mean row difference 4.59, against 4.77 for the next best and 5.09 for the worst.
+  - The driver unpacks it to `uint16` with values 0–1023, and frames carry `metadata["bit_depth"] = 10`.
 - **Opening twice.** The driver refuses to open a camera this process already has open, without asking Aravis. A failed second `Camera.new` releases USB interfaces it never claimed. That was suspected of wedging the camera, but the async-mode hang above turned out to be the cause. The refusal stays as a precaution.
 - **Also measured.**
   - After a 1 s pause, the frame taken was exposed 13 ms before the call.

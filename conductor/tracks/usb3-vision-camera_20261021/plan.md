@@ -107,6 +107,23 @@ Settle the open choices and the seam first. Then move the Spinnaker driver onto 
 - [x] Under Python 3.12, the full suite and the real-`genapi` node-map test pass (2026-10-22).
 - [ ] IDS hardware tests pass on Linux through IDS peak, and on Windows if a Windows machine is available. Otherwise the Windows check is recorded as outstanding.
 
+## Hardware-driven changes (2026-10-22, approved by the maintainer)
+
+Made after the first runs on the IDS U3-36PxXCP-M and CM3-U3-50S5Ms; details are in `docs/hardware/usb3-vision.md`, Hardware runs.
+
+- [x] Fix the Aravis backend on real cameras:
+  - Check locks with `is_locked()`.
+  - Leave the range check off.
+  - Keep newest-only with a stream callback, and hold a stream only while acquiring.
+  - Use sync USB mode.
+  - Leave `TLParamsLocked` alone.
+  - Refuse a second open within the process.
+- [x] Fix the GenTL backend on real cameras: announce `bytes` buffers, refuse a second open within the process, and log producer stderr.
+- [x] Once open, `info.serial_number` is the camera's own `DeviceSerialNumber` (option 1). The USB serial stays available through `discover()`.
+- [x] Cameras without a timestamp latch take the offset from frame arrivals where the library reports them (Aravis). Cameras report `timestamp_source`, and frames carry it in `metadata["timestamp_source"]`.
+- [x] Deviation from the spec, which ruled out packed formats: Mono10g40IDS is unpacked to `uint16` (values 0–1023). Every frame now carries `metadata["bit_depth"]`, and previews scale by it.
+- [ ] Document `bit_depth`, `timestamp_source` and the serial behaviour for callers (Task 5.2/5.3).
+
 ## Phase 5: CLI, docs and hardware checks
 
 ### Tasks

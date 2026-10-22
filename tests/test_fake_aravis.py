@@ -126,6 +126,8 @@ def test_pixel_format_codes_match_aravis(real):
         "BayerBG16": "BAYER_BG_16",
     }
     for code, fmt in _genicam._PFNC.items():
+        if fmt not in names:
+            continue  # a vendor's own code (e.g. IDS's), outside the PFNC
         assert getattr(real, f"PIXEL_FORMAT_{names[fmt]}") == code, fmt
     for fmt, code in PFNC.items():
         if fmt in names:

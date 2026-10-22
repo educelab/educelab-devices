@@ -36,6 +36,8 @@ __all__ = [
     "FakeFrame",
     "FrameSpec",
     "Node",
+    "frame_bytes",
+    "payload_size",
 ]
 
 Kind = Literal["float", "int", "string", "enum", "command"]
@@ -61,6 +63,8 @@ LAYOUTS: dict[str, tuple[type[np.unsignedinteger[Any]], int]] = {
     "BayerRG8": (np.uint8, 1),
     "BayerRG16": (np.uint16, 1),
     "Mono12Packed": (np.uint8, 1),
+    # Unpacked here; library fakes pack it as the camera sends it.
+    "Mono10g40IDS": (np.uint16, 1),
 }
 
 
@@ -72,7 +76,27 @@ PFNC = {
     "BayerRG8": 0x01080009,
     "BayerRG16": 0x0110002F,
     "Mono12Packed": 0x010C0006,
+    "Mono10g40IDS": 0x4000000F,
 }
+
+
+def frame_bytes(pixels: npt.NDArray[Any], pixel_format: str) -> bytes:
+    """A frame's pixels as the camera sends them: packed for Mono10g40IDS."""
+    if pixel_format != "Mono10g40IDS":
+        return pixels.tobytes()
+    groups = pixels.ravel().reshape(-1, 4).astype(np.uint16)
+    upper = (groups >> 2).astype(np.uint8)
+    low = np.zeros(len(groups), dtype=np.uint8)
+    for i in range(4):
+        low |= ((groups[:, i] & 3) << (2 * i)).astype(np.uint8)
+    return np.column_stack([upper, low]).tobytes()
+
+
+def payload_size(sim: "FakeCamera") -> int:
+    """Bytes in one frame in the camera's current pixel format."""
+    fmt = sim.get("PixelFormat")
+    per_pixel = {"Mono16": 2, "BayerRG16": 2, "RGB8": 3, "Mono10g40IDS": 1.25}
+    return int(sim.width * sim.height * per_pixel.get(fmt, 1))
 
 
 class FakeCameraError(Exception):

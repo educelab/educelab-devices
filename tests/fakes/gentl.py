@@ -29,7 +29,14 @@ from collections.abc import Callable, Iterable
 from types import SimpleNamespace
 from typing import Any
 
-from fakes.genicam import PFNC, FakeCamera, FakeCameraError, FakeFrame
+from fakes.genicam import (
+    PFNC,
+    FakeCamera,
+    FakeCameraError,
+    FakeFrame,
+    frame_bytes,
+    payload_size,
+)
 
 __all__ = ["PRODUCER", "FakeGenicam"]
 
@@ -371,10 +378,11 @@ class FakeGenTLBuffer:
 
     @property
     def size_filled(self) -> int:
-        return self._filled().pixels.nbytes
+        frame = self._filled()
+        return len(frame_bytes(frame.pixels, frame.pixel_format))
 
     def _fill(self, frame: FakeFrame) -> None:
-        data = frame.pixels.tobytes()
+        data = frame_bytes(frame.pixels, frame.pixel_format)
         self.frame = frame
         self._complete = frame.status.name == "COMPLETE" and len(data) <= len(
             self.raw_buffer
@@ -425,9 +433,7 @@ class FakeDataStream(_Module):
 
     @property
     def payload_size(self) -> int:
-        fmt = self.sim.get("PixelFormat")
-        per_pixel = {"Mono16": 2, "BayerRG16": 2, "RGB8": 3}.get(fmt, 1)
-        return self.sim.width * self.sim.height * per_pixel
+        return payload_size(self.sim)
 
     @property
     def buffer_announce_min(self) -> int:

@@ -23,7 +23,14 @@ from collections import deque
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from fakes.genicam import PFNC, FakeCamera, FakeCameraError, FakeFrame
+from fakes.genicam import (
+    PFNC,
+    FakeCamera,
+    FakeCameraError,
+    FakeFrame,
+    frame_bytes,
+    payload_size,
+)
 
 __all__ = ["PFNC", "FakeArvBuffer", "FakeArvCamera", "FakeArvStream", "FakeRepository"]
 
@@ -165,7 +172,8 @@ class FakeArvBuffer:
         return self.status
 
     def get_data(self) -> bytes:
-        return self._filled().pixels.tobytes()
+        frame = self._filled()
+        return frame_bytes(frame.pixels, frame.pixel_format)
 
     def get_image_width(self) -> int:
         return self._filled().pixels.shape[1]
@@ -437,9 +445,7 @@ class FakeArvCamera:
         return self.sim.serial
 
     def payload_for_format(self) -> int:
-        fmt = self.sim.get("PixelFormat")
-        bytes_per_pixel = {"Mono16": 2, "BayerRG16": 2, "RGB8": 3}.get(fmt, 1)
-        return self.sim.width * self.sim.height * bytes_per_pixel
+        return payload_size(self.sim)
 
     def get_payload(self) -> int:
         return self.payload_for_format()

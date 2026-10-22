@@ -246,7 +246,7 @@ PREVIEW_MAX_SIZE = 1280
 # Pixel formats whose arrays the driver knows how to shape. Others (e.g.
 # packed 12-bit) would come back as raw bytes.
 _PIXEL_FORMATS = frozenset(
-    {"Mono8", "Mono16", "RGB8"}
+    {"Mono8", "Mono16", "RGB8", "Mono10g40IDS"}
     | {f"Bayer{order}{bits}" for order in ("RG", "GB", "GR", "BG") for bits in (8, 16)}
 )
 # PFNC codes of those formats, for libraries that report a buffer's format as a
@@ -263,6 +263,8 @@ _PFNC = {
     0x0110002F: "BayerRG16",
     0x01100030: "BayerGB16",
     0x01100031: "BayerBG16",
+    # IDS's own code, outside the PFNC (verified on the U3-36PxXCP-M).
+    0x4000000F: "Mono10g40IDS",
 }
 # "Once" isn't offered: it reverts to "Off" by itself, so it never reads back.
 _AUTO_MODES = ("Off", "Continuous")
@@ -789,9 +791,10 @@ class GenICamCamera(FrameCamera):
 
     def _preview_frame(self) -> npt.NDArray[np.uint8]:
         """The newest frame as 8 bits, subsampled to `PREVIEW_MAX_SIZE`."""
-        pixels = self._grab(None, self.capture_timeout).pixels
+        frame = self._grab(None, self.capture_timeout)
+        pixels = frame.pixels
         if pixels.dtype == np.uint16:
-            pixels = pixels >> 8
+            pixels = pixels >> (frame.metadata["bit_depth"] - 8)
         stride = -(-max(pixels.shape[:2]) // PREVIEW_MAX_SIZE)
         return np.ascontiguousarray(pixels[::stride, ::stride], dtype=np.uint8)
 
@@ -888,6 +891,7 @@ class GenICamCamera(FrameCamera):
                     "missing_trailer": taken.missing_trailer,
                     "timestamp_remeasured": remeasured,
                     "timestamp_source": self._timestamp_source,
+                    "bit_depth": bit_depth(taken.pixel_format),
                 }
                 return Frame(
                     taken.pixels,
@@ -1067,16 +1071,41 @@ def pfnc_name(code: int) -> str:
         raise DeviceError(f"unsupported pixel format 0x{code:08x}") from None
 
 
+def bit_depth(pixel_format: str) -> int:
+    """Significant bits per pixel value in a format the core can shape.
+
+    Deeper formats come as ``uint16``, with the bits in the low end: a 10-bit
+    pixel runs from 0 to 1023.
+    """
+    if pixel_format == "Mono10g40IDS":
+        return 10
+    return 16 if pixel_format.endswith("16") else 8
+
+
 def shaped_pixels(
     data: Any, pixel_format: str, width: int, height: int
 ) -> npt.NDArray[Any]:
     """A copy of a frame's bytes as an array shaped by its pixel format."""
+    if pixel_format == "Mono10g40IDS":
+        return _unpack_10g40(data, width, height)
     dtype = np.uint16 if pixel_format.endswith("16") else np.uint8
     shape: tuple[int, ...] = (height, width)
     if pixel_format == "RGB8":
         shape += (3,)
     count = math.prod(shape)
     return np.frombuffer(data, dtype=dtype, count=count).reshape(shape).copy()
+
+
+def _unpack_10g40(data: Any, width: int, height: int) -> npt.NDArray[np.uint16]:
+    """Unpack IDS's Mono10g40IDS: per 4 pixels, their upper 8 bits in 4 bytes,
+    then one byte of low 2-bit pairs, pixel 0's lowest (verified on the
+    U3-36PxXCP-M; usb3-vision.md, Pixel formats)."""
+    count = width * height
+    groups = np.frombuffer(data, dtype=np.uint8, count=count * 5 // 4).reshape(-1, 5)
+    pixels = groups[:, :4].astype(np.uint16) << 2
+    low = groups[:, 4:5]
+    pixels |= ((low >> np.array([0, 2, 4, 6], dtype=np.uint8)) & 3).astype(np.uint16)
+    return pixels.reshape(height, width).astype(np.uint16, copy=False)
 
 
 def _snap(value: float, low: int, high: int, inc: int) -> int:

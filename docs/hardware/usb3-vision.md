@@ -103,9 +103,15 @@ Aravis.update_device_list()
 n = Aravis.get_n_devices()
 for i in range(n):
     Aravis.get_device_id(i), Aravis.get_device_vendor(i), Aravis.get_device_model(i)
-    Aravis.get_device_serial_nbr(i), Aravis.get_device_protocol(i)   # "USB3Vision"
-    Aravis.get_device_physical_id(i), Aravis.get_device_address(i), Aravis.get_device_manufacturer_info(i)
-Aravis.enable_interface("Fake")      # fake camera for tests; also disable_interface/select_interface
+    Aravis.get_device_serial_nbr(i), Aravis.get_device_protocol(i)  # "USB3Vision"
+    (
+        Aravis.get_device_physical_id(i),
+        Aravis.get_device_address(i),
+        Aravis.get_device_manufacturer_info(i),
+    )
+Aravis.enable_interface(
+    "Fake"
+)  # fake camera for tests; also disable_interface/select_interface
 Aravis.shutdown()
 ```
 - For USB3 Vision, the camera ID passed to `Aravis.Camera.new(name)` is `<vendor_alias>-<serial>` or `<vendor>-<serial>`. Passing `None` opens the first camera. [V] (doc comment on `arv_camera_new`)
@@ -126,21 +132,24 @@ cam.acquisition(timeout_us)                    # one-shot convenience
 ```
 Device feature API (`arvdevice.h`):
 ```python
-dev.get_float_feature_value(name);   dev.set_float_feature_value(name, v)
-dev.get_float_feature_bounds(name)   # -> (min, max)
+dev.get_float_feature_value(name)
+dev.set_float_feature_value(name, v)
+dev.get_float_feature_bounds(name)  # -> (min, max)
 dev.get_float_feature_increment(name)
-dev.get_integer_feature_value/set_integer_feature_value/get_integer_feature_bounds/get_integer_feature_increment
+dev.get_integer_feature_value / set_integer_feature_value / get_integer_feature_bounds / get_integer_feature_increment
 dev.get_boolean_feature_value / set_boolean_feature_value
-dev.get_string_feature_value / set_string_feature_value    # also enumerations, by entry name
-dev.dup_available_enumeration_feature_values_as_strings(name)   # list[str]
+dev.get_string_feature_value / set_string_feature_value  # also enumerations, by entry name
+dev.dup_available_enumeration_feature_values_as_strings(name)  # list[str]
 dev.dup_available_enumeration_feature_values_as_display_names(name)
 dev.is_enumeration_entry_available(name, entry)
 dev.execute_command(name)
-dev.is_feature_available(name)        # raises on error; also is_feature_implemented
-dev.get_feature_access_mode(name)     # -> Aravis.GcAccessMode: UNDEFINED=-1, RO, WO, RW
+dev.is_feature_available(name)  # raises on error; also is_feature_implemented
+dev.get_feature_access_mode(name)  # -> Aravis.GcAccessMode: UNDEFINED=-1, RO, WO, RW
 dev.get_feature_representation(name)
-dev.get_feature_value(name) / set_feature_value(name, v)   # generic GValue accessors (0.8.32+)
-dev.get_feature(name)                 # ArvGcNode for deeper inspection
+dev.get_feature_value(name) / set_feature_value(
+    name, v
+)  # generic GValue accessors (0.8.32+)
+dev.get_feature(name)  # ArvGcNode for deeper inspection
 dev.set_range_check_policy(Aravis.RangeCheckPolicy.ENABLE)
 dev.set_access_check_policy(Aravis.AccessCheckPolicy.ENABLE)
 dev.set_register_cache_policy(...)
@@ -150,21 +159,23 @@ dev.set_register_cache_policy(...)
 
 ### Stream and buffers [V]
 ```python
-stream = cam.create_stream(None, None)        # optional callback(user_data, cb_type, buffer)
+stream = cam.create_stream(None, None)  # optional callback(user_data, cb_type, buffer)
 payload = cam.get_payload()
 for _ in range(n):
     stream.push_buffer(Aravis.Buffer.new_allocate(payload))
 cam.start_acquisition()
-buf = stream.timeout_pop_buffer(timeout_us)   # µs! returns None on timeout
+buf = stream.timeout_pop_buffer(timeout_us)  # µs! returns None on timeout
 # also: stream.pop_buffer() (blocking), stream.try_pop_buffer() (non-blocking)
 if buf is not None:
-    st = buf.get_status()                     # Aravis.BufferStatus
-    data = buf.get_data()                     # bytes (copy) of the payload
+    st = buf.get_status()  # Aravis.BufferStatus
+    data = buf.get_data()  # bytes (copy) of the payload
     # or buf.get_image_data(), get_image_width/height/x/y, get_image_pixel_format()
-    buf.get_frame_id(); buf.get_timestamp(); buf.get_system_timestamp()
-    stream.push_buffer(buf)                   # recycle
-stream.get_n_buffers()                        # -> (n_input, n_output)
-stream.get_statistics()                       # -> (completed, failures, underruns)
+    buf.get_frame_id()
+    buf.get_timestamp()
+    buf.get_system_timestamp()
+    stream.push_buffer(buf)  # recycle
+stream.get_n_buffers()  # -> (n_input, n_output)
+stream.get_statistics()  # -> (completed, failures, underruns)
 stream.get_info_uint64_by_name("n_underruns")
 ```
 - `timeout_pop_buffer` takes **microseconds** and returns NULL (`None`) on timeout instead of raising. It is a thin wrapper around `g_async_queue_timeout_pop`. [V] (`arvstream.c`)

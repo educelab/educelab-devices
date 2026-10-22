@@ -27,15 +27,18 @@ Settle the open choices and the seam first. Then move the Spinnaker driver onto 
   - Aravis and PyGObject are installed manually, like PySpin, with no extra.
   - CLI: `el-devices genicam --backend aravis|gentl`. The default is Aravis on Linux/macOS and GenTL on Windows.
   - Open: whether to declare `genicam` as a `[gentl]` extra, given its non-OSI licence. Decide by Task 5.3.
-- [ ] Task 1.4: Define the backend seam:
+- [x] Task 1.4: Define the backend seam:
   - Node map: read/write float, int, enum, and command nodes, with their ranges and access mode.
   - Stream: start/stop, grab with a timeout, buffer status, device timestamp, release.
   - Discovery and error translation into `DeviceError` subclasses.
-- [ ] Task 1.5: Build an in-memory fake backend that implements the seam, for testing the core on its own.
+  - Done as `Protocol`s in `cameras/_genicam.py`, following `_gphoto2.py`. Opening a connection sets up newest-only buffering, which each backend does in its own way. A missing serial returns `None`, so the core can name the cameras that are attached.
+- [x] Task 1.5: Build an in-memory fake backend that implements the seam, for testing the core on its own.
+  - `tests/fakes/genicam.py`: `FakeCamera` simulates an SFNC camera without depending on any library, and `FakeBackend` exposes it through the seam. The Aravis and GenTL fakes will wrap the same `FakeCamera`.
+  - `tests/contracts/genicam.py`: `BackendContract`, which every backend must pass on its fake.
 
 ### Verification
 
-- [ ] ADR approved. The seam and fake backend pass their own tests.
+- [x] ADR approved. The seam and fake backend pass their own tests.
 
 ## Phase 2: Move Spinnaker onto the core
 

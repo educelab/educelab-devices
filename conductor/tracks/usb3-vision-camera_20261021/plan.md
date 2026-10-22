@@ -19,8 +19,14 @@ Settle the open choices and the seam first. Then move the Spinnaker driver onto 
   - Whether the IDS producer accepts cameras from other vendors.
   - Harvesters versus calling `genicam` directly.
   - Recorded in `docs/hardware/usb3-vision.md`. Recommendation: call `genicam` directly (Harvesters is unmaintained, and its threads and fetch model don't fit ADR 0001). The IDS producer has refused other vendors' cameras since IDS peak 2.0.
-- [ ] Task 1.2: Draft ADR 0006 (GenICam cameras share a core with one backend per transport). Needs maintainer approval.
-- [ ] Task 1.3: Decide the names: backends, extras (e.g. `[gentl]`), driver classes, module layout under `cameras/`, and the CLI subcommand.
+- [x] Task 1.2: Draft ADR 0006 (GenICam cameras share a core with one backend per transport). Needs maintainer approval.
+  - Approved 2026-10-21.
+- [x] Task 1.3: Decide the names: backends, extras (e.g. `[gentl]`), driver classes, module layout under `cameras/`, and the CLI subcommand.
+  - Core and seam: `cameras/_genicam.py`. Backends: `cameras/spinnaker.py`, `cameras/aravis.py`, `cameras/gentl.py`.
+  - Classes `SpinnakerCamera`, `AravisCamera`, `GenTLCamera`. `DeviceInfo.backend` is `"spinnaker"`, `"aravis"` or `"gentl"`.
+  - Aravis and PyGObject are installed manually, like PySpin, with no extra.
+  - CLI: `el-devices genicam --backend aravis|gentl`. The default is Aravis on Linux/macOS and GenTL on Windows.
+  - Open: whether to declare `genicam` as a `[gentl]` extra, given its non-OSI licence. Decide by Task 5.3.
 - [ ] Task 1.4: Define the backend seam:
   - Node map: read/write float, int, enum, and command nodes, with their ranges and access mode.
   - Stream: start/stop, grab with a timeout, buffer status, device timestamp, release.

@@ -3,7 +3,7 @@
 **Track ID:** usb3-vision-camera_20261021
 **Spec:** [spec.md](./spec.md)
 **Created:** 2026-10-21
-**Status:** [ ] Not Started
+**Status:** [~] In Progress
 
 ## Overview
 
@@ -13,11 +13,12 @@ Settle the open choices and the seam first. Then move the Spinnaker driver onto 
 
 ### Tasks
 
-- [ ] Task 1.1: Research and record install steps per OS:
+- [x] Task 1.1: Research and record install steps per OS:
   - Aravis + PyGObject on macOS (Homebrew) and Linux, including the udev rule.
   - IDS peak's GenTL producer on Windows and Linux.
   - Whether the IDS producer accepts cameras from other vendors.
   - Harvesters versus calling `genicam` directly.
+  - Recorded in `docs/hardware/usb3-vision.md`. Recommendation: call `genicam` directly (Harvesters is unmaintained, and its threads and fetch model don't fit ADR 0001). The IDS producer has refused other vendors' cameras since IDS peak 2.0.
 - [ ] Task 1.2: Draft ADR 0006 (GenICam cameras share a core with one backend per transport). Needs maintainer approval.
 - [ ] Task 1.3: Decide the names: backends, extras (e.g. `[gentl]`), driver classes, module layout under `cameras/`, and the CLI subcommand.
 - [ ] Task 1.4: Define the backend seam:

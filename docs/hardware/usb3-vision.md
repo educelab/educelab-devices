@@ -1,0 +1,321 @@
+# USB3 Vision cameras (Aravis and GenTL)
+
+Status: research notes from Phase 1 of the `usb3-vision-camera` track (2026-10-21). Nothing here has been checked on the IDS camera yet. Phase 5 rewrites this doc into the usual hardware-doc shape and adds what the hardware runs teach us.
+
+Tags: **[V]** verified against a primary source (source file, official doc, formula, PyPI metadata) or tested on a lab Mac (macOS 27.0.1, arm64, Homebrew); **[I]** inferred or taken from secondary sources, which makes it a hazard until checked on hardware (see [README](README.md#how-sure-we-are)).
+
+## 1. Aravis + PyGObject on macOS (Homebrew, Apple Silicon)
+
+### Versions
+- **Aravis 0.8.36** is the current stable release. Upstream tagged 0.8.36 and the development release 0.9.2 on the same day, 2026-04-26. [V] (GitHub releases; https://formulae.brew.sh/api/formula/aravis.json)
+  - Aravis uses odd minor numbers for development and even for stable. Before 1.0, stable series with different minors are parallel-installable and incompatible. 0.9.x is the development series for the next stable, with API version `0.10` (main `meson.build`: `aravis_api_version = '0.10'`). 0.8.x has `aravis_api_version = '0.8'`. [V] (`docs/reference/aravis/building.md`, `meson.build` at tags 0.8.36 and main)
+- **Homebrew `aravis`** is 0.8.36 and bottled for arm64 sonoma, sequoia, tahoe and golden_gate, plus Linux. Its runtime deps are `glib gstreamer gtk+3 libusb adwaita-icon-theme gettext`, and `gobject-introspection` is a build-only dep, so the typelib is generated and installed. [V] (https://github.com/Homebrew/homebrew-core/blob/HEAD/Formula/a/aravis.rb)
+- **Homebrew `pygobject3`** is 3.58.1. It is built **only for Homebrew `python@3.14` and `python@3.15`**. [V] (Formula/p/pygobject3.rb, `depends_on "python@3.14"` / `"python@3.15"`)
+- **PyPI `PyGObject`** is 3.58.1 (2026-10-09). It ships an **sdist only, with no wheels**, has `requires-python >=3.10`, and requires `pycairo>=1.16`. The build backend is meson-python. It needs `girepository-2.0 >= 2.80`, `glib-2.0 >= 2.80` and `libffi`, and needs cairo for the pycairo integration. [V] (PyPI JSON; `meson.build` in the 3.58.1 sdist)
+- **PyPI `pycairo`** 1.29.2 has wheels **for Windows only**. On macOS and Linux it builds from source against system cairo. [V] (PyPI JSON)
+
+### Install commands
+Recommended path: Homebrew libraries plus a pip-built PyGObject in the venv.
+```bash
+brew install aravis pkgconf cairo        # glib comes with aravis; it provides girepository-2.0.pc
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install pycairo                      # must come first (see below)
+pip install PyGObject
+python -c "import gi; gi.require_version('Aravis','0.8'); from gi.repository import Aravis; print(Aravis.get_major_version(), Aravis.get_minor_version())"
+```
+- **Tested here [V]:** PyGObject 3.58.1 and pycairo 1.29.2 build from source in a Python 3.12 venv against Homebrew glib 2.90 and cairo 1.18.6. `from gi.repository import GLib` then works **with no `GI_TYPELIB_PATH`**. The built `_gi.so` links `/opt/homebrew/opt/glib/lib/libgirepository-2.0.0.dylib`. Homebrew's `libgirepository-2.0.dylib` has `/opt/homebrew/lib/girepository-1.0` compiled in as a search path (confirmed with `strings`), and `brew install aravis` links `Aravis-0.8.typelib` there. So the typelib should be found automatically. [V for the path; I for Aravis itself, which was not installed here]
+- **Gotchas found while testing [V]:**
+  - The build needs a **`pkg-config` binary**. Without one, the pycairo build fails with `Did not find pkg-config`. Use `brew install pkgconf`. The PyPI `pkgconf` wheel also works, but you then have to set `PKG_CONFIG_PATH` to include `/opt/homebrew/lib/pkgconfig`, `/opt/homebrew/share/pkgconfig` and Homebrew's macOS SDK pc dir. Brew's pkgconf already knows all three.
+  - Install **pycairo in a separate, earlier `pip install`**. If pycairo isn't already in the target environment, the PyGObject build falls back to looking for `py3cairo.h` through pkg-config and can fail with `'py3cairo.h' file not found`. PyGObject's own docs also install `pycairo` first, as a separate step (https://pygobject.gnome.org/getting_started.html).
+  - Xcode Command Line Tools are needed for the C compiler. [I]
+- **Alternative [V]:** use Homebrew's `python@3.14` or `python@3.15` with `brew install pygobject3`, and create the venv with `--system-site-packages`. This avoids building, but only works for those two Python versions.
+- **`GI_TYPELIB_PATH`:** only needed when Aravis lives outside Homebrew's prefix, for example a source build in `/usr/local`. Aravis' own example scripts carry a note to that effect. [V] (`tests/python/*.py` header)
+- **The shared library:** girepository dlopens the library named in the typelib. Homebrew typelibs normally record an absolute `/opt/homebrew/...` dylib path, so `DYLD_LIBRARY_PATH` should not be needed. [I]
+
+### `gi.require_version` string
+- Use **`gi.require_version('Aravis', '0.8')`** for every 0.8.x release, which covers Homebrew, Ubuntu and Debian. A 0.9.x or 0.10 install would need `'0.10'` and has a slightly different API: 0.9.1 says "replace create_stream_full by stream_create, break API". [V] (Aravis NEWS.md on main; 0.8.36 example scripts)
+
+### USB permissions on macOS
+- **[I]** macOS has no udev, and no kernel driver claims USB3 Vision class devices (misc class `EF/02/01`), so libusb can open them as an ordinary user. No macOS-specific USB permission issue showed up in Aravis' issue tracker. The open macOS issue there, #1092, is about GigE discovery. On macOS, Aravis is used through the Homebrew build, and Aravis CI targets Linux, MinGW and MSVC.
+- For best throughput, Aravis can use libusb's async API: `camera.uv_set_usb_mode(Aravis.UvUsbMode.ASYNC)`. The default is sync. [V] (`docs/reference/aravis/usb.md`)
+
+---
+
+## 2. Aravis + PyGObject on Linux (Ubuntu 24.04 "noble")
+
+### apt packages
+Ubuntu versions are from Launchpad's published sources. [V]
+
+| Series | aravis | pygobject (python3-gi) | libgirepository-2.0-dev |
+|---|---|---|---|
+| noble 24.04 | **0.8.30-1build2** | 3.48.2-1 | 2.80.0-6ubuntu3.x (glib 2.80) |
+| resolute 26.04 | 0.8.34-1build2 | 3.56.2-1 | 2.88.0 |
+| next (stonking/tenacious) | 0.8.36-2 | 3.57.1-1 | 2.90.0 |
+
+The Debian source package `aravis` (0.8.36-2) produces these binary packages: `libaravis-0.8-0`, `libaravis-dev`, **`gir1.2-aravis-0.8`**, `libaravis-doc`, `aravis-tools` (viewer) and `aravis-tools-cli` (`arv-tool-0.8`, ...). [V] (https://sources.debian.org/src/aravis/0.8.36-2/debian/control)
+
+**Option A: system Python**
+```bash
+sudo apt install gir1.2-aravis-0.8 libaravis-0.8-0 aravis-tools-cli python3-gi
+python3 -m venv --system-site-packages .venv   # gets python3-gi (Py 3.12 on noble)
+```
+
+**Option B: any Python, with PyGObject built by pip** (follows PyGObject's getting-started page)
+```bash
+sudo apt install gir1.2-aravis-0.8 libgirepository-2.0-dev libcairo2-dev pkg-config python3-dev gcc
+pip install pycairo && pip install PyGObject
+```
+- PyGObject **3.52 and later** link `girepository-2.0`, which ships in glib 2.80+. Older releases used `libgirepository1.0-dev`. Current PyGObject 3.58.1 needs glib >= 2.80. Noble ships glib **2.80.0**, so it meets the requirement exactly, and `libgirepository-2.0-dev` exists in noble. [V] (PyGObject `meson.build`; Launchpad)
+- On jammy (22.04, glib 2.72) the current PyGObject won't build, and you'd need to pin `PyGObject<3.51`. [I, inferred from the glib 2.80 floor]
+- The typelib goes to `/usr/lib/x86_64-linux-gnu/girepository-1.0/Aravis-0.8.typelib`, which is a default search path, so `GI_TYPELIB_PATH` is not needed. [I]
+
+### udev rule
+- Upstream ships an **example** file **`src/aravis.rules`**. It is **not installed** by meson, and the docs tell you to copy it into `/etc/udev/rules.d/`. [V] (`src/meson.build` has no rules install; `docs/reference/aravis/usb.md`)
+- **Debian/Ubuntu packages don't install it either.** The 0.8.36-2 packaging has no `*.udev` file and the `.install` files don't list it. [V] (sources.debian.org)
+- Contents at 0.8.36 [V]. It has one line per vendor; the IDS vendor ID **1409** is included:
+  ```
+  # IDS Imaging Development Systems GmbH
+  SUBSYSTEM=="usb", ATTRS{idVendor}=="1409", MODE:="0666", TAG+="uaccess", TAG+="udev-acl"
+  ```
+  The other vendors listed are Basler `2676`, TIS `199e`, Point Grey/FLIR `1e10`, Daheng `2ba2`, Dahua `2e03`, Omron Sentech `1421` and Hikrobot `2bdf`.
+- The docs also give a generic rule for all USB3 Vision devices [V]:
+  ```
+  SUBSYSTEM=="usb", ATTRS{bDeviceClass}=="ef", ATTRS{bDeviceSubClass}=="02", ATTRS{bDeviceProtocol}=="01", ENV{ID_USB_INTERFACES}=="*:ef0500:*", MODE="0666"
+  ```
+- Suggested install: `sudo cp aravis.rules /etc/udev/rules.d/70-aravis.rules && sudo udevadm control --reload-rules && sudo udevadm trigger`. The file name is up to you. [I]
+- IDS peak ships its own rule and an `ids_install_udev_rule.sh` in `share/ids-peak/scripts`. [V] (IDS peak Linux readme)
+
+### usbfs memory
+- The Linux kernel's default `usbfs_memory_mb` is **16 MB**. Aravis' USB stream code comments: "The kernel USB memory buffer limit has been reached (default 16MBytes) ... `sudo modprobe usbcore usbfs_memory_mb=1000`". [V] (`src/arvuvstream.c`)
+- IDS gives the same advice for high-resolution cameras: `echo 1000 > /sys/module/usbcore/parameters/usbfs_memory_mb`, made persistent with `ids_set_usb_mem_size.sh`. [V] (IDS peak 26.06 Linux readme)
+- A 20 MP Mono8 frame is about 20 MB, which is already larger than 16 MB. **Set it to 1000** (or 0 for unlimited) through a kernel command-line option or `/etc/modprobe.d`. [I]
+- Aravis' maximum USB transfer size is 1 MiB per transfer (`ARV_UV_STREAM_MAXIMUM_TRANSFER_SIZE`). It is configurable from 0.9.0. [V]
+
+---
+
+## 3. Aravis Python API essentials (0.8.x, through GI)
+
+All C functions `arv_<class>_<method>` become `Aravis.<Class>.<method>`. Functions that take `GError **` raise **`gi.repository.GLib.Error`**. [V for headers; GI mapping is standard]
+
+### Discovery (module-level functions, `arvsystem.h`) [V]
+```python
+Aravis.update_device_list()
+n = Aravis.get_n_devices()
+for i in range(n):
+    Aravis.get_device_id(i), Aravis.get_device_vendor(i), Aravis.get_device_model(i)
+    Aravis.get_device_serial_nbr(i), Aravis.get_device_protocol(i)   # "USB3Vision"
+    Aravis.get_device_physical_id(i), Aravis.get_device_address(i), Aravis.get_device_manufacturer_info(i)
+Aravis.enable_interface("Fake")      # fake camera for tests; also disable_interface/select_interface
+Aravis.shutdown()
+```
+- For USB3 Vision, the camera ID passed to `Aravis.Camera.new(name)` is `<vendor_alias>-<serial>` or `<vendor>-<serial>`. Passing `None` opens the first camera. [V] (doc comment on `arv_camera_new`)
+- Calling `update_device_list` takes a global system mutex. [V]
+
+### Camera and device [V]
+```python
+cam = Aravis.Camera.new(device_id)            # raises GLib.Error if not found
+dev = cam.get_device()                        # Aravis.Device: generic GenICam feature access
+cam.get_device_serial_number(); cam.get_vendor_name(); cam.get_model_name()
+cam.is_uv_device(); cam.uv_set_bandwidth(..); cam.uv_get_bandwidth_bounds(); cam.uv_set_usb_mode(mode)
+cam.set_exposure_time(us); cam.get_exposure_time_bounds()  # -> (min, max)
+cam.set_gain(db); cam.get_gain_bounds(); cam.set_frame_rate(..); cam.get_frame_rate_bounds()
+cam.set_trigger("Software"/"Line1"); cam.software_trigger(); cam.clear_triggers()
+cam.set_pixel_format_from_string("Mono12"); cam.dup_available_pixel_formats_as_strings()
+cam.get_payload(); cam.start_acquisition(); cam.stop_acquisition(); cam.abort_acquisition()
+cam.acquisition(timeout_us)                    # one-shot convenience
+```
+Device feature API (`arvdevice.h`):
+```python
+dev.get_float_feature_value(name);   dev.set_float_feature_value(name, v)
+dev.get_float_feature_bounds(name)   # -> (min, max)
+dev.get_float_feature_increment(name)
+dev.get_integer_feature_value/set_integer_feature_value/get_integer_feature_bounds/get_integer_feature_increment
+dev.get_boolean_feature_value / set_boolean_feature_value
+dev.get_string_feature_value / set_string_feature_value    # also enumerations, by entry name
+dev.dup_available_enumeration_feature_values_as_strings(name)   # list[str]
+dev.dup_available_enumeration_feature_values_as_display_names(name)
+dev.is_enumeration_entry_available(name, entry)
+dev.execute_command(name)
+dev.is_feature_available(name)        # raises on error; also is_feature_implemented
+dev.get_feature_access_mode(name)     # -> Aravis.GcAccessMode: UNDEFINED=-1, RO, WO, RW
+dev.get_feature_representation(name)
+dev.get_feature_value(name) / set_feature_value(name, v)   # generic GValue accessors (0.8.32+)
+dev.get_feature(name)                 # ArvGcNode for deeper inspection
+dev.set_range_check_policy(Aravis.RangeCheckPolicy.ENABLE)
+dev.set_access_check_policy(Aravis.AccessCheckPolicy.ENABLE)
+dev.set_register_cache_policy(...)
+```
+- In 0.8 the enum helpers are named **`dup_available_enumeration_feature_values_as_strings`**, not `get_...`. [V] (`arvdevice.h`)
+- **Watch out [V]:** `ARV_RANGE_CHECK_POLICY_DEFAULT = DISABLE` and `ARV_ACCESS_CHECK_POLICY_DEFAULT = DISABLE`. By default, Aravis does **not** check min/max or access mode on writes, so a value out of range goes straight to the device, which may reject or clamp it. Enable both policies, or validate against the bounds yourself, if the contract needs a `ValueError` on out-of-range input.
+
+### Stream and buffers [V]
+```python
+stream = cam.create_stream(None, None)        # optional callback(user_data, cb_type, buffer)
+payload = cam.get_payload()
+for _ in range(n):
+    stream.push_buffer(Aravis.Buffer.new_allocate(payload))
+cam.start_acquisition()
+buf = stream.timeout_pop_buffer(timeout_us)   # µs! returns None on timeout
+# also: stream.pop_buffer() (blocking), stream.try_pop_buffer() (non-blocking)
+if buf is not None:
+    st = buf.get_status()                     # Aravis.BufferStatus
+    data = buf.get_data()                     # bytes (copy) of the payload
+    # or buf.get_image_data(), get_image_width/height/x/y, get_image_pixel_format()
+    buf.get_frame_id(); buf.get_timestamp(); buf.get_system_timestamp()
+    stream.push_buffer(buf)                   # recycle
+stream.get_n_buffers()                        # -> (n_input, n_output)
+stream.get_statistics()                       # -> (completed, failures, underruns)
+stream.get_info_uint64_by_name("n_underruns")
+```
+- `timeout_pop_buffer` takes **microseconds** and returns NULL (`None`) on timeout instead of raising. It is a thin wrapper around `g_async_queue_timeout_pop`. [V] (`arvstream.c`)
+- **`ArvBufferStatus` values** [V]: `UNKNOWN=-1, SUCCESS=0, CLEARED, TIMEOUT, MISSING_PACKETS, WRONG_PACKET_ID, SIZE_MISMATCH, FILLING, ABORTED, PAYLOAD_NOT_SUPPORTED`.
+- **Timestamps** [V]: `get_timestamp()` is the camera timestamp in ns (from the device's tick counter). `get_system_timestamp()` is the host time in ns when the buffer was filled. Issue #887 reports a camera timestamp of 0 on one device; the maintainer says the pop variants don't differ, so a 0 is device-specific. Fall back to the system timestamp. [V] (https://github.com/AravisProject/aravis/issues/887)
+- `ArvStreamCallbackType` [V]: `INIT, EXIT, START_BUFFER, BUFFER_DONE`. The callback runs on the stream's **internal thread**.
+- With the 0.8 GI bindings, `get_data()` returns a Python `bytes` copy. Wrapping it with `numpy.frombuffer(data, dtype)` costs one copy per frame. [I]
+
+### Errors [V]
+- Errors come back as `GLib.Error` with `.domain` (a quark string), `.code` and `.message`.
+  - `arv-device-error-quark` maps to `Aravis.DeviceError`: `WRONG_FEATURE, FEATURE_NOT_FOUND, NOT_CONNECTED, PROTOCOL_ERROR, TRANSFER_ERROR, TIMEOUT, NOT_FOUND, INVALID_PARAMETER, GENICAM_NOT_FOUND, NO_STREAM_CHANNEL, NOT_CONTROLLER, UNKNOWN`.
+  - `arv-gc-error-quark` maps to `Aravis.GcError`: `PROPERTY_NOT_DEFINED, PVALUE_NOT_DEFINED, INVALID_PVALUE, EMPTY_ENUMERATION, OUT_OF_RANGE, NO_DEVICE_SET, NO_EVENT_IMPLEMENTATION, NODE_NOT_FOUND, ENUM_ENTRY_NOT_FOUND, INVALID_LENGTH, READ_ONLY, SET_FROM_STRING_UNDEFINED, GET_AS_STRING_UNDEFINED, INVALID_BIT_RANGE, INVALID_SYNTAX`.
+  - Other domains exist: `arv-chunk-parser-error-quark`, `arv-dom-document-error-quark` and `arv-xml-schema-error-quark`.
+- Match errors with `e.matches(Aravis.DeviceError.quark(), Aravis.DeviceError.TIMEOUT)`, or compare `e.domain == 'arv-device-error-quark'`. [I, standard PyGObject]
+- The device emits a **`control-lost`** signal when it disconnects, for example `dev.connect('control-lost', cb)`. [I; exists in `arvdevice.c` signals]
+- In the 0.8 Python examples, "no camera" sometimes shows up as `TypeError`, for example `Aravis.Camera(name=...)` failing construction. Code should catch both `GLib.Error` and `TypeError`. [V] (`tests/python/arv-feature-test.py`)
+
+### "Newest only" idiom
+- There is **no StreamBufferHandlingMode in ArvStream** [V]. The model is two `GAsyncQueue`s: an input queue of empty buffers and an output queue of filled ones. When the input queue is empty, the frame is dropped and `n_underruns` goes up. [V] (`arvuvstream.c`)
+- Idioms [I]:
+  1. **Drain to newest:** `buf = timeout_pop_buffer(t)`, then loop `nxt = try_pop_buffer()`. For each `nxt`, push `buf` back and keep `nxt`. You end with the newest frame and every older one recycled.
+  2. **Single-frame acquisitions:** this suits a scanner that triggers per capture. Use software or hardware trigger mode, `push` N buffers, `software_trigger()`, then `timeout_pop_buffer`, so there are never stale frames. Or call `cam.acquisition(timeout)` for one shot.
+  3. Keep **2–3 buffers**, since each 20 MP Mono8 buffer is about 20 MB.
+
+### Thread safety [V] (`docs/reference/aravis/thread-safety.md`)
+- "Aravis is not thread safe ... one can not use the same object simultaneously from different threads, without using mutexes. But it is perfectly fine to use different aravis objects in different threads, with the exception of ArvInterface instances."
+- Callbacks and signals run on the internal stream thread. In that context, **only** `push_buffer`, `pop_buffer`, `try_pop_buffer` and `timeout_pop_buffer` are safe. These four are thread safe anywhere. A blocking `Device` API in the driver should therefore hold its own lock around all `ArvDevice` and `ArvCamera` calls.
+- PyGObject releases the GIL during C calls into introspected libraries. [I, standard PyGObject behaviour]
+
+---
+
+## 4. IDS peak GenTL producer
+
+- **Current version:** IDS switched to year.month numbering. **IDS peak 26.06** is current, with the U3V Transport Layer at **2.0.0.0**. The previous release was 2.21 (U3V TL 1.22.0.0). [V] (https://en.ids-imaging.com/files/downloads/ids-peak/readme/ids-peak-linux-readme-26.06_EN.html and the `-windows-` equivalent)
+- **Platforms:** Windows 10/11 64-bit, and Linux x86-64 and arm64 (tested on Ubuntu 26.04 and 25.10, Debian 12 and 13, Jetson and Raspberry Pi OS). There is **no macOS build**. [V]
+
+### Linux
+- Install from the IDS apt repo, which needs IDS webstore credentials in `/etc/apt/auth.conf.d/`: `deb [signed-by=/etc/apt/keyrings/ids-archive-keyring.gpg] https://repo.ids-imaging.com/ubuntu noble main`, then `sudo apt install ids-peak`. The other route is the `ids-peak_<ver>_<arch>.tgz` archive. [V] (26.06 readme)
+- **CTI files** are `ids_u3vgentl.cti`, `ids_gevgentl.cti` and, with the uEye TL, `ids_ueyegentl.cti`. The archive layout is `<root>/lib/<arch>/ids-peak/cti/` in 26.06. Older archives used `lib/ids/cti`. [V] (readme file tree)
+- The Debian package "has the same structure" under `/usr`. Community reports give `/usr/lib/ids/cti` (CVB forum, ids-peak 2.17; several GitHub repos). [I] Confirm with `dpkg -L ids-peak-u3v-gentl 2>/dev/null | grep cti` or `find /usr -name 'ids_u3vgentl.cti'`.
+- **`GENICAM_GENTL64_PATH`:** for the archive, IDS's start scripts and CMake-generated scripts set it to the `cti` dir. The readme tells you to set it yourself for your own programs: `GENICAM_GENTL64_PATH=$GENICAM_GENTL64_PATH:/opt/ids_peak_<ver>_<arch>/lib/<arch>/ids-peak/cti`. [V] One user reports the Debian package updating it to `/usr/lib/ids/cti`. [I] (https://forum.commonvisionblox.com/t/camera-access-chunk-data-access-with-ids-camera/2437)
+- The archive also needs `LD_LIBRARY_PATH` for IDS libs. Scripts in `share/ids-peak/scripts` cover the udev rule (`ids_install_udev_rule.sh`) and usbfs (`ids_set_usb_mem_size.sh`). [V]
+
+### Windows
+- The installer offers runtime, standard and extended setups. All of them include "USB3 Vision camera drivers" and the **U3VK** transport layer, described as "GenTL Producer for IDS USB3 Vision cameras ... **including a driver** to improve USB performance". [V] (26.06 Windows readme)
+- **CTI path:** `C:\Program Files\IDS\ids_peak\ids_u3vgentl\64\ids_u3vgentlk.cti`. [V] IDS's own `ids-imaging/ids-peak-examples` repo prints this key (csharp/Reconnect/README.md), and it matches other users' DLL dumps.
+- The installer adds the producer dir to `GENICAM_GENTL64_PATH`. [I] This is the GenTL convention, and the readme says the Proxy Producer "registers ... by adding its path to GENICAM_GENTL64_PATH". Verify with `echo %GENICAM_GENTL64_PATH%`.
+
+### Non-IDS cameras on IDS's producer
+- **No.** The IDS peak 2.0 release notes state that IDS peak "does not allow the use of third party cameras in combination with IDS transport layers". They also say third-party TLs aren't shown, because vendors lock functions or interpret GenTL differently. IDS peak 1.3 was the last version where third-party products could be used. [V via search-result excerpts of en.ids-imaging.com and ids-imaging.us release notes 1.3 and 2.0; the pages are behind Cloudflare and couldn't be fetched directly]
+- The readme repeatedly says "GenTL Producer **for IDS** USB3 Vision cameras". [V]
+- **Consequence:** a FLIR or other non-IDS U3V camera needs that vendor's own producer under the GenTL backend (Spinnaker's `FLIR_GenTL*.cti`, pylon's `ProducerU3V.cti`, and so on), or Aravis.
+
+### Windows USB driver exclusivity
+- U3VK installs an IDS kernel driver bound to IDS cameras (USB VID 1409). [V that a driver is installed; I that it binds by VID]
+- On Windows only one driver can bind a USB device at a time. While IDS's driver owns the camera, a WinUSB/libusb-based stack can't open it, and neither can another vendor's driver-based producer. That covers Aravis on MSYS2, and Spinnaker/pylon producers if they even accepted the camera. Switching means rebinding the driver in Device Manager or Zadig. [I, general Windows USB driver model; IDS documents no shared-driver mode]
+- Other vendors' producers that do open third-party U3V cameras (e.g. Stemmer CVB, MVTec) use their own driver installers for the same reason. [I]
+
+### IDS-specific operational notes [V] (readmes)
+- uEye XCP/XLE/XLS models **don't work on USB 2.0 at all**.
+- **ASMedia USB controllers** have known issues with XCP. The workaround is to set DataStream node `U3vStreamChannelTransferRequestCount = 1` (default 6).
+- If usbfs memory can't be raised, set `U3VStreamChannelTransferRequestMode = Manual` and lower `U3VStreamChannelTransferRequestCount`. These are data-stream (GenTL DS) nodes, so you can reach them through the GenTL DS nodemap but not through Aravis.
+
+---
+
+## 5. Harvesters vs. `genicam` directly
+
+### Facts
+- **`harvesters`** [V] (PyPI; GitHub):
+  - Latest release is **1.4.3** (2024-05-16), a pure-Python `py3-none-any` wheel under Apache-2.0. It requires `genicam>=1.2` and `numpy`, with no `requires-python`.
+  - The last commit on `master` was 2024-05-08, so there has been **no release or commit for about 2.5 years**. The repo isn't archived and issues keep arriving (open issues up to #508, August 2026), but the maintainer rarely answers.
+  - Notable open issues:
+    - **#508** (2026-08): `ImageAcquirer.fetch()`/`try_fetch()` **holds the GIL while waiting** and starves other threads. PySpin's equivalent call doesn't.
+    - #507: `__version__` reports 1.4.2.
+    - #502: memory growth on create/destroy cycles with some producers.
+    - #487: SIGSEGV on Basler U3V producer init/deinit.
+    - #475: `Harvester.update()` breaks existing connections.
+- **`genicam`** (EMVA "official Python binding of GenICam", GenICam licence `LicenseRef-GenICam-1.6`) [V] (PyPI JSON):
+  - Latest is **1.6.0** (2026-09-01). Earlier: 1.5.1 (2025-11), 1.5.0 (2025-08), 1.4.0 (2024-05).
+  - Wheels for **cp310, cp311, cp312, cp313 and cp314** on **win_amd64, manylinux2014_x86_64, manylinux2014_aarch64, manylinux2014_armv7l and macosx_13_0_arm64**. There is no sdist, no musllinux build and no free-threaded build. That covers the 3.11–3.14 CI matrix on all three OSes. The macOS arm64 wheel is new; issue #497 asked for it. CI on Intel macOS runners would have no wheel. [I] (no macosx x86_64 wheel listed)
+  - Its own docs say the `gentl` sub-module is "**[TO BE DOCUMENTED]**". The only documentation is Harvesters' source and the GenTL standard.
+- **`genicam.gentl` API**, introspected from genicam 1.6.0 on this Mac [V]:
+  - `GenTLProducer.create_producer()`, then `.open(cti_path)`, then `.create_system()`, which gives a `System` with `.open()`, `.update_interface_info_list(timeout_ms)` and `.interface_info_list`.
+  - Each interface info gives `.create_interface()`, then `Interface.open()`, `.update_device_info_list(timeout_ms)` and `.device_info_list`.
+  - `DeviceInfo` has `.vendor .model .serial_number .id_ .user_defined_name .access_status .create_device()`.
+  - `Device` has `.open(DEVICE_ACCESS_FLAGS_LIST.DEVICE_ACCESS_EXCLUSIVE|CONTROL|READONLY)`, `.remote_port` (camera features), `.local_port` (TL device module), `.data_stream_ids`, `.create_data_stream()`, `.register_event()` and `.timestamp_frequency`.
+  - `DataStream` has `.open(id)`, `.port` (DS nodemap, for StreamBufferHandlingMode and the IDS U3V nodes), `.payload_size`, `.defines_payload_size()`, `.buffer_announce_min`, `.announce_buffer(BufferToken(bytearray, ctx))`, `.queue_buffer(buf)`, `.start_acquisition(ACQ_START_FLAGS_LIST.ACQ_START_FLAGS_DEFAULT, -1)`, `.stop_acquisition(ACQ_STOP_FLAGS_LIST.ACQ_STOP_FLAGS_KILL)`, `.flush_buffer_queue(ACQ_QUEUE_TYPE_LIST.ACQ_QUEUE_ALL_DISCARD | ACQ_QUEUE_OUTPUT_DISCARD | ...)`, `.revoke_buffer()`, `.num_underrun`, `.num_delivered` and `.register_event(EVENT_TYPE_LIST.EVENT_NEW_BUFFER)`.
+  - `EventManagerNewBuffer(event_token)` has `.update_event_data(timeout_ms)`, which raises `TimeoutException`, and `.buffer`, `.flush_event_queue()` and `.kill()`.
+  - `Buffer` has `.raw_buffer .is_complete() .frame_id .timestamp_ns .timestamp .width .height .pixel_format .data_size .payload_type .parts`.
+  - Exceptions are a `GenericException` hierarchy, including `TimeoutException`, `ResourceInUseException`, `NotAvailableException`, `AccessDeniedException`, `IoException` and `InvalidParameterException`, among others.
+- **Feature access with genicam directly** [V] (Harvesters core.py):
+  1. Read `port.url_info_list[0].url`.
+  2. Parse `local:///file.zip;ADDR;SIZE` (hex). The URL can also be `file:` or `http:`.
+  3. Read the XML or zip with `port.read(addr, size)`.
+  4. Load it with `NodeMap().load_xml_from_zip_file/_from_file/_from_string`.
+  5. Write a small `genapi.AbstractPort` subclass whose `read` and `write` forward to `gentl.Port`. Harvesters' `ConcretePort` is about 30 lines.
+  6. Call `node_map.connect(concrete_port, port.name)`.
+  Features are then reached as `node_map.ExposureTime.value`, `.min`, `.max` and `.inc`, with `.symbolics` for enum entries, `execute()` for commands and `get_access_mode()`.
+
+### How hard is genicam directly?
+Moderate. The code Harvesters actually uses for one-camera acquisition comes to about 250–400 lines:
+- producer → system → interface → device enumeration
+- device open
+- XML retrieval and NodeMap wiring, covering `local:`, zipped and `file:` URLs
+- announce, queue and start
+- an event-wait loop
+- cleanup in the correct reverse order: stop, flush, revoke, close stream, close device, close interface, close system, close producer
+
+The hard part is the absence of documentation. You learn the API from Harvesters' source and the GenTL spec. [I]
+
+### Recommendation: **use `genicam` directly and don't depend on Harvesters**
+1. **Maintenance:** Harvesters hasn't released or committed since May 2024 and has unanswered crash and leak reports. `genicam` is actively released by EMVA (1.5.0, 1.5.1, 1.6.0 in the last 14 months), with wheels for cp311–cp314 on all three CI OSes.
+2. **Fit with the project's design** (ADR 0001, blocking and framework-free): Harvesters adds its own background threads, callbacks, a `with ia.fetch()` ownership model and `update()` quirks (#475), which would have to be undone to fit the `Device` contract. Driving GenTL directly gives exact control over buffer count, newest-only behaviour (DS `StreamBufferHandlingMode` when the producer exposes it, or `flush_buffer_queue(ACQ_QUEUE_OUTPUT_DISCARD)` before a trigger), open and close order, and exclusive access.
+3. **Fewer dependencies:** one compiled wheel (`genicam`) instead of `genicam` plus Harvesters' pinned behaviour. Harvesters only adds numpy, which is already a dependency.
+4. **IDS-specific nodes:** the DS-module nodes IDS documents, such as `U3vStreamChannelTransferRequestCount`, need the DS port nodemap. That is simple with genicam directly; Harvesters exposes it only indirectly.
+5. **Risk to plan for:** the GIL problem in #508 most likely sits in the `genicam` binding's `update_event_data` rather than in Harvesters' Python code [I]. Wait on events with **short timeouts in a loop** (e.g. 50–100 ms) so other threads get scheduled, and test it.
+   - Use Harvesters' `core.py` (Apache-2.0) as the reference implementation, and credit it if any code is adapted. A thin optional "Harvesters-compatible" path isn't worth keeping.
+   - Declare `genicam` as an extra (e.g. `[gentl]`) and import it lazily, as the project's conventions require. `genicam`'s licence is the GenICam licence, not OSI. Check that it's compatible with distributing under AGPLv3 as an optional dependency (installing it is the user's choice). [I]
+
+---
+
+## 6. USB3 Vision GenTL producers on macOS (quick check)
+
+- **IDS peak has no macOS release** (Windows and Linux only). [V]
+- **Basler pylon for macOS:** pylon 6.1.2 release notes added "a GenTL producer ... that allows using Basler cameras (GigE or USB 3.0)", and ProducerU3V.cti/ProducerGEV.cti fixes are mentioned. pylon 26.06 supports macOS Sonoma or newer. It is **Basler-cameras-only** and wouldn't open the IDS camera. [V for existence from search excerpts of Basler release notes and the pypylon PyPI page; I for exclusivity]
+- **Aravis 0.9.0** (dev series) added an "experimental" GenTL producer and consumer. It is development only and unsuitable for the stable driver. [V] (Aravis NEWS.md)
+- No other vendor (FLIR Spinnaker, Stemmer CVB, MVTec, Euresys, Balluff/MATRIX VISION) is known to ship a third-party-capable USB3 Vision GenTL producer for macOS. [I] On macOS, **Aravis 0.8 is the only practical backend** for the IDS camera.
+
+---
+
+## Backend matrix (summary)
+
+| OS | Aravis 0.8 (PyGObject) | GenTL (genicam + IDS U3V cti) |
+|---|---|---|
+| macOS arm64 | Yes: brew aravis + pip PyGObject | No producer for IDS (genicam wheel exists) |
+| Linux x86_64/arm64 | Yes: apt gir1.2-aravis-0.8 (noble 0.8.30) + udev + usbfs | Yes: ids-peak deb/tgz, `ids_u3vgentl.cti` |
+| Windows | Only via MSYS2 (not pip-friendly); conflicts with IDS driver | Yes: IDS peak, `C:\Program Files\IDS\ids_peak\ids_u3vgentl\64\ids_u3vgentlk.cti` |
+
+Pick one backend per camera per machine, especially on Windows where the driver binding is exclusive. [I]
+
+## Sources
+- Aravis 0.8.36 source (headers, `docs/reference/aravis/{usb,thread-safety,building}.md`, `src/aravis.rules`, `src/arvuvstream.c`, `tests/python/*.py`): https://github.com/AravisProject/aravis/tree/0.8.36
+- Aravis NEWS on main: https://github.com/AravisProject/aravis/blob/main/NEWS.md ; issues #887, #492, #999, #1092
+- Homebrew formulae: https://github.com/Homebrew/homebrew-core/blob/HEAD/Formula/a/aravis.rb , .../p/pygobject3.rb , .../g/glib.rb ; https://formulae.brew.sh/api/formula/aravis.json
+- PyGObject: https://pypi.org/project/PyGObject/ ; https://pygobject.gnome.org/getting_started.html ; pygobject-3.58.1 `meson.build`
+- pycairo: https://pypi.org/project/pycairo/
+- Ubuntu/Launchpad: https://launchpad.net/ubuntu/+source/aravis ; Debian packaging: https://sources.debian.org/src/aravis/0.8.36-2/debian/
+- IDS peak readmes: https://en.ids-imaging.com/files/downloads/ids-peak/readme/ids-peak-linux-readme-26.06_EN.html , https://en.ids-imaging.com/files/downloads/ids-peak/readme/ids-peak-windows-readme-26.06_EN.html (also 2.21)
+- IDS peak 2.0 / 1.3 release notes (third-party policy): https://en.ids-imaging.com/release-note/items/release-notes-ids-peak-2-0.html , https://en.ids-imaging.com/release-note/items/release-notes-ids-peak-1-3.html
+- IDS examples (Windows cti path): https://github.com/ids-imaging/ids-peak-examples (csharp/Reconnect/README.md)
+- CVB forum (Linux cti path report): https://forum.commonvisionblox.com/t/camera-access-chunk-data-access-with-ids-camera/2437
+- Harvesters: https://pypi.org/project/harvesters/ ; https://github.com/genicam/harvesters (issues #475, #487, #497, #502, #503, #507, #508)
+- genicam: https://pypi.org/project/genicam/
+- Basler pylon macOS: https://www2.baslerweb.com/media/downloads/documents/release_notes/ReleaseNotes~6.txt ; https://pypi.org/project/pypylon/

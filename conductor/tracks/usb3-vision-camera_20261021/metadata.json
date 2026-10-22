@@ -2,7 +2,7 @@
   "id": "usb3-vision-camera_20261021",
   "title": "USB3 Vision Camera",
   "type": "feature",
-  "status": "pending",
+  "status": "in_progress",
   "created": "2026-10-21T00:00:00Z",
   "updated": "2026-10-21T00:00:00Z",
   "phases": {
@@ -12,5 +12,7 @@
   "tasks": {
     "total": 25,
     "completed": 0
-  }
+  },
+  "current_phase": 1,
+  "current_task": "1.1"
 }

@@ -118,6 +118,58 @@ def test_a_producer_that_will_not_load_raises_import_error(genicam):
     assert genicam.open_modules == []
 
 
+def producer_folder(tmp_path, *names):
+    """A folder of empty .cti files, put on the GenTL path; returns their paths."""
+    paths = []
+    for name in names:
+        (tmp_path / name).touch()
+        paths.append(str(tmp_path / name))
+    return paths
+
+
+def test_a_producer_that_will_not_load_is_skipped(tmp_path, monkeypatch, sim, caplog):
+    # IDS peak installs several producers in one folder (usb3-vision.md).
+    _, good = producer_folder(tmp_path, "a_broken.cti", "ids_u3vgentl.cti")
+    monkeypatch.setenv("GENICAM_GENTL64_PATH", str(tmp_path))
+    genicam = FakeGenicam([sim], producers=[good])
+    with caplog.at_level("WARNING", logger="educelab.devices.cameras.gentl"):
+        assert [i.serial_number for i in GenTLCamera.discover(genicam=genicam)] == [
+            MONO
+        ]
+        with GenTLCamera(MONO, genicam=genicam):
+            pass
+    assert "a_broken.cti" in caplog.text
+    assert genicam.open_modules == []
+
+
+def test_a_producer_that_fails_to_list_cameras_is_skipped(tmp_path, monkeypatch, sim):
+    first, second = producer_folder(tmp_path, "a.cti", "b.cti")
+    monkeypatch.setenv("GENICAM_GENTL64_PATH", str(tmp_path))
+    genicam = FakeGenicam([sim], producers=[first, second], listing_fails=[first])
+    assert [i.serial_number for i in GenTLCamera.discover(genicam=genicam)] == [MONO]
+    with GenTLCamera(MONO, genicam=genicam) as camera:
+        assert camera.info.serial_number == MONO
+    assert genicam.open_modules == []
+
+
+def test_when_no_producer_loads_the_error_names_each(tmp_path, monkeypatch, sim):
+    producer_folder(tmp_path, "a.cti", "b.cti")
+    monkeypatch.setenv("GENICAM_GENTL64_PATH", str(tmp_path))
+    genicam = FakeGenicam([sim], producers=[])
+    with pytest.raises(ImportError, match=r"a\.cti.*b\.cti"):
+        GenTLCamera.discover(genicam=genicam)
+    with pytest.raises(ImportError, match=r"a\.cti.*b\.cti"):
+        GenTLCamera(MONO, genicam=genicam).open()
+
+
+def test_discover_can_be_limited_to_one_producer(tmp_path, monkeypatch, sim):
+    first, second = producer_folder(tmp_path, "a.cti", "b.cti")
+    monkeypatch.setenv("GENICAM_GENTL64_PATH", str(tmp_path))
+    genicam = FakeGenicam([sim], producers=[first, second])
+    GenTLCamera.discover(producer=second, genicam=genicam)
+    assert genicam.producers_opened == [second]
+
+
 def test_what_a_producer_prints_as_it_loads_is_logged_not_shown(sim, capfd, caplog):
     chatter = b"GenTL producer does not implement DSGetNumFlows\n"
     genicam = FakeGenicam([sim], chatter=chatter)

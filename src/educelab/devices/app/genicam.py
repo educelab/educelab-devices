@@ -8,8 +8,10 @@ from typing import TYPE_CHECKING
 from educelab.devices.app import _capture
 
 if TYPE_CHECKING:
-    from educelab.devices.cameras.aravis import AravisCamera
-    from educelab.devices.cameras.gentl import GenTLCamera
+    from collections.abc import Callable
+
+    from educelab.devices.cameras._genicam import GenICamCamera
+    from educelab.devices.device import DeviceInfo
 
 
 def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
@@ -28,14 +30,23 @@ def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") 
         required=True,
         help="the library that reaches the cameras",
     )
+    parser.add_argument(
+        "--producer",
+        metavar="CTI",
+        help="with --backend gentl, use only this .cti file (default: every "
+        "producer in GENICAM_GENTL64_PATH)",
+    )
     _capture.add_arguments(parser)
     parser.set_defaults(func=run)
 
 
 def run(args: argparse.Namespace) -> int:
-    camera_class = _camera_class(args.backend)
+    if args.producer and args.backend != "gentl":
+        print("el-devices: --producer needs --backend gentl", file=sys.stderr)
+        return 1
+    discover, make = _driver(args.backend, args.producer)
     try:
-        found = camera_class.discover()
+        found = discover()
     except ImportError as exc:
         print(f"el-devices: {exc}", file=sys.stderr)
         return 1
@@ -43,14 +54,20 @@ def run(args: argparse.Namespace) -> int:
     serials = args.serial or listed
     if not args.frames or not serials:
         return 0
-    return _capture.run_benchmark([camera_class(s) for s in serials], args)
+    return _capture.run_benchmark([make(s) for s in serials], args)
 
 
-def _camera_class(backend: str) -> "type[AravisCamera | GenTLCamera]":
+def _driver(
+    backend: str, producer: str | None
+) -> "tuple[Callable[[], list[DeviceInfo]], Callable[[str], GenICamCamera]]":
+    """The chosen backend's discover function and camera factory."""
     if backend == "aravis":
         from educelab.devices.cameras.aravis import AravisCamera
 
-        return AravisCamera
+        return AravisCamera.discover, AravisCamera
     from educelab.devices.cameras.gentl import GenTLCamera
 
-    return GenTLCamera
+    return (
+        lambda: GenTLCamera.discover(producer),
+        lambda serial: GenTLCamera(serial, producer=producer),
+    )

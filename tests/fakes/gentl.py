@@ -617,6 +617,8 @@ class FakeSystem(_Module):
         self._open(self._producer)
 
     def update_interface_info_list(self, timeout_ms: int) -> None:
+        if self._producer.path_name in self._genicam.listing_fails:
+            raise GenericException("Unspecified runtime exception")
         self.interface_info_list = [FakeInterfaceInfo(self)]
 
 
@@ -651,6 +653,7 @@ class FakeGenicam:
             as FLIR's producer allows.
         chatter: Bytes the producer writes to file descriptor 2 as it loads, as
             genicam does for functions an older producer lacks.
+        listing_fails: Paths of producers that load but fail to list interfaces.
     """
 
     def __init__(
@@ -662,7 +665,9 @@ class FakeGenicam:
         stream_nodes: bool = True,
         reopenable: bool = False,
         chatter: bytes = b"",
+        listing_fails: Iterable[str] = (),
     ) -> None:
+        self.listing_fails = set(listing_fails)
         self.reopenable = reopenable
         self.chatter = chatter
         self.cameras = list(cameras)

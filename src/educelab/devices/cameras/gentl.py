@@ -136,15 +136,25 @@ class GenTLCamera(GenICamCamera):
         super().__init__(serial, _GenTLBackend(genicam, producers))
 
     @classmethod
-    def discover(cls) -> list[DeviceInfo]:
-        """List cameras every producer in ``GENICAM_GENTL64_PATH`` can find,
-        without opening them.
+    def discover(
+        cls,
+        producer: str | os.PathLike[str] | None = None,
+        *,
+        genicam: ModuleType | None = None,
+    ) -> list[DeviceInfo]:
+        """List the cameras GenTL producers can find, without opening them.
+
+        Args:
+            producer: The ``.cti`` file to use. By default every producer found
+                in ``GENICAM_GENTL64_PATH`` is searched.
+            genicam: A module to use in place of ``genicam``, for tests.
 
         Raises:
             ImportError: ``genicam`` isn't installed, or no producer is found or
                 loads.
         """
-        return _GenTLBackend(None, None).discover()
+        producers = None if producer is None else [os.fspath(producer)]
+        return _GenTLBackend(genicam, producers).discover()
 
 
 def _gentl_errors(genicam: Any) -> tuple[type[BaseException], ...]:
@@ -184,9 +194,7 @@ class _Producer:
             with _stderr_to_log(path):
                 self.producer.open(path)
         except gentl.GenericException as exc:
-            error = ImportError(
-                f"Could not load the GenTL producer {path}: {exc}. {GENTL_INSTALL_HINT}"
-            )
+            error = ImportError(f"could not load {path}: {exc}")
         else:
             self.system = _translate(genicam, self.producer.create_system)
             _translate(genicam, self.system.open)
@@ -297,20 +305,23 @@ class _GenTLBackend:
         genicam, producers = self._load()
         found: list[DeviceInfo] = []
         with _producers_lock:
+            usable = _Usable()
             for path in producers:
-                entry = _acquire(genicam, path)
-                try:
-                    found.extend(
-                        DeviceInfo(
-                            BACKEND,
-                            info.model or "GenTL camera",
-                            address=info.id_,
-                            serial_number=info.serial_number,
-                        )
-                        for info in entry.devices()
+                listed = usable.list(genicam, path)
+                if listed is None:
+                    continue
+                entry, infos = listed
+                found.extend(
+                    DeviceInfo(
+                        BACKEND,
+                        info.model or "GenTL camera",
+                        address=info.id_,
+                        serial_number=info.serial_number,
                     )
-                finally:
-                    _release(entry)
+                    for info in infos
+                )
+                _release_quietly(entry)
+            usable.check()
         return found
 
     def open(self, serial: str) -> "_GenTLConnection | None":
@@ -322,12 +333,14 @@ class _GenTLBackend:
             gentl.BusyException,
         )
         with _producers_lock:
+            usable = _Usable()
             for path in producers:
-                entry = _acquire(genicam, path)
+                listed = usable.list(genicam, path)
+                if listed is None:
+                    continue
+                entry, infos = listed
                 try:
-                    info = next(
-                        (i for i in entry.devices() if i.serial_number == serial), None
-                    )
+                    info = next((i for i in infos if i.serial_number == serial), None)
                     if info is None:
                         _release(entry)
                         continue
@@ -352,7 +365,53 @@ class _GenTLBackend:
                     raise
                 _release(entry)
                 raise error
+            usable.check()
         return None
+
+
+class _Usable:
+    """Loads producers and lists their cameras, skipping any that fail, as IDS
+    peak's proxy producer did beside its USB3 Vision one (usb3-vision.md)."""
+
+    def __init__(self) -> None:
+        self.problems: list[str] = []
+        self.listed = 0
+
+    def list(self, genicam: Any, path: str) -> tuple[_Producer, list[Any]] | None:
+        """The producer at ``path`` and its cameras, or None if it fails."""
+        try:
+            entry = _acquire(genicam, path)
+        except ImportError as exc:
+            self._skip(path, exc)
+            return None
+        try:
+            infos = entry.devices()
+        except DeviceError as exc:
+            self._skip(path, exc)
+            _release_quietly(entry)
+            return None
+        self.listed += 1
+        return entry, infos
+
+    def _skip(self, path: str, exc: Exception) -> None:
+        logger.warning("skipping GenTL producer %s: %s", path, exc)
+        self.problems.append(f"{path}: {exc}")
+
+    def check(self) -> None:
+        """Raise `ImportError` if every producer failed."""
+        if not self.listed and self.problems:
+            raise ImportError(
+                f"No GenTL producer would load ({'; '.join(self.problems)}). "
+                f"{GENTL_INSTALL_HINT}"
+            )
+
+
+def _release_quietly(entry: _Producer) -> None:
+    """Release ``entry``, logging rather than raising if unloading it fails."""
+    try:
+        _release(entry)
+    except DeviceError as exc:
+        logger.warning("%s", exc)
 
 
 def _node_map(genicam: Any, port: Any, keep: list[Any]) -> Any | None:

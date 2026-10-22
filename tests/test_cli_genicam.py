@@ -180,3 +180,18 @@ def test_bandwidth_counts_packed_pixels_as_sent(monkeypatch, capsys):
     args = ["--frames", "2", "--pixel-format", "Mono10g40IDS"]
     assert main(["genicam", "--backend", "aravis", *args]) == 0
     assert rates == [sim.width * sim.height * 10 // 8]
+
+
+def test_producer_picks_the_gentl_producer(monkeypatch, capsys):
+    genicam = FakeGenicam(cameras(), producers=[PRODUCER, "/opt/other.cti"])
+    monkeypatch.setattr(gentl, "load_genicam", lambda: genicam)
+    monkeypatch.setattr(gentl, "find_producers", lambda: [PRODUCER, "/opt/other.cti"])
+    args = ["--backend", "gentl", "--producer", "/opt/other.cti", "--frames", "1"]
+    assert main(["genicam", *args]) == 0
+    assert set(genicam.producers_opened) == {"/opt/other.cti"}
+
+
+def test_producer_needs_the_gentl_backend(repository, capsys):
+    args = ["--backend", "aravis", "--producer", PRODUCER, "--frames", "0"]
+    assert main(["genicam", *args]) == 1
+    assert "--producer" in capsys.readouterr().err

@@ -51,7 +51,7 @@ Behaviour the drivers add or change, and why. Each point was verified on the har
 
 **GenTL** (`GenTLCamera`):
 
-- **Producers** come from `GENICAM_GENTL64_PATH` (or one named with `producer=`). Each producer is loaded once per process and unloaded when its last camera closes. What a producer prints to stderr while loading (e.g. "GenTL producer does not implement DSGetNumFlows") goes to the debug log.
+- **Producers** come from `GENICAM_GENTL64_PATH` (or one named with `producer=`, which `discover()` takes too). Each producer is loaded once per process and unloaded when its last camera closes. A producer that fails to load, list its cameras or unload is skipped with a warning naming it; `ImportError` comes only when none works. What a producer prints to stderr while loading (e.g. "GenTL producer does not implement DSGetNumFlows") goes to the debug log.
 - **Opening twice** in one process is refused with `DeviceBusy`; FLIR's producer would otherwise allow it.
 - **Feature access** goes through `genicam.genapi`, with the camera's XML read from `local:` or `file:` URLs, plain or zipped.
 - **Buffers** are `bytes` objects, which the producer fills in place: FLIR's producer refuses a `bytearray`. The data stream is set to `NewestOnly` when it has `StreamBufferHandlingMode`; otherwise older frames are drained.
@@ -74,7 +74,7 @@ Behaviour the drivers add or change, and why. Each point was verified on the har
 
 ## Manual check
 
-`el-devices genicam --backend aravis|gentl` lists cameras through the chosen backend, then captures from them all at once and reports latency, exposure start, dropped frames, bit depth, how frames were timed, and USB bandwidth. It takes the same options as `el-devices spinnaker` (`--serial`, `--frames`, `--exposure`, `--gain`, `--pixel-format`, `--throughput-limit`, `--trigger software`, `--save-missing-trailer`). With `--frames 0` it only lists.
+`el-devices genicam --backend aravis|gentl` lists cameras through the chosen backend, then captures from them all at once and reports latency, exposure start, dropped frames, bit depth, how frames were timed, and USB bandwidth. It takes the same options as `el-devices spinnaker` (`--serial`, `--frames`, `--exposure`, `--gain`, `--pixel-format`, `--throughput-limit`, `--trigger software`, `--save-missing-trailer`). With `--frames 0` it only lists. With `--backend gentl`, `--producer PATH` uses only that `.cti` file.
 
 The hardware tests share one suite (`tests/contracts/genicam_hardware.py`):
 
@@ -168,11 +168,12 @@ Loading it makes genicam print five lines such as "GenTL producer does not imple
 - **Other results.** Busy detection, reopening, pixel formats (Mono8 and Mono16), throughput limit and newest-only all passed. 300 `not_before` captures met 563 stale frames, at 13.4 captures per second. Switching to software trigger took 1.23 s, with a "47 ms" turnaround: exactly three ticks of `time.monotonic()`, which the driver then used to time it. genapi refused an out-of-range exposure.
 - **Serial and address.** `discover()` lists the FLIR serial (`20305122`) at an address like `USB\VID_1E10&PID_3300&MI_00\7&C357BFF&0&0000_0`.
 
-### 2026-10-22, Linux (Fedora, arm64), GenTL
+### 2026-10-22, Linux (Fedora on Asahi, arm64), GenTL and Aravis
 
 The IDS camera through IDS peak 26.06.2's producer: see [ids-u3-36p0xcp.md](ids-u3-36p0xcp.md#gentl-on-linux). In short, the camera's control channel fell out of step after the first few tests, and no frames came.
 
-- **IDS's proxy producer.** IDS peak installs `ids_proxygentl.cti` beside `ids_u3vgentl.cti` and `ids_gevgentl.cti`. The proxy wraps IDS's other producers, so with the folder in `GENICAM_GENTL64_PATH` the driver loaded the camera's producer twice, and opening failed with an exception on close. Moving the proxy out of the folder, or naming `ids_u3vgentl.cti` itself in `GENICAM_GENTL64_PATH` (or `GenTLCamera(producer=...)`), fixed it. [V by the maintainer]
+- **IDS's proxy producer.** IDS peak installs `ids_proxygentl.cti` beside `ids_u3vgentl.cti` and `ids_gevgentl.cti`. The proxy wraps IDS's other producers, so with the folder in `GENICAM_GENTL64_PATH` the driver loaded the camera's producer twice, and opening failed with an exception on close. Moving the proxy out of the folder, or naming `ids_u3vgentl.cti` itself in `GENICAM_GENTL64_PATH` (or `--producer` / `producer=`), fixed it. [V by the maintainer] The driver now skips a producer that fails, with a warning, but naming the one producer you want is still the reliable setup.
+- **The link was USB 2.** Aravis on the same machine reported `USB 2.10 (Low bandwidth)` for the camera, and its stream completed none of 218 frames. IDS says uEye XCP cameras don't work on USB 2.0, so this machine can't check the camera on Linux by either backend. The machine is an Apple Silicon Mac running Asahi Linux, whose USB-C ports have long lacked USB 3 support. [V for the USB 2 link; I for the Asahi cause] Check a link's speed with `lsusb -t` (480M is USB 2, 5000M USB 3).
 
 ### CM3-U3-50S5M: three backends compared
 
@@ -262,11 +263,17 @@ pip install pycairo && pip install PyGObject
 
 ### Building Aravis from source (Fedora)
 
-- Aravis built with meson into the `/usr/local` prefix puts its library and typelib under `/usr/local/lib64` on Fedora, which neither PyGObject nor the dynamic linker searches. `gi.require_version("Aravis", "0.8")` then fails with "Namespace Aravis not available". Set both paths: [V on the lab's Fedora arm64 machine, 2026-10-22, for the error and the prefix]
+Fedora's main repositories don't appear to package Aravis; a COPR project builds it (`emmanuelp/Aravis`). [I] Built from source with meson into the default `/usr/local` prefix, Aravis puts its library and typelib under `/usr/local/lib64`. Neither the dynamic linker nor PyGObject searches there on Fedora, so `gi.require_version("Aravis", "0.8")` fails with "Namespace Aravis not available". [V on the lab's Fedora arm64 machine, 2026-10-22]
+
+- **The library:** Fedora deliberately leaves `/usr/local/lib64` out of the linker's default path (Ubuntu includes `/usr/local/lib`). Add it once, system-wide, rather than setting `LD_LIBRARY_PATH`: [I]
+  ```bash
+  echo /usr/local/lib64 | sudo tee /etc/ld.so.conf.d/local.conf && sudo ldconfig
+  ```
+- **The typelib:** GObject introspection has no config file for extra search paths, so `GI_TYPELIB_PATH` is the way. Set it where it's always set, e.g. at the end of the venv's `bin/activate`, or in `/etc/profile.d/aravis.sh`: [I]
   ```bash
   export GI_TYPELIB_PATH=/usr/local/lib64/girepository-1.0
-  export LD_LIBRARY_PATH=/usr/local/lib64
   ```
+- The alternative is building with `meson setup --prefix=/usr`, which needs neither, but installs outside the package manager's knowledge into `/usr`.
 - Install the udev rule and raise usbfs memory as below.
 
 ### udev rule

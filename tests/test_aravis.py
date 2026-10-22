@@ -149,10 +149,17 @@ def test_a_flir_opened_by_usb_serial_reports_its_own_serial():
         assert camera.info.serial_number == "20298452"
 
 
-def test_open_uses_synchronous_usb_transfers(camera, repository):
-    # In async mode, closing a stream can hang in arv_uv_stream_finalize on
-    # macOS, and the camera then streams nothing (usb3-vision.md).
-    assert connection_of(camera)._camera.usb_mode == repository.Aravis.UvUsbMode.SYNC
+@pytest.mark.parametrize(
+    ("platform", "mode"),
+    # On macOS, async mode can hang closing a stream in arv_uv_stream_finalize;
+    # on Linux, sync mode drops frames from the IDS camera (usb3-vision.md).
+    [("darwin", "SYNC"), ("linux", "ASYNC"), ("win32", "ASYNC")],
+)
+def test_usb_transfers_suit_the_platform(repository, monkeypatch, platform, mode):
+    monkeypatch.setattr(aravis.sys, "platform", platform)
+    with AravisCamera(MONO, repository=repository) as camera:
+        usb_mode = connection_of(camera)._camera.usb_mode
+    assert usb_mode == getattr(repository.Aravis.UvUsbMode, mode)
 
 
 def test_open_turns_on_access_checks_but_not_range_checks(camera, repository):

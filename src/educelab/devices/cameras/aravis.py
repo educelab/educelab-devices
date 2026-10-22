@@ -10,6 +10,7 @@ without it. Neither is on PyPI in a form pip can install alone; see
 import importlib
 import logging
 import math
+import sys
 import threading
 import weakref
 from collections.abc import Callable
@@ -200,11 +201,13 @@ class _AravisConnection:
         # checks stay off: the core checks ranges itself, and Aravis's check
         # refuses Mono16 on the CM3-U3-50S5M (usb3-vision.md, Hardware runs).
         self._device.set_access_check_policy(arv.AccessCheckPolicy.ENABLE)
-        # Synchronous transfers: in async mode, finalizing a stream can deadlock
-        # cancelling its transfers, and the U3-36PxXCP-M then streams nothing
-        # until power-cycled (macOS; usb3-vision.md, Hazards).
+        # Sync transfers on macOS, where finalizing an async stream can deadlock
+        # and wedge the camera; async elsewhere, since on Linux sync mode drops
+        # the IDS camera's frames (usb3-vision.md, Hazards).
         if self._do(camera.is_uv_device):
-            self._do(lambda: camera.uv_set_usb_mode(arv.UvUsbMode.SYNC))
+            modes = arv.UvUsbMode
+            mode = modes.SYNC if sys.platform == "darwin" else modes.ASYNC
+            self._do(lambda: camera.uv_set_usb_mode(mode))
 
     def _do(self, fn: Callable[[], T]) -> T:
         try:

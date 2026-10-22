@@ -40,7 +40,7 @@ Behaviour the drivers add or change, and why. Each point was verified on the har
 
 **Aravis** (`AravisCamera`):
 
-- **Synchronous USB transfers** (`UvUsbMode.SYNC`). Aravis's async mode can hang closing a camera on macOS. See [Hazards](#hazards).
+- **USB transfer mode by platform.** Sync (`UvUsbMode.SYNC`) on macOS, where Aravis's async mode can hang closing a camera. Async, Aravis's high-throughput mode, everywhere else: on Linux, sync mode delivered only incomplete frames from the IDS camera. See [Hazards](#hazards).
 - **A stream only while acquiring.** Creating a stream enables the camera's stream channel, and the IDS camera then refuses `PixelFormat` and `TriggerMode` writes. The old stream is dropped before a new one is made, because finalizing a stream disables the channel even after a newer stream enabled it.
 - **Newest only, by callback.** Aravis has no newest-only mode: once its buffers fill, it drops the newer frames. A stream callback recycles every finished frame but the newest. Four buffers (`BUFFER_COUNT`).
 - **Access checks on, range checks off.** Aravis's access mode ignores locks (e.g. `ExposureTime` under auto exposure), so the driver also asks `is_locked()`. Its range check refused Mono16 on the CM3-U3-50S5M, whose XML gives `PixelFormat`'s register a stale maximum; the core checks ranges itself.
@@ -66,7 +66,8 @@ Behaviour the drivers add or change, and why. Each point was verified on the har
 
 ## Hazards
 
-- **Aravis async USB mode on macOS** can hang forever closing a camera, in `arv_uv_stream_finalize`: the stream thread waits for cancelled transfers to complete, while it is the thread that would complete them. When a close doesn't hang, the next session may get only `missing-packets` frames until the camera is power-cycled. The driver uses sync mode; don't switch it. [V on the IDS camera]
+- **Aravis async USB mode on macOS** can hang forever closing a camera, in `arv_uv_stream_finalize`: the stream thread waits for cancelled transfers to complete, while it is the thread that would complete them. When a close doesn't hang, the next session may get only `missing-packets` frames until the camera is power-cycled. The driver uses sync mode on macOS; don't switch it. [V on the IDS camera]
+- **Aravis sync USB mode on Linux** can't keep up with a full-resolution USB3 Vision stream. With the IDS camera on Fedora (arm64), `arv-camera-test-0.8` in sync mode reported six or more errors, and the driver in sync mode got only incomplete frames. In async mode the same camera streamed cleanly. The driver uses async mode off macOS. Sync mode keeps a single 1 MiB transfer in flight (`arvuvstream.c`), which is the likely reason. [V for the symptoms, 2026-10-22; I for the reason]
 - **`TLParamsLocked` through Aravis.** Setting it wedged the IDS camera until a power cycle. [V]
 - **Several cameras on one USB link.** Uncapped, five CM3-U3-50S5M cameras and the IDS camera on one Acroname hub need more than its USB 3 upstream link carries, and some cameras then get only `size-mismatch` frames. Cap each camera's `throughput_limit`. [V]
 - **Windows driver binding.** IDS peak's kernel driver claims IDS cameras, so nothing libusb-based (Aravis) can open them while it's installed. [I]

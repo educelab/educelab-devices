@@ -80,7 +80,7 @@ Settle the open choices and the seam first. Then move the Spinnaker driver onto 
 - [ ] CI is green.
 - [x] Real Aravis 0.8.36 on macOS, without a camera (2026-10-22). The drift tests pass, and `tests/test_aravis_library.py` drives `AravisCamera` through Aravis's simulated camera. This found two changes: falling back to `ExposureTimeAbs`, and skipping the 1 s device-list update when reopening.
 - [ ] IDS U3-36P0XCP-M-GL hardware tests pass on macOS and Linux. macOS passes (2026-10-22); Linux not yet run.
-- [ ] The rolling-shutter timestamp behaviour is checked. Trigger mode is settled (the stamp marks when the camera is ready, so frames are dated by their trigger); free-running is still unknown, and ids-u3-36p0xcp.md gives the measurement.
+- [ ] The rolling-shutter timestamp behaviour is checked. Trigger mode is settled (the stamp marks when the camera is ready, so frames are dated by their trigger); free-running stamps also come early, so free-running timestamps are early by the frame period minus about 125 ms (safe for `not_before`; measured 2026-10-22). Still unknown: which row of the rolling shutter the trigger marks.
 
 ## Phase 4: GenTL backend (Windows, Linux)
 
@@ -134,7 +134,7 @@ Made after the first runs on the IDS U3-36PxXCP-M and CM3-U3-50S5Ms; details are
 - [x] Task 5.2: Write the hardware docs:
   - USB3 Vision backends: install per OS, how the driver differs from Aravis and GenTL, hazards.
   - The IDS U3-36P0XCP-M-GL doc: identity, nodes, timing, rolling shutter, rig steps.
-  - `usb3-vision.md` now leads with the drivers, backends, how they differ from Aravis and GenTL, hazards and the manual check; the Phase 1 research follows as reference. The IDS camera's findings moved to `ids-u3-36p0xcp.md`. Still **unknown**: where the IDS stamps a free-running frame relative to its exposure (the rig was disconnected before it could be measured; the doc gives the measurement).
+  - `usb3-vision.md` now leads with the drivers, backends, how they differ from Aravis and GenTL, hazards and the manual check; the Phase 1 research follows as reference. The IDS camera's findings moved to `ids-u3-36p0xcp.md`. Free-running timing was measured once the rig was back (see ids-u3-36p0xcp.md, Timestamps).
 - [x] Task 5.3: Update `pyproject.toml` extras, `CLAUDE.md`, `tech-stack.md`, the README, and `docs/guide.md` (only if callers can notice the difference).
 - [~] Task 5.4: Run the manual checks on the IDS camera: Aravis on macOS and Linux, GenTL on Linux and Windows. Record the results in the hardware doc.
   - Aravis on macOS: done and recorded (ids-u3-36p0xcp.md, Last run). Linux and Windows: not yet run.

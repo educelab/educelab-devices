@@ -59,7 +59,13 @@ The camera has **no timestamp latch**, so the driver can't read the device clock
 - Before the driver did this, arrival timing dated every triggered frame before its trigger: each capture dropped its first frame as stale and fired again (about 660 ms a capture), and the frame kept was dated about 270 ms before its exposure.
 - `TriggerSelector = ExposureStart` is no way out: with it, the camera delivered frames without being triggered.
 
-**Unknown: what the stamp marks while free-running.** If the camera also sends a free-running frame's leader before exposing it, timestamps are early, and frames only ever look older than they are (safe: more stale drops). If it exposes the next frame while sending the previous one, the stamp could be later than the exposure, and a frame a little older than `not_before` could pass. Settle it by comparing leader-to-completion time at 5, 100 and 300 ms exposure while free-running: a gap that grows with the exposure means the exposure follows the leader. A visible event (a light switched at a known host time) would also settle where in the rolling-shutter exposure the stamp falls. The hardware test `test_device_timestamp_against_buffer_arrival` prints the arrival-minus-stamp gaps.
+**Free-running, the stamp also comes early, so timestamps are early.** Verified, 2026-10-22, Mono8 at the 162 MB/s limit:
+
+- A free-running frame finishes arriving one frame period after its leader, at every exposure tried: 199.8 ms after it at 5 and 100 ms exposure (period 200 ms), 300.9 ms at 300 ms exposure (period 301 ms).
+- Triggered, a frame finishes 124.6 ms after its exposure ends, at 5, 100 and 300 ms exposure alike: that is readout plus transfer.
+- So a free-running frame's exposure starts about (exposure + 124.6 ms) before it finishes arriving, while the driver dates it at the leader minus the exposure. The timestamp is early by the frame period minus about 125 ms: 75 ms at 5 ms exposure, 176 ms at 300 ms. That assumes readout and transfer take as long free-running as triggered.
+- A frame can't be sent faster than the link allows (about 121 ms per Mono8 frame at 162 MB/s), so the period never falls much below 125 ms, and a timestamp is at most a few milliseconds late. Free-running frames therefore only look older than they are: `not_before` never takes a stale frame, but drops more fresh ones, and timestamps are off by tens of milliseconds.
+- For accurate timestamps on this camera, use software trigger. Where in the rolling-shutter exposure (first row or last) the trigger falls is still **unknown**; a light switched at a known host time would settle it. The hardware test `test_device_timestamp_against_buffer_arrival` prints the arrival-minus-stamp gaps.
 
 ## Software trigger
 

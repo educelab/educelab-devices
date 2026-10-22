@@ -263,6 +263,30 @@ The lab Mac with five Chameleon3 CM3-U3-50S5M cameras and one IDS camera, via `t
 - **Busy detection works.** A second open fails with `LIBUSB_ERROR_ACCESS`, which the driver reports as `DeviceBusy`.
 - **Reopening failed** with the same error, after earlier tests failed. The cause is described under the CM3-U3-50S5M below, and is fixed.
 
+**IDS U3-36PxXCP-M, second session** (power-cycled from Acroname port 6, Python 3.12, 2026-10-22). [V] for each point below, on this unit:
+
+- **No timestamp latch.**
+  - The feature dump (`arv-tool-0.8 … features`) has no `Timestamp`, `TimestampLatch` or `TimestampLatchValue`, only event timestamps (`EventErrorTimestamp` and the like).
+  - There is `DeviceClockFrequency`, 171,666,666 Hz, with `DeviceClockSelector = Sensor`.
+  - Buffers do carry a device timestamp. The driver can't relate it to host time, so it refuses `not_before` on this camera. That causes every remaining hardware-test failure (12 of 23).
+- **Pixel formats.**
+  - Available: Mono8 and `Mono10g40IDS`, which is 10-bit, packed four pixels to five bytes. Many other entries are listed but "Not available".
+  - The image is 5112 × 3840; the Mono8 payload is 19,630,080 bytes.
+- **Writes refused while a stream exists.** The camera refuses `PixelFormat` writes ("USB3Vision write_memory error") whenever an Aravis stream exists, even with acquisition stopped. Aravis enables the camera's stream channel when a stream is created, and disables it only when the stream's thread stops or the stream is finalized (`arvuvstream.c`). Writes succeed with no stream, or after `stop_thread()`. The driver therefore has a stream only while acquiring.
+- **`TLParamsLocked`.**
+  - It reads 0. With it set to 1, the camera streams nothing through Aravis, and it stays unable to stream after the flag is cleared, until power-cycled. Payload size is the same either way.
+  - The driver leaves `TLParamsLocked` alone, as Aravis's own tools do.
+- **Hazard: async USB mode.**
+  - In Aravis's default async mode on macOS, closing a camera can hang forever in `arv_uv_stream_finalize`. The stream thread waits for cancelled transfers to complete, while it is the thread that would complete them.
+  - When a close doesn't hang, the next session may still get only `missing-packets` frames, until the camera is power-cycled.
+  - The driver uses `UvUsbMode.SYNC` on USB3 Vision cameras. Six open/capture/close cycles then ran clean, and the CM3-U3-50S5M captured just as fast (11.9 per second either way, 30 `not_before` captures).
+- **Opening twice.** The driver refuses to open a camera this process already has open, without asking Aravis. A failed second `Camera.new` releases USB interfaces it never claimed. That was suspected of wedging the camera, but the async-mode hang above turned out to be the cause. The refusal stays as a precaution.
+- **Also measured.**
+  - After a 1 s pause, the frame taken was exposed 13 ms before the call.
+  - An out-of-range exposure write was accepted, and the camera then read 31.7 µs.
+  - Switching to software trigger took 0.38 s.
+- **All six cameras at once.** Streaming the six cameras together through the one Acroname hub, uncapped, gave this camera only `size-mismatch` frames. The demand is about 5 × 181 MB/s plus 162 MB/s on one USB 3 upstream link, the saturation `spinnaker.md` describes for uncapped FLIR runs.
+
 **CM3-U3-50S5M** (serial `0135BAD4` in Aravis, `20298452` in Spinnaker; firmware `1.12.3.00`), Python 3.12 (`aravis-test-flir-1.log`): 20 of 23 passed. All 23 pass after these fixes, each verified on this unit:
 
 - **Serial numbers differ between libraries.** Aravis lists FLIR cameras by their USB serial (`0135BAD4`, also the end of the address `1E100135BAD4`), not FLIR's decimal serial number. Address a camera by the serial its own backend's `discover()` reports.

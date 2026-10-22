@@ -295,6 +295,10 @@ class GenICamCamera(FrameCamera):
     A frame's ``timestamp`` is the start of its exposure, in host time. The
     raw device counter, ``device_timestamp_ns`` in its metadata, marks the end.
 
+    Once open, ``info.serial_number`` is the camera's own ``DeviceSerialNumber``,
+    which can differ from the serial it was opened by: Aravis lists FLIR cameras
+    by their USB serial, for example.
+
     Settings for features the camera lacks (e.g. a software trigger or a
     throughput limit) are left out.
 
@@ -316,6 +320,7 @@ class GenICamCamera(FrameCamera):
         self._conn: Connection | None = None
         self._model = f"{self.label} camera"
         self._firmware: str | None = None
+        self._own_serial: str | None = None
         self._timestamp_node: str | None = None
         self._exposure_node: str | None = None
         self._timestamp_offset: float | None = None
@@ -332,7 +337,7 @@ class GenICamCamera(FrameCamera):
         return DeviceInfo(
             self._backend.name,
             self._model,
-            serial_number=self._serial,
+            serial_number=self._own_serial or self._serial,
             firmware_version=self._firmware,
         )
 
@@ -389,6 +394,7 @@ class GenICamCamera(FrameCamera):
         try:
             self._model = self._read_string("DeviceModelName") or self._model
             self._firmware = self._read_string("DeviceFirmwareVersion")
+            self._own_serial = self._read_string("DeviceSerialNumber")
             self._configure()
             self._delivered = False
             self._software_trigger = False

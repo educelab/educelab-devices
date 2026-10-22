@@ -91,6 +91,11 @@ class BufferStatus(enum.IntEnum):
         return self.name.lower().replace("_", "-")
 
 
+class UvUsbMode(enum.IntEnum):
+    SYNC = 0
+    ASYNC = 1
+
+
 class StreamCallbackType(enum.IntEnum):
     INIT = 0
     EXIT = 1
@@ -249,6 +254,14 @@ class FakeArvStream:
         camera = self.__dict__.get("camera")
         if camera is not None:
             camera.channel_enabled = False
+        # Finalizing a stream frees the buffers still in its queues.
+        for buffer in [
+            *self.__dict__.get("output", ()),
+            *self.__dict__.get("input", ()),
+        ]:
+            if buffer.frame is not None and not buffer.frame.released:
+                buffer.frame.release()
+                buffer.frame = None
 
     def try_pop_buffer(self) -> FakeArvBuffer | None:
         self.pops.append(("try", None))
@@ -278,10 +291,11 @@ class FakeArvStream:
 class FakeArvDevice:
     """An ``Aravis.Device``: generic GenICam feature access."""
 
-    def __init__(self, sim: FakeCamera) -> None:
-        # Only the simulated camera, not the FakeArvCamera: a reference cycle
-        # would keep the camera open after the driver drops it.
+    def __init__(self, sim: FakeCamera, channel: Callable[[], bool]) -> None:
+        # Only the simulated camera and a function, not the FakeArvCamera: a
+        # reference cycle would keep the camera open after the driver drops it.
         self.sim = sim
+        self.camera_channel_enabled = channel
         self.range_check = RangeCheckPolicy.DISABLE
         self.access_check = AccessCheckPolicy.DISABLE
 
@@ -313,6 +327,14 @@ class FakeArvDevice:
         return _translated(lambda: self.sim.read(name))
 
     def _write(self, name: str, value: Any) -> None:
+        if name == "PixelFormat" and self.camera_channel_enabled():
+            # The U3-36PxXCP-M refuses payload settings while a stream channel is
+            # enabled, even with acquisition stopped (verified).
+            raise GLibError(
+                "[PixelFormat] USB3Vision write_memory error (error)",
+                DEVICE_DOMAIN,
+                int(DeviceError.PROTOCOL_ERROR),
+            )
         _translated(lambda: self.sim.write(name, value))
 
     def get_float_feature_value(self, name: str) -> float:
@@ -374,8 +396,10 @@ class FakeArvCamera:
         _translated(sim.open)
         self.sim = sim
         self.acquiring = False
-        self.channel_enabled = False
-        self.device = FakeArvDevice(sim)
+        self.usb_mode = UvUsbMode.ASYNC
+        channel = [False]
+        self._channel = channel
+        self.device = FakeArvDevice(sim, lambda: channel[0])
         self.streams_created = 0
 
     def __del__(self) -> None:
@@ -384,6 +408,20 @@ class FakeArvCamera:
             return
         sim.streaming = False
         sim.opened = False
+
+    @property
+    def channel_enabled(self) -> bool:
+        return self._channel[0]
+
+    @channel_enabled.setter
+    def channel_enabled(self, value: bool) -> None:
+        self._channel[0] = value
+
+    def is_uv_device(self) -> bool:
+        return True
+
+    def uv_set_usb_mode(self, mode: UvUsbMode) -> None:
+        self.usb_mode = mode
 
     def get_device(self) -> FakeArvDevice:
         return self.device
@@ -425,6 +463,7 @@ class _Aravis:
     BufferStatus = BufferStatus
     GcAccessMode = GcAccessMode
     StreamCallbackType = StreamCallbackType
+    UvUsbMode = UvUsbMode
     RangeCheckPolicy = RangeCheckPolicy
     AccessCheckPolicy = AccessCheckPolicy
     Stream = FakeArvStream
@@ -485,11 +524,13 @@ class FakeRepository:
     def __init__(self, cameras: Iterable[FakeCamera] = ()) -> None:
         self.cameras = list(cameras)
         self.update_calls = 0
+        self.open_attempts = 0
         self.buffers_allocated = 0
         self.GLib = _GLib
         self.Aravis = _Aravis(self)
 
     def _open(self, name: str | None) -> FakeArvCamera:
+        self.open_attempts += 1
         for cam in self.cameras:
             if cam.attached and f"{cam.vendor.split()[0]}-{cam.serial}" == name:
                 return FakeArvCamera(cam)

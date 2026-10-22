@@ -139,6 +139,22 @@ def test_open_finds_the_camera_by_serial(camera, sim):
     assert camera.info.backend == "aravis"
 
 
+def test_a_flir_opened_by_usb_serial_reports_its_own_serial():
+    sim = FakeCamera(
+        "0135BAD4", "Chameleon3 CM3-U3-50S5M", vendor="Point Grey Research"
+    )
+    sim.set("DeviceSerialNumber", "20298452")
+    repository = FakeRepository([sim])
+    with AravisCamera("0135BAD4", repository=repository) as camera:
+        assert camera.info.serial_number == "20298452"
+
+
+def test_open_uses_synchronous_usb_transfers(camera, repository):
+    # In async mode, closing a stream can hang in arv_uv_stream_finalize on
+    # macOS, and the camera then streams nothing (usb3-vision.md).
+    assert connection_of(camera)._camera.usb_mode == repository.Aravis.UvUsbMode.SYNC
+
+
 def test_open_turns_on_access_checks_but_not_range_checks(camera, repository):
     # Aravis's range check refuses Mono16 on the CM3-U3-50S5M, whose XML gives the
     # PixelFormat register a stale maximum (usb3-vision.md). The core checks ranges.
@@ -200,6 +216,18 @@ def test_a_camera_unplugged_since_the_last_listing_is_not_found(repository, sim)
     sim.attached = False
     with pytest.raises(DeviceNotFound):
         AravisCamera(MONO, repository=repository).open()
+
+
+def test_a_camera_open_in_this_process_is_refused_without_asking_aravis(repository):
+    # On macOS, Aravis's failed second open releases the first handle's USB
+    # interfaces, and the camera then streams nothing (usb3-vision.md).
+    with AravisCamera(MONO, repository=repository):
+        attempts = repository.open_attempts
+        with pytest.raises(DeviceBusy, match="already open"):
+            AravisCamera(MONO, repository=repository).open()
+        assert repository.open_attempts == attempts
+    with AravisCamera(MONO, repository=repository):
+        pass
 
 
 def test_close_lets_go_of_the_camera(repository, sim):
@@ -266,8 +294,9 @@ def test_a_leftover_buffer_does_not_keep_the_camera_alive(repository, sim):
     del leftover
 
 
-def test_tl_params_are_locked_only_while_acquiring(camera, sim):
-    assert sim.get("TLParamsLocked") == 1
+def test_tl_params_are_left_alone(camera, sim):
+    # Setting it stops the U3-36PxXCP-M streaming through Aravis.
+    assert sim.get("TLParamsLocked") == 0
     connection_of(camera).stop_acquisition()
     assert sim.get("TLParamsLocked") == 0
 
@@ -327,11 +356,15 @@ def test_a_larger_payload_gets_new_buffers(camera, repository):
     camera.capture_frame()
 
 
-def test_stopping_drops_frames_waiting_in_the_output_queue(camera):
+def test_stopping_drops_the_stream_and_its_waiting_frames(camera, sim):
+    # Its channel would otherwise stay enabled, and the U3-36PxXCP-M refuses
+    # PixelFormat writes while it is.
     conn = connection_of(camera)
     conn._stream.arrive(2)
     conn.stop_acquisition()
-    assert conn._stream.get_n_buffers() == (BUFFER_COUNT, 0)
+    assert conn._stream is None
+    assert sim.held == []
+    conn._device.set_string_feature_value("PixelFormat", "Mono16")
 
 
 def test_pixels_survive_release(camera):

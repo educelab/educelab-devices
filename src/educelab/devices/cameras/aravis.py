@@ -67,6 +67,10 @@ _DEVICE_ERROR_DOMAIN = "arv-device-error-quark"
 # Aravis is not thread safe across interfaces, and device discovery goes
 # through them (usb3-vision.md, Thread safety).
 _system_lock = threading.Lock()
+# Cameras this process has open, by (Aravis module, device ID). On macOS a
+# second open fails, but releases the first handle's USB interfaces as it goes,
+# and the camera then streams nothing until power-cycled (usb3-vision.md).
+_open_here: set[tuple[int, str]] = set()
 
 
 def load_aravis() -> ModuleType:
@@ -154,8 +158,13 @@ class _AravisBackend:
                 device_id = _device_id(arv, serial)
                 if device_id is None:
                     continue
+                key = (id(arv), device_id)
+                if key in _open_here:
+                    raise DeviceBusy(f"{device_id} is already open in this process")
                 try:
-                    return _AravisConnection(arv, glib, arv.Camera.new(device_id))
+                    conn = _AravisConnection(arv, glib, arv.Camera.new(device_id), key)
+                    _open_here.add(key)
+                    return conn
                 except (glib.Error, TypeError) as exc:
                     if not refreshed:
                         continue
@@ -179,19 +188,23 @@ def _device_id(arv: Any, serial: str) -> str | None:
 class _AravisConnection:
     """A `Connection` onto one open Aravis camera."""
 
-    def __init__(self, arv: Any, glib: Any, camera: Any) -> None:
+    def __init__(self, arv: Any, glib: Any, camera: Any, key: tuple[int, str]) -> None:
+        self._key = key
         self._arv = arv
         self._glib = glib
         self._camera: Any = camera
         self._device: Any = camera.get_device()
         self._stream: Any = None
-        self._payload = 0
         self._acquiring = False
         # Refuse writes to read-only nodes before they reach the camera. Range
         # checks stay off: the core checks ranges itself, and Aravis's check
         # refuses Mono16 on the CM3-U3-50S5M (usb3-vision.md, Hardware runs).
         self._device.set_access_check_policy(arv.AccessCheckPolicy.ENABLE)
-        self._allocate()
+        # Synchronous transfers: in async mode, finalizing a stream can deadlock
+        # cancelling its transfers, and the U3-36PxXCP-M then streams nothing
+        # until power-cycled (macOS; usb3-vision.md, Hardware runs).
+        if self._do(camera.is_uv_device):
+            self._do(lambda: camera.uv_set_usb_mode(arv.UvUsbMode.SYNC))
 
     def _do(self, fn: Callable[[], T]) -> T:
         try:
@@ -206,10 +219,13 @@ class _AravisConnection:
         raise error
 
     def _allocate(self) -> None:
-        """Give the camera a new stream with buffers sized to its payload."""
-        # Drop the old stream first: finalizing it disables the camera's stream
-        # channel, which would stop a new stream made before it went
-        # (verified on the CM3-U3-50S5M; usb3-vision.md, Hardware runs).
+        """Give the camera a new stream with buffers sized to its payload.
+
+        A stream enables the camera's stream channel as soon as it exists, and
+        disables it when finalized (arvuvstream.c). So any old stream goes
+        first, or finalizing it would stop the new one (seen on the
+        CM3-U3-50S5M; usb3-vision.md, Hardware runs).
+        """
         self._stream = None
         payload = self._do(self._camera.get_payload)
         on_buffer, bind = _keep_newest(self._arv)
@@ -217,7 +233,7 @@ class _AravisConnection:
         bind(stream)
         for _ in range(BUFFER_COUNT):
             stream.push_buffer(self._arv.Buffer.new_allocate(payload))
-        self._stream, self._payload = stream, payload
+        self._stream = stream
 
     # --- Node map ---------------------------------------------------------------
 
@@ -288,28 +304,24 @@ class _AravisConnection:
     # --- Stream -----------------------------------------------------------------
 
     def start_acquisition(self) -> None:
-        # A new pixel format may need bigger buffers than the pool has.
-        if self._do(self._camera.get_payload) != self._payload:
-            self._allocate()
-        # Aravis leaves TLParamsLocked alone; SFNC has the host hold it while
-        # streaming, and release it so payload settings can change.
-        self._lock_tl_params(1)
+        # TLParamsLocked is left alone, as Aravis's own tools do: with it set,
+        # the U3-36PxXCP-M streams nothing (usb3-vision.md, Hardware runs).
+        # A stream only while acquiring, sized to the current payload.
+        self._allocate()
         self._do(self._camera.start_acquisition)
         self._acquiring = True
 
     def stop_acquisition(self) -> None:
         if not self._acquiring:
             return
-        self._do(self._camera.stop_acquisition)
         self._acquiring = False
-        self._lock_tl_params(0)
-        # Frames from before the stop may be in another format; drop them.
-        while (buffer := self._stream.try_pop_buffer()) is not None:
-            self._stream.push_buffer(buffer)
-
-    def _lock_tl_params(self, value: int) -> None:
-        if self.is_writable("TLParamsLocked"):
-            self.set_int("TLParamsLocked", value)
+        try:
+            self._do(self._camera.stop_acquisition)
+        finally:
+            # Dropping the stream disables its channel, without which the
+            # U3-36PxXCP-M refuses PixelFormat writes. It also discards frames
+            # from before the stop. Nothing else may hold it (usb3-vision.md).
+            self._stream = None
 
     def grab(self, timeout: float | None) -> "_AravisBuffer":
         if not self._acquiring:
@@ -339,6 +351,8 @@ class _AravisConnection:
             problem = f"stop acquisition: {exc}"
         # Aravis lets go of the camera when the last reference to it goes.
         self._stream = self._device = self._camera = None
+        with _system_lock:
+            _open_here.discard(self._key)
         if problem:
             raise DeviceError(problem)
 

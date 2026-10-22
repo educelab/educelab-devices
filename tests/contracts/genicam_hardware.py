@@ -87,9 +87,11 @@ class GenICamHardwareTests:
         assert infos[serial].model
 
     def test_info_has_model_and_firmware(self, camera, serial):
+        # The camera's own serial, which can differ from the one it was opened by
+        # (Aravis lists FLIR cameras by USB serial).
         info = camera.info
-        print(f"info: {info}")
-        assert info.serial_number == serial
+        print(f"info: {info} (opened as {serial})")
+        assert info.serial_number
         assert info.model != f"{self.driver.label} camera"
 
     def test_settings_the_camera_offers(self, camera):
@@ -298,9 +300,14 @@ class GenICamHardwareTests:
                     ready = datetime.now(UTC)
 
                     def capture(c: GenICamCamera, ready: datetime = ready) -> None:
+                        # Cameras that can't latch their timestamp can't take
+                        # not_before; they just capture.
+                        latched = c.timestamp_offset is not None
                         try:
-                            frame = c.capture_frame(not_before=ready, timeout=5.0)
-                            assert frame.timestamp >= ready
+                            frame = c.capture_frame(
+                                not_before=ready if latched else None, timeout=5.0
+                            )
+                            assert not latched or frame.timestamp >= ready
                         except (DeviceError, AssertionError) as exc:
                             errors.append(f"{c!r}: {exc}")
 

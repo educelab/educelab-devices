@@ -195,6 +195,22 @@ def test_info_after_open_has_model_and_firmware(camera):
     )
 
 
+def test_info_after_open_reports_the_cameras_own_serial(backend, fake):
+    # E.g. Aravis lists FLIR cameras by USB serial, but the camera knows its own.
+    fake.set("DeviceSerialNumber", "20298452")
+    camera = GenICamCamera(MONO, backend)
+    assert camera.info.serial_number == MONO
+    with camera:
+        assert camera.info.serial_number == "20298452"
+    assert camera.info.serial_number == "20298452"
+    assert MONO in repr(camera)
+
+
+def test_info_keeps_the_given_serial_if_the_camera_has_none():
+    with GenICamCamera(MONO, only(without=["DeviceSerialNumber"])) as camera:
+        assert camera.info.serial_number == MONO
+
+
 def test_repr_names_the_serial(backend):
     assert MONO in repr(GenICamCamera(MONO, backend))
 

@@ -223,6 +223,10 @@ hardware doc maps the name to the native node and gives the conversion.
 
 Numeric arguments can be Python numbers or numpy scalars (e.g. values from `np.linspace`).
 
+Frames with more than 8 bits per value come as `uint16`, with the value in the low bits:
+a 10-bit pixel runs from 0 to 1023. Cameras that know the depth say so in
+`frame.metadata["bit_depth"]`.
+
 ### Focus drives
 
 `focus_steps` counts steps from `last_limit`. A move that fails partway for any reason

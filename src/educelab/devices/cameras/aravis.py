@@ -156,26 +156,34 @@ class _AravisBackend:
     def open(self, serial: str) -> "_AravisConnection | None":
         arv, glib = self._load()
         with _system_lock:
-            arv.update_device_list()
-            device_id = next(
-                (
-                    arv.get_device_id(i)
-                    for i in range(arv.get_n_devices())
-                    if arv.get_device_serial_nbr(i) == serial
-                ),
-                None,
-            )
-            if device_id is None:
-                return None
-            try:
-                camera = arv.Camera.new(device_id)
-            except (glib.Error, TypeError) as exc:
-                # Listed but unopenable: another process has claimed it
-                # (assumed; usb3-vision.md).
-                error = DeviceBusy(f"{device_id} is listed but won't open: {exc}")
+            # Updating the list waits about a second on GigE discovery, so try
+            # the last listing first (usb3-vision.md, Timing).
+            for refreshed in (False, True):
+                if refreshed:
+                    arv.update_device_list()
+                device_id = _device_id(arv, serial)
+                if device_id is None:
+                    continue
+                try:
+                    return _AravisConnection(arv, glib, arv.Camera.new(device_id))
+                except (glib.Error, TypeError) as exc:
+                    if not refreshed:
+                        continue
+                    # Listed but unopenable: another process has claimed it
+                    # (assumed; usb3-vision.md).
+                    error = DeviceBusy(f"{device_id} is listed but won't open: {exc}")
+                    break
             else:
-                return _AravisConnection(arv, glib, camera)
+                return None
         raise error
+
+
+def _device_id(arv: Any, serial: str) -> str | None:
+    """The ID of the camera with this serial in Aravis's last listing."""
+    for i in range(arv.get_n_devices()):
+        if arv.get_device_serial_nbr(i) == serial:
+            return str(arv.get_device_id(i))
+    return None
 
 
 class _AravisConnection:

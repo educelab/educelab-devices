@@ -78,6 +78,7 @@ Settle the open choices and the seam first. Then move the Spinnaker driver onto 
 ### Verification
 
 - [ ] CI is green.
+- [x] Real Aravis 0.8.36 on macOS, without a camera (2026-10-22). The drift tests pass, and `tests/test_aravis_library.py` drives `AravisCamera` through Aravis's simulated camera. This found two changes: falling back to `ExposureTimeAbs`, and skipping the 1 s device-list update when reopening.
 - [ ] IDS U3-36P0XCP-M-GL hardware tests pass on macOS and Linux.
 - [ ] The rolling-shutter timestamp behaviour is checked.
 

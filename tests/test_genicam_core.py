@@ -328,6 +328,31 @@ def test_a_feature_the_camera_lacks_is_not_a_setting(without, missing):
         camera.capture_frame()
 
 
+def test_older_exposure_node_is_used_as_a_fallback():
+    backend = only(exposure_node="ExposureTimeAbs", auto=False)
+    fake = backend.cameras[0]
+    with GenICamCamera(MONO, backend) as camera:
+        assert camera.setting(EXPOSURE_TIME).value == pytest.approx(0.01)
+        camera.set_setting(EXPOSURE_TIME, 0.02)
+        assert fake.get("ExposureTimeAbs") == pytest.approx(20_000.0)
+        end_ns = fake.device_time_ns()
+        fake.queue_frames(FrameSpec(timestamp_ns=end_ns))
+        frame = camera.capture_frame()
+        start = camera.timestamp_offset + end_ns / 1e9 - 0.02
+    assert frame.metadata[EXPOSURE_TIME] == pytest.approx(0.02)
+    assert frame.timestamp.timestamp() == pytest.approx(start, abs=1e-6)
+
+
+def test_a_camera_without_exposure_time_still_captures():
+    backend = only(without=["ExposureTime", "ExposureAuto"])
+    with GenICamCamera(MONO, backend) as camera:
+        assert EXPOSURE_TIME not in camera.settings()
+        frame = camera.capture_frame(not_before=datetime.now(UTC))
+        assert frame.metadata[EXPOSURE_TIME] is None
+        camera.set_setting(TRIGGER, "Software")
+        camera.capture_frame()
+
+
 def test_a_camera_without_gain_reports_none_in_metadata():
     with GenICamCamera(MONO, only(without=["Gain", "GainAuto"])) as camera:
         assert camera.capture_frame().metadata[GAIN] is None

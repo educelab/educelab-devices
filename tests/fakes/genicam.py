@@ -141,6 +141,7 @@ class FakeCamera:
         clock: Host clock, in seconds since the epoch.
         uptime: Seconds the camera's timestamp counter has been running.
         timestamp_node: ``"Timestamp"`` or the older ``"TimestampLatchValue"``.
+        exposure_node: ``"ExposureTime"`` or the older ``"ExposureTimeAbs"``.
         firmware: ``DeviceFirmwareVersion``.
         formats: ``PixelFormat`` entries, first one current. Defaults to the
             usual mono or color set.
@@ -170,6 +171,7 @@ class FakeCamera:
         clock: Callable[[], float] = time.time,
         uptime: float = 1000.0,
         timestamp_node: str = "Timestamp",
+        exposure_node: str = "ExposureTime",
         firmware: str = "1.0.0",
         formats: Iterable[str] | None = None,
         auto: bool = True,
@@ -186,6 +188,7 @@ class FakeCamera:
         self.clock = clock
         self.device_epoch = clock() - uptime
         self.timestamp_node = timestamp_node
+        self.exposure_node = exposure_node
         self.attached = True
         self.busy = False
         self.opened = False
@@ -266,7 +269,7 @@ class FakeCamera:
             enum("ExposureMode", "Timed"),
             enum("ExposureAuto", auto_mode),
             Node(
-                "ExposureTime",
+                exposure_node,
                 "float",
                 10_000.0,
                 minimum=6.0,
@@ -465,7 +468,10 @@ class FakeCamera:
         spec = self.queue.popleft() if self.queue else FrameSpec()
         timestamp = spec.timestamp_ns
         if timestamp is None:
-            timestamp = fresh + round(self.get("ExposureTime") * 1000)
+            exposure_us = (
+                self.get(self.exposure_node) if self.has(self.exposure_node) else 0
+            )
+            timestamp = fresh + round(exposure_us * 1000)
         self.frames_grabbed += 1
         pixel_format = self.get("PixelFormat")
         dtype, channels = LAYOUTS[pixel_format]

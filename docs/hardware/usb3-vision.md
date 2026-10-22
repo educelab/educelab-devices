@@ -207,6 +207,30 @@ stream.get_info_uint64_by_name("n_underruns")
 
 ---
 
+## Checked on a lab Mac, without a camera
+
+Aravis 0.8.36 (Homebrew), PyGObject 3.58.1 and pycairo 1.29.2 built into the project venv (Python 3.15, macOS 27, arm64), 2026-10-22. [V] for everything in this section, on that machine.
+
+### Install
+
+- With Homebrew's `aravis`, `pkgconf`, `cairo`, `glib` and `gobject-introspection` present, `pip install pycairo` and then `pip install PyGObject` built and installed with no environment variables. `gi.require_version("Aravis", "0.8")` found the typelib in `/opt/homebrew/lib/girepository-1.0`.
+- `tests/test_fake_aravis.py` passes against the real module: the fake's method names, the PFNC pixel-format codes in `cameras/aravis.py`, and the buffer-status and error enums all match.
+
+### Timing
+
+- `Aravis.update_device_list()` takes about **1.0 s** every call (measured twice). Opening a camera by ID (`Aravis.Camera.new`) takes about 3 ms. The time goes on GigE Vision discovery, which runs even with no network cameras. The driver therefore opens cameras from the last listing and updates the list only when the serial isn't in it, or when opening a stale entry fails. `discover()` always updates, so it always costs about a second.
+
+### Aravis's simulated camera
+
+Aravis ships a simulated camera on its "Fake" interface (`Aravis.enable_interface("Fake")`, ID `Fake_1`, serial `1`). `tests/test_aravis_library.py` drives `AravisCamera` through the real library with it. What it showed:
+
+- It names exposure **`ExposureTimeAbs`**, the pre-SFNC-2.0 name, and has no `ExposureTime`. The core now falls back to `ExposureTimeAbs`, as it does for `TimestampLatchValue`. Some older real cameras use that name too.
+- It has no `TimestampLatch`, `Gain`, `ExposureAuto`, `DeviceFirmwareVersion` or throughput nodes. The driver leaves those settings out and refuses `not_before`, which needs the latch.
+- `get_feature_access_mode()` returns an `Aravis.GcAccessMode`, and `get_data()` returns `bytes`.
+- Every pixel format it offers captured with the right shape and dtype (Mono8/16, RGB8, four Bayer 8-bit). The driver allocated new buffers for the larger RGB8 and Mono16 payloads.
+- The software trigger primed in about 38 ms.
+- A second `Camera.new` on the same simulated camera succeeds, so busy detection (`DeviceBusy`) can only be checked on a real USB camera (`test_a_second_open_of_the_same_camera_is_busy`).
+
 ## 4. IDS peak GenTL producer
 
 - **Current version:** IDS switched to year.month numbering. **IDS peak 26.06** is current, with the U3V Transport Layer at **2.0.0.0**. The previous release was 2.21 (U3V TL 1.22.0.0). [V] (https://en.ids-imaging.com/files/downloads/ids-peak/readme/ids-peak-linux-readme-26.06_EN.html and the `-windows-` equivalent)

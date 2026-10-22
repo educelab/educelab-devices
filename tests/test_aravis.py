@@ -163,6 +163,32 @@ def test_camera_held_elsewhere_raises_device_busy(repository, sim):
     assert info.value.__context__ is None
 
 
+def test_reopening_skips_the_slow_device_list_update(repository):
+    # Each update waits about a second on GigE discovery (usb3-vision.md).
+    camera = AravisCamera(MONO, repository=repository)
+    with camera:
+        pass
+    updates = repository.update_calls
+    with camera:
+        pass
+    assert repository.update_calls == updates
+
+
+def test_a_camera_attached_since_the_last_listing_is_found(repository):
+    repository.Aravis.update_device_list()
+    late = FakeCamera("4108000003")
+    repository.cameras.append(late)
+    with AravisCamera("4108000003", repository=repository):
+        assert late.opened
+
+
+def test_a_camera_unplugged_since_the_last_listing_is_not_found(repository, sim):
+    repository.Aravis.update_device_list()
+    sim.attached = False
+    with pytest.raises(DeviceNotFound):
+        AravisCamera(MONO, repository=repository).open()
+
+
 def test_close_lets_go_of_the_camera(repository, sim):
     camera = AravisCamera(MONO, repository=repository)
     camera.open()

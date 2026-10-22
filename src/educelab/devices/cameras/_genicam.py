@@ -221,6 +221,10 @@ TIMESTAMP_SAMPLES = 20
 # "TimestampLatchValue" (docs/hardware/spinnaker.md, Protocol).
 _TIMESTAMP_NODES = ("Timestamp", "TimestampLatchValue")
 
+# Exposure time, in microseconds: SFNC's name, then the older one that some
+# cameras (and Aravis's simulated camera) still use.
+_EXPOSURE_NODES = ("ExposureTime", "ExposureTimeAbs")
+
 # Stale frames a capture drops before re-measuring the timestamp offset, as in
 # pgs-scan dev. The capture's timeout bounds the retries. See spinnaker.md.
 RETRIES_BEFORE_REMEASURE = 5
@@ -298,6 +302,7 @@ class GenICamCamera(FrameCamera):
         self._model = f"{self.label} camera"
         self._firmware: str | None = None
         self._timestamp_node: str | None = None
+        self._exposure_node: str | None = None
         self._timestamp_offset: float | None = None
         self._delivered = False
         self._software_trigger = False
@@ -422,6 +427,9 @@ class GenICamCamera(FrameCamera):
         self._timestamp_node = next(
             (n for n in _TIMESTAMP_NODES if self._connection.has(n)), None
         )
+        self._exposure_node = next(
+            (n for n in _EXPOSURE_NODES if self._connection.has(n)), None
+        )
 
     @contextmanager
     def _acquisition_paused(self) -> Iterator[None]:
@@ -441,7 +449,7 @@ class GenICamCamera(FrameCamera):
         capture waits before firing again.
         """
         conn = self._connection
-        exposure = self._read_float("ExposureTime") / _US_PER_S
+        exposure = self._exposure() or 0.0
         deadline = time.monotonic() + self.capture_timeout
         fired = 0
         while (remaining := deadline - time.monotonic()) > 0:
@@ -490,7 +498,7 @@ class GenICamCamera(FrameCamera):
 
     def _settings(self) -> Mapping[str, Setting]:
         found = (
-            self._float_setting(EXPOSURE_TIME, "ExposureTime", "s", _US_PER_S),
+            self._exposure_setting(),
             self._enum_setting("ExposureAuto", _AUTO_MODES),
             self._float_setting(GAIN, "Gain", "dB"),
             self._enum_setting("GainAuto", _AUTO_MODES),
@@ -518,7 +526,9 @@ class GenICamCamera(FrameCamera):
         conn = self._connection
         if name in (EXPOSURE_TIME, GAIN):
             node, scale = (
-                ("ExposureTime", _US_PER_S) if name == EXPOSURE_TIME else ("Gain", 1.0)
+                (str(self._exposure_node), _US_PER_S)
+                if name == EXPOSURE_TIME
+                else ("Gain", 1.0)
             )
             # Clamp, so a limit that went through the unit conversion still fits.
             low, high = self._call(
@@ -539,6 +549,17 @@ class GenICamCamera(FrameCamera):
             self._set_trigger(str(value))
         else:
             self._set_enum(name, str(value), kind=CommandRejected)
+
+    def _exposure_setting(self) -> Setting | None:
+        if self._exposure_node is None:
+            return None
+        return self._float_setting(EXPOSURE_TIME, self._exposure_node, "s", _US_PER_S)
+
+    def _exposure(self) -> float | None:
+        """The exposure time in seconds, or None if the camera has no such node."""
+        if self._exposure_node is None:
+            return None
+        return self._read_float(self._exposure_node) / _US_PER_S
 
     def _throughput_limit_setting(self) -> Setting | None:
         conn = self._connection
@@ -714,7 +735,9 @@ class GenICamCamera(FrameCamera):
             if wait > 0:
                 # No frame from before not_before would do, so don't grab any.
                 time.sleep(wait)
-        exposure = self._read_float("ExposureTime") / _US_PER_S
+        exposure_time = self._exposure()
+        # Without an exposure time, the frame's timestamp is the device's stamp.
+        exposure = exposure_time or 0.0
         retrigger_s = math.inf
         if self._software_trigger:
             turnaround = self._trigger_turnaround
@@ -768,7 +791,7 @@ class GenICamCamera(FrameCamera):
                 self._call("release a frame", buffer.release)
             if isinstance(taken, _Taken):
                 metadata = {
-                    EXPOSURE_TIME: exposure,
+                    EXPOSURE_TIME: exposure_time,
                     GAIN: self._read_optional_float("Gain"),
                     "device_timestamp_ns": taken.device_timestamp_ns,
                     "frame_id": taken.frame_id,

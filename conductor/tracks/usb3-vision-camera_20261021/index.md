@@ -1,7 +1,7 @@
 # Track: USB3 Vision Camera
 
 **ID:** usb3-vision-camera_20261021
-**Status:** Pending
+**Status:** In Progress
 
 ## Documents
 
@@ -10,8 +10,8 @@
 
 ## Progress
 
-- Phases: 0/5 complete
-- Tasks: 0/25 complete
+- Phases: 1/5 complete
+- Tasks: 5/25 complete
 
 ## Quick Links
 

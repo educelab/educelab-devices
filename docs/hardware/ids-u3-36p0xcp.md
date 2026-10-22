@@ -13,19 +13,23 @@ Everything here was observed on one unit (serial `4110091493`, firmware `3.90.27
 
 ## Transport
 
-- **Aravis** (macOS and Linux) is the only backend checked so far. IDS's GenTL producer, part of IDS peak, has no macOS build, so on the lab Mac Aravis is the only option. Verified (no macOS build, per IDS's readmes).
-- **GenTL** through IDS peak's `ids_u3vgentl.cti` **failed on Linux**, over what turned out to be a USB 2 link (see [GenTL on Linux](#gentl-on-linux)), and is untried on Windows. IDS's producer opens only IDS cameras, and on Windows IDS's kernel driver claims the camera, so Aravis can't open it there. See [usb3-vision.md](usb3-vision.md#backends).
+- **Aravis** works on macOS. On Linux it got only incomplete frames ([Aravis on Linux](#aravis-on-linux)). IDS's GenTL producer, part of IDS peak, has no macOS build, so on the lab Mac Aravis is the only option. Verified (no macOS build, per IDS's readmes).
+- **GenTL** through IDS peak's `ids_u3vgentl.cti` works on Linux, untimed (see [GenTL on Linux](#gentl-on-linux)), and is untried on Windows. IDS's producer opens only IDS cameras, and on Windows IDS's kernel driver claims the camera, so Aravis can't open it there. See [usb3-vision.md](usb3-vision.md#backends).
 - **No timestamp through GenTL.** genicam's buffers carry no host arrival time, and this camera has no timestamp latch, so `GenTLCamera` can't relate frames to host time and refuses `not_before` on it. Verified on Linux: every `not_before` capture was refused.
 - **USB 3 only.** IDS's readme says uEye XCP models don't work on USB 2.0. Assumed (IDS readme).
 - **Linux.** Raise usbfs memory (`usbfs_memory_mb=1000`): one Mono8 frame is 19.6 MB, more than the kernel's 16 MB default. See [usb3-vision.md](usb3-vision.md#usbfs-memory). Assumed.
 
 ### GenTL on Linux
 
-Fedora on arm64, IDS peak 26.06.2's `ids_u3vgentl.cti` (archive install), Python 3.14.8, genicam 1.6.0, 2026-10-22: 6 of 23 hardware tests passed in each of two runs, the second after power-cycling the camera and the computer, with usbfs memory raised and no xHCI resets in `dmesg`. [V for each point below, on this unit]
+Fedora on an Apple Silicon Mac (Asahi Linux, arm64), IDS peak 26.06.2's `ids_u3vgentl.cti` (archive install), Python 3.14.8, genicam 1.6.0, 2026-10-22. [V for each point below, on this unit]
 
-- **What worked.** Discovery (model `U3-36PxXCP-M`, serial `4110091493`, address `1409f4fb04e5 U3-36PxXCP-M`), opening, reading every setting (the same nodes and ranges as through Aravis), refusing a second open, and genapi refusing an out-of-range exposure ("must be greater than or equal 31.712621").
-- **The control channel fell out of step.** After the first few tests, register reads and writes failed with producer messages such as `ListenFailed with 'Input/Output Error'`, `ListenUnexpected command id 0x4356` (that is "CV", from the middle of the `U3VC` packet prefix), `ValidateWriteAckAcknowledge failed with unexpected command_id 0x801<>0x803` and `Pending acknowledge failed with unexpected request id 100<>101`. The first failure was almost always a read of `DeviceLinkCurrentThroughput`. Grabs then timed out, a close failed, and at the end the camera was no longer listed.
-- **Likely cause: a USB 2 link.** Aravis on the same machine found the camera at `USB 2.10 (Low bandwidth)`: its stream completed none of 218 frames (354 MB received, every frame failed), and in a later run the camera disappeared. IDS says uEye XCP cameras don't work on USB 2.0. The machine is an Apple Silicon Mac running Asahi Linux, whose USB-C ports have long lacked USB 3. [V for the USB 2 link; I for the cause] So neither GenTL nor Aravis has been checked on Linux yet; that needs a machine with a USB 3 port Linux drives at 5 Gb/s.
+- **Over USB 3 (5000M in `lsusb -t`): it works, untimed.** 12 of 23 hardware tests passed, 1 skipped. Every failure was the driver refusing `not_before`, because through GenTL this camera's frames can't be timed (see [Transport](#transport)). Captures without `not_before`, settings, pixel formats, the throughput limit, reopening and busy detection all worked. The hardware tests now skip timing checks for a camera that can't be timed, and check the refusal instead.
+- **Over USB 2 it fails badly.** The first runs went through a USB 2 A-to-C adapter: Aravis reported `USB 2.10 (Low bandwidth)`, and its stream completed none of 218 frames. Through GenTL, only 6 of 23 tests passed. The control channel fell out of step (`ListenFailed with 'Input/Output Error'`, `ListenUnexpected command id 0x4356`, `unexpected request id 100<>101`), grabs timed out, and finally the camera disappeared. IDS says uEye XCP cameras don't work on USB 2.0. Check the link with `lsusb -t`: 480M is USB 2, 5000M USB 3.
+- **Discovery** reports model `U3-36PxXCP-M`, serial `4110091493` and address `1409f4fb04e5 U3-36PxXCP-M`. genapi refuses an out-of-range exposure ("must be greater than or equal 31.712621").
+
+### Aravis on Linux
+
+The same machine and link, Aravis 0.8 built from source: only discovery passed. Opening timed out, because every frame arrived incomplete while the driver waited for one complete frame to time the camera's arrivals. **Cause unknown.** The suspect is Aravis's synchronous USB mode, which the driver uses everywhere to avoid a hang on macOS, and which keeps only one transfer in flight. `arv-camera-test-0.8` in sync and async mode will show whether it is.
 
 ## Nodes
 

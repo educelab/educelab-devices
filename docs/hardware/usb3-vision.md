@@ -170,10 +170,10 @@ Loading it makes genicam print five lines such as "GenTL producer does not imple
 
 ### 2026-10-22, Linux (Fedora on Asahi, arm64), GenTL and Aravis
 
-The IDS camera through IDS peak 26.06.2's producer: see [ids-u3-36p0xcp.md](ids-u3-36p0xcp.md#gentl-on-linux). In short, the camera's control channel fell out of step after the first few tests, and no frames came.
+The IDS camera: see [ids-u3-36p0xcp.md](ids-u3-36p0xcp.md#gentl-on-linux). In short, over USB 3 GenTL works but can't time the camera's frames, and Aravis got only incomplete frames.
 
 - **IDS's proxy producer.** IDS peak installs `ids_proxygentl.cti` beside `ids_u3vgentl.cti` and `ids_gevgentl.cti`. The proxy wraps IDS's other producers, so with the folder in `GENICAM_GENTL64_PATH` the driver loaded the camera's producer twice, and opening failed with an exception on close. Moving the proxy out of the folder, or naming `ids_u3vgentl.cti` itself in `GENICAM_GENTL64_PATH` (or `--producer` / `producer=`), fixed it. [V by the maintainer] The driver now skips a producer that fails, with a warning, but naming the one producer you want is still the reliable setup.
-- **The link was USB 2.** Aravis on the same machine reported `USB 2.10 (Low bandwidth)` for the camera, and its stream completed none of 218 frames. IDS says uEye XCP cameras don't work on USB 2.0, so this machine can't check the camera on Linux by either backend. The machine is an Apple Silicon Mac running Asahi Linux, whose USB-C ports have long lacked USB 3 support. [V for the USB 2 link; I for the Asahi cause] Check a link's speed with `lsusb -t` (480M is USB 2, 5000M USB 3).
+- **Check the link is USB 3.** The first runs went through a USB 2 A-to-C adapter. Aravis then reported `USB 2.10 (Low bandwidth)`, its stream completed no frames, and GenTL's control channel fell apart. With a direct USB 3 connection (5000M in `lsusb -t`), GenTL passed every test that doesn't need timing. Aravis logs the link speed when it opens a camera (with `Aravis.debug_enable("device:1")`). [V]
 
 ### CM3-U3-50S5M: three backends compared
 
@@ -263,18 +263,30 @@ pip install pycairo && pip install PyGObject
 
 ### Building Aravis from source (Fedora)
 
-Fedora's main repositories don't appear to package Aravis; a COPR project builds it (`emmanuelp/Aravis`). [I] Built from source with meson into the default `/usr/local` prefix, Aravis puts its library and typelib under `/usr/local/lib64`. Neither the dynamic linker nor PyGObject searches there on Fedora, so `gi.require_version("Aravis", "0.8")` fails with "Namespace Aravis not available". [V on the lab's Fedora arm64 machine, 2026-10-22]
+Fedora's main repositories don't appear to package Aravis; a COPR project builds it (`emmanuelp/Aravis`). [I] Built from source with meson into the default `/usr/local` prefix, Aravis puts its library and typelib under `/usr/local/lib64`. Fedora searches neither: its linker leaves `/usr/local/lib64` out of the default path (Ubuntu includes `/usr/local/lib`), and GObject introspection looks only in its own prefix. `gi.require_version("Aravis", "0.8")` then fails with "Namespace Aravis not available". [V on the lab's Fedora arm64 machine, 2026-10-22]
 
-- **The library:** Fedora deliberately leaves `/usr/local/lib64` out of the linker's default path (Ubuntu includes `/usr/local/lib`). Add it once, system-wide, rather than setting `LD_LIBRARY_PATH`: [I]
-  ```bash
-  echo /usr/local/lib64 | sudo tee /etc/ld.so.conf.d/local.conf && sudo ldconfig
-  ```
-- **The typelib:** GObject introspection has no config file for extra search paths, so `GI_TYPELIB_PATH` is the way. Set it where it's always set, e.g. at the end of the venv's `bin/activate`, or in `/etc/profile.d/aravis.sh`: [I]
-  ```bash
-  export GI_TYPELIB_PATH=/usr/local/lib64/girepository-1.0
-  ```
-- The alternative is building with `meson setup --prefix=/usr`, which needs neither, but installs outside the package manager's knowledge into `/usr`.
-- Install the udev rule and raise usbfs memory as below.
+PyGObject needs to find two things: the typelib (`Aravis-0.8.typelib`), and the shared library it names (`libaravis-0.8.so.0`), which it loads through the dynamic linker.
+
+**Recommended:** register the library with the linker once, and set the typelib path in the venv:
+
+```bash
+echo /usr/local/lib64 | sudo tee /etc/ld.so.conf.d/usr-local.conf && sudo ldconfig
+echo 'export GI_TYPELIB_PATH=/usr/local/lib64/girepository-1.0' >> venv/bin/activate
+```
+
+Every option, for the library and for the typelib: [I unless marked]
+
+| Option | Library | Typelib | Trade-offs |
+|---|---|---|---|
+| `/etc/ld.so.conf.d/` entry + `ldconfig` | Yes | No | The standard way to add a library directory: one root-owned file, every program sees it. |
+| `GI_TYPELIB_PATH` in the venv's `bin/activate` | No | Yes | Only that venv, and only once activated; `venv/bin/python` run directly doesn't get it. |
+| `GI_TYPELIB_PATH` in `/etc/profile.d/aravis.sh` | No | Yes | Every login shell; not services or cron. |
+| `LD_LIBRARY_PATH` | Yes | No | Per shell, and it overrides the system's choice of libraries for everything run from that shell. Works ([V]), but best kept for a quick test. |
+| Symlink the typelib into `/usr/lib64/girepository-1.0/` | No | Yes | No variable needed, but puts a file the package manager doesn't own in `/usr`. |
+| Build with `meson setup --prefix=/usr` | Yes | Yes | Needs nothing else, but installs files the package manager doesn't know about into `/usr`, where a later Aravis package could overwrite them. |
+| A packaged Aravis (COPR, or `dnf search aravis`) | Yes | Yes | Installs to `/usr` and is managed by `dnf`; depends on a third-party repository and its version. |
+
+Then install the udev rule and raise usbfs memory as below.
 
 ### udev rule
 - Upstream ships an **example** file **`src/aravis.rules`**. It is **not installed** by meson, and the docs tell you to copy it into `/etc/udev/rules.d/`. [V] (`src/meson.build` has no rules install; `docs/reference/aravis/usb.md`)

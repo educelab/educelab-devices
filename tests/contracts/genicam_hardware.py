@@ -80,6 +80,21 @@ class GenICamHardwareTests:
             if value is not None and not camera.setting(name).read_only:
                 camera.set_setting(name, value)
 
+    @staticmethod
+    def require_timing(camera: GenICamCamera) -> None:
+        """Skip a test that needs frames timed against the host clock."""
+        if camera.timestamp_source is None:
+            pytest.skip(
+                f"{camera!r} has no timestamp latch and its library reports no "
+                "arrival times, so its frames can't be timed (usb3-vision.md)"
+            )
+
+    @staticmethod
+    def fresh(camera: GenICamCamera) -> datetime | None:
+        """A not_before for "a frame from now on", or None if the camera can't
+        take one."""
+        return datetime.now(UTC) if camera.timestamp_source else None
+
     def test_discover_reports_serial_model_and_address(self, serial):
         infos = {i.serial_number: i for i in self.driver.discover()}
         assert serial in infos
@@ -105,10 +120,12 @@ class GenICamHardwareTests:
         print(
             f"timestamp node: {camera.timestamp_node}, source {camera.timestamp_source}"
         )
+        self.require_timing(camera)
         assert camera.timestamp_source in ("latch", "arrival")
         assert camera.timestamp_offset is not None
 
     def test_timestamp_offset_is_stable(self, camera):
+        self.require_timing(camera)
         offsets = [camera.measure_timestamp_offset() for _ in range(5)]
         assert None not in offsets
         values = [o for o in offsets if o is not None]
@@ -129,6 +146,7 @@ class GenICamHardwareTests:
         assert frame.pixels.ndim in (2, 3)
 
     def test_frame_honors_not_before_and_is_recent(self, camera):
+        self.require_timing(camera)
         ready = datetime.now(UTC)
         frame = camera.capture_frame(not_before=ready)
         age = (frame.timestamp - ready).total_seconds()
@@ -137,6 +155,7 @@ class GenICamHardwareTests:
 
     def test_the_newest_frame_is_taken_after_a_pause(self, camera):
         # Frames pile up while nobody grabs; the driver hands back the newest.
+        self.require_timing(camera)
         time.sleep(1.0)
         called = datetime.now(UTC)
         frame = camera.capture_frame()
@@ -145,6 +164,7 @@ class GenICamHardwareTests:
         assert age < MAX_FRAME_AGE_S
 
     def test_future_not_before_past_the_timeout_raises(self, camera):
+        self.require_timing(camera)
         with pytest.raises(DeviceTimeout):
             camera.capture_frame(
                 not_before=datetime.now(UTC) + timedelta(seconds=10), timeout=0.5
@@ -153,7 +173,7 @@ class GenICamHardwareTests:
     def test_many_captures_do_not_exhaust_buffers(self, camera):
         stale = incomplete = remeasured = 0
         for _ in range(300):
-            frame = camera.capture_frame(not_before=datetime.now(UTC), timeout=5.0)
+            frame = camera.capture_frame(not_before=self.fresh(camera), timeout=5.0)
             stale += frame.metadata["stale_frames"]
             incomplete += frame.metadata["incomplete_frames"]
             remeasured += frame.metadata["timestamp_remeasured"]
@@ -165,11 +185,12 @@ class GenICamHardwareTests:
     def test_capture_rate(self, camera):
         started = time.monotonic()
         for _ in range(30):
-            camera.capture_frame(not_before=datetime.now(UTC), timeout=5.0)
+            camera.capture_frame(not_before=self.fresh(camera), timeout=5.0)
         rate = 30 / (time.monotonic() - started)
         resulting = camera.settings().get("resulting_frame_rate")
         print(
-            f"{rate:.2f} captures/s with not_before; camera reports "
+            f"{rate:.2f} captures/s "
+            f"{'with' if self.fresh(camera) else 'without'} not_before; camera reports "
             f"{resulting.value if resulting else 'no'} frames/s"
         )
 
@@ -181,7 +202,7 @@ class GenICamHardwareTests:
         target = exposure.nearest(0.01)
         camera.set_setting(EXPOSURE_TIME, target)
         assert camera.setting(EXPOSURE_TIME).value == pytest.approx(target, rel=0.01)
-        frame = camera.capture_frame(not_before=datetime.now(UTC))
+        frame = camera.capture_frame(not_before=self.fresh(camera))
         assert frame.metadata[EXPOSURE_TIME] == pytest.approx(target, rel=0.01)
 
     def test_auto_exposure_locks_exposure_time(self, restore):
@@ -218,7 +239,7 @@ class GenICamHardwareTests:
         camera = restore
         for fmt in camera.setting(PIXEL_FORMAT).choices or ():
             camera.set_setting(PIXEL_FORMAT, fmt)
-            frame = camera.capture_frame(not_before=datetime.now(UTC))
+            frame = camera.capture_frame(not_before=self.fresh(camera))
             depth = frame.metadata["bit_depth"]
             print(
                 f"{fmt}: {frame.pixels.shape} {frame.pixels.dtype}, {depth} bits, "
@@ -241,7 +262,7 @@ class GenICamHardwareTests:
         try:
             camera.set_setting(THROUGHPUT_LIMIT, target)
             assert camera.setting(THROUGHPUT_LIMIT).value == pytest.approx(target)
-            camera.capture_frame(not_before=datetime.now(UTC), timeout=5.0)
+            camera.capture_frame(not_before=self.fresh(camera), timeout=5.0)
         finally:
             if before.value is not None:
                 camera.set_setting(THROUGHPUT_LIMIT, before.value)
@@ -250,6 +271,7 @@ class GenICamHardwareTests:
         camera = restore
         if TRIGGER not in camera.settings():
             pytest.skip("this camera has no software trigger")
+        self.require_timing(camera)
         started = time.monotonic()
         camera.set_setting(TRIGGER, "Software")
         print(
@@ -268,6 +290,12 @@ class GenICamHardwareTests:
                 assert 0 <= start < MAX_FRAME_AGE_S
         finally:
             camera.set_setting(TRIGGER, "Off")
+
+    def test_not_before_is_refused_when_frames_cant_be_timed(self, camera):
+        if camera.timestamp_source is not None:
+            pytest.skip(f"{camera!r} times its frames ({camera.timestamp_source})")
+        with pytest.raises(DeviceError, match="not_before"):
+            camera.capture_frame(not_before=datetime.now(UTC), timeout=5.0)
 
     def test_preview_is_small_and_eight_bit(self, camera):
         preview = camera.preview_frame()

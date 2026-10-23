@@ -22,6 +22,12 @@ def cameras(**options):
     ]
 
 
+@pytest.fixture(autouse=True)
+def quick_drain(monkeypatch):
+    # A fake stream stops receiving the moment its camera stops sending.
+    monkeypatch.setattr(aravis, "_DRAIN_QUIET_S", 0.0)
+
+
 @pytest.fixture
 def repository(monkeypatch):
     repository = FakeRepository(cameras())

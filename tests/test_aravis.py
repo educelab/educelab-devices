@@ -4,6 +4,7 @@ import builtins
 import re
 import subprocess
 import sys
+import time
 
 import numpy as np
 import pytest
@@ -30,6 +31,12 @@ from fakes.genicam import FakeCamera, FrameSpec
 
 MONO = "4108000001"
 COLOR = "4108000002"
+
+
+@pytest.fixture(autouse=True)
+def quick_drain(monkeypatch):
+    # A fake stream stops receiving the moment its camera stops sending.
+    monkeypatch.setattr(aravis, "_DRAIN_QUIET_S", 0.0)
 
 
 @pytest.fixture
@@ -372,6 +379,46 @@ def test_stopping_drops_the_stream_and_its_waiting_frames(camera, sim):
     assert conn._stream is None
     assert sim.held == []
     conn._device.set_string_feature_value("PixelFormat", "Mono16")
+
+
+@pytest.fixture
+def linux(monkeypatch):
+    monkeypatch.setattr(aravis.sys, "platform", "linux")
+
+
+def test_a_restart_waits_for_the_frame_still_arriving(repository, linux):
+    # The CM3-U3-50S5M still sends its last frame after AcquisitionStop, and
+    # dropping an async stream then wedged its endpoint (usb3-vision.md).
+    with AravisCamera(MONO, repository=repository) as camera:
+        arv_camera = connection_of(camera)._camera
+        arv_camera.sends_after_stop = 3
+        camera.set_setting(PIXEL_FORMAT, "Mono16")
+        frame = camera.capture_frame()
+    assert not arv_camera.wedged
+    assert frame.pixel_format == "Mono16"
+
+
+def test_draining_gives_up_on_a_camera_that_keeps_sending(
+    repository, linux, monkeypatch
+):
+    monkeypatch.setattr(aravis, "_DRAIN_LIMIT_S", 0.05)
+    with AravisCamera(MONO, repository=repository) as camera:
+        conn = connection_of(camera)
+        conn._camera.sends_after_stop = 10**9
+        started = time.perf_counter()
+        conn.stop_acquisition()
+    assert time.perf_counter() - started < 0.5
+
+
+def test_sync_streams_are_dropped_without_waiting(repository, monkeypatch):
+    # Sync mode reads one transfer at a time and finds the next leader itself.
+    monkeypatch.setattr(aravis.sys, "platform", "darwin")
+    with AravisCamera(MONO, repository=repository) as camera:
+        conn = connection_of(camera)
+        conn._camera.sends_after_stop = 10**9
+        stream = conn._stream
+        conn.stop_acquisition()
+    assert stream.transferred == 0
 
 
 def test_pixels_survive_release(camera):

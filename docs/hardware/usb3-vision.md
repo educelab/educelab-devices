@@ -68,6 +68,7 @@ Behaviour the drivers add or change, and why. Each point was verified on the har
 
 - **Aravis async USB mode on macOS** can hang forever closing a camera, in `arv_uv_stream_finalize`: the stream thread waits for cancelled transfers to complete, while it is the thread that would complete them. When a close doesn't hang, the next session may get only `missing-packets` frames until the camera is power-cycled. The driver uses sync mode on macOS; don't switch it. [V on the IDS camera]
 - **Aravis sync USB mode on Linux** can't keep up with a full-resolution USB3 Vision stream. With the IDS camera on Fedora (arm64), `arv-camera-test-0.8` in sync mode reported six or more errors, and the driver in sync mode got only incomplete frames. In async mode the same camera streamed cleanly. The driver uses async mode off macOS. Sync mode keeps a single 1 MiB transfer in flight (`arvuvstream.c`), which is the likely reason. [V for the symptoms, 2026-10-22; I for the reason]
+- **Dropping an async Aravis stream mid-frame.** After AcquisitionStop, the CM3-U3-50S5M still sends the frame it's on. When the driver dropped the stream straight away, Aravis cancelled the transfers part-way, and on Linux every later transfer failed with `LIBUSB_TRANSFER_ERROR`: only `missing-packets` frames, through reopening, until a power cycle. In async mode the driver now waits after a stop until the stream has received nothing for one exposure plus 50 ms, capped at 2 s plus one exposure. The IDS camera showed no such problem. [V 2026-10-23, below]
 - **`TLParamsLocked` through Aravis.** Setting it wedged the IDS camera until a power cycle. [V]
 - **Several cameras on one USB link.** Uncapped, five CM3-U3-50S5M cameras and the IDS camera on one Acroname hub need more than its USB 3 upstream link carries, and some cameras then get only `size-mismatch` frames. Cap each camera's `throughput_limit`. [V]
 - **Windows driver binding.** IDS peak's kernel driver claims IDS cameras, so nothing libusb-based (Aravis) can open them while it's installed. [I]
@@ -176,6 +177,24 @@ The IDS camera: see [ids-u3-36p0xcp.md](ids-u3-36p0xcp.md#gentl-on-linux). In sh
 
 - **IDS's proxy producer.** IDS peak installs `ids_proxygentl.cti` beside `ids_u3vgentl.cti` and `ids_gevgentl.cti`. The proxy wraps IDS's other producers, so with the folder in `GENICAM_GENTL64_PATH` the driver loaded the camera's producer twice, and opening failed with an exception on close. Moving the proxy out of the folder, or naming `ids_u3vgentl.cti` itself in `GENICAM_GENTL64_PATH` (or `--producer` / `producer=`), fixed it. [V by the maintainer] The driver now skips a producer that fails, with a warning, but naming the one producer you want is still the reliable setup.
 - **Check the link is USB 3.** The first runs went through a USB 2 A-to-C adapter. Aravis then reported `USB 2.10 (Low bandwidth)`, its stream completed no frames, and GenTL's control channel fell apart. With a direct USB 3 connection (5000M in `lsusb -t`), GenTL passed every test that doesn't need timing. Aravis logs the link speed when it opens a camera (with `Aravis.debug_enable("device:1")`). [V]
+
+### 2026-10-23, Linux (Fedora), Aravis
+
+**CM3-U3-50S5M** (`0135BAD4`, firmware `1.12.3.00`), Python 3.14.8, Aravis built from source, async USB mode. [V] for each point, on this unit:
+
+- **usbfs memory.** On a machine still at the kernel's 16 MB default, the three-camera test got only incomplete frames. Raising `usbfs_memory_mb` to 1000 fixed it.
+- **Restarting the stream.** With the memory raised, every test passed until the first stream restart, in the pixel-format test (even setting the format the camera already had). From that restart on, every frame was `missing-packets`, through reopening, and Aravis logged `Leader/Payload/Trailer transfer failed (LIBUSB_TRANSFER_ERROR)` for every transfer.
+- **A probe** (Aravis alone, no driver; three restarts each, power-cycled between runs) showed what matters:
+
+  | How the stream was restarted | Result |
+  |---|---|
+  | Stop, drop the stream, new stream (the driver then) | broke on restart 2 and stayed broken |
+  | Stop, drop, wait 0.5 s, new stream | broke on restart 2, recovered on 3 |
+  | Stop, wait 0.3 s, drop, new stream | 3 of 3 clean |
+  | Stop and start on the same stream | 3 of 3 clean |
+  | The first way, in sync mode | 3 of 3 clean |
+
+  The camera has no `AcquisitionAbort`. The driver now waits before dropping an async stream (see [Hazards](#hazards)). Rerun pending.
 
 ### CM3-U3-50S5M: three backends compared
 

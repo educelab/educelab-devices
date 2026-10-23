@@ -214,6 +214,7 @@ class FakeArvStream:
         self.input: deque[FakeArvBuffer] = deque()
         self.output: deque[FakeArvBuffer] = deque()
         self.pops: list[tuple[str, int | None]] = []
+        self.transferred = 0
 
     @property
     def sim(self) -> FakeCamera:
@@ -241,7 +242,7 @@ class FakeArvStream:
             buffer.frame = frame
             buffer.status = (
                 BufferStatus.SUCCESS
-                if frame.status.name == "COMPLETE"
+                if frame.status.name == "COMPLETE" and not self.camera.wedged
                 else BufferStatus.MISSING_PACKETS
             )
             self._land(buffer)
@@ -266,6 +267,10 @@ class FakeArvStream:
         camera = self.__dict__.get("camera")
         if camera is not None:
             camera.channel_enabled = False
+            # An async stream dropped mid-frame cancels its transfers part-way,
+            # which wedged a CM3-U3-50S5M's stream endpoint (usb3-vision.md).
+            if camera.sending and camera.usb_mode == UvUsbMode.ASYNC:
+                camera.wedged = True
         # Finalizing a stream frees the buffers still in its queues.
         for buffer in [
             *self.__dict__.get("output", ()),
@@ -298,6 +303,14 @@ class FakeArvStream:
 
     def get_n_buffers(self) -> tuple[int, int]:
         return len(self.input), len(self.output)
+
+    def get_info_uint64_by_name(self, name: str) -> int:
+        assert name == "n_transferred_bytes"
+        # Each read sees one more transfer of the frame still arriving.
+        if self.camera.sending:
+            self.camera.sending -= 1
+            self.transferred += 1 << 20
+        return self.transferred
 
 
 class FakeArvDevice:
@@ -413,6 +426,11 @@ class FakeArvCamera:
         self._channel = channel
         self.device = FakeArvDevice(sim, lambda: channel[0])
         self.streams_created = 0
+        # Transfers the camera still sends after AcquisitionStop, and whether
+        # its stream endpoint is wedged.
+        self.sends_after_stop = 0
+        self.sending = 0
+        self.wedged = False
 
     def __del__(self) -> None:
         sim = self.__dict__.get("sim")
@@ -463,6 +481,7 @@ class FakeArvCamera:
     def stop_acquisition(self) -> None:
         _translated(self.sim.stop)
         self.acquiring = False
+        self.sending = self.sends_after_stop
 
 
 class _Aravis:

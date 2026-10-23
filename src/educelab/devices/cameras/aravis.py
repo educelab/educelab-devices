@@ -12,6 +12,7 @@ import logging
 import math
 import sys
 import threading
+import time
 import weakref
 from collections.abc import Callable
 from types import ModuleType
@@ -62,6 +63,15 @@ ARAVIS_INSTALL_HINT = (
 BUFFER_COUNT = 4
 """Buffers in each stream. A 20 MP Mono8 frame is about 20 MB, so a few is
 plenty; Aravis drops frames when none is free (usb3-vision.md, Newest only)."""
+
+_DRAIN_QUIET_S = 0.05
+"""How long, beyond one exposure, an async stream must receive nothing after
+AcquisitionStop before it's dropped."""
+
+_DRAIN_LIMIT_S = 2.0
+"""The longest a stop waits, beyond one exposure, for a camera that keeps sending."""
+
+_DRAIN_POLL_S = 0.005
 
 _DEVICE_ERROR_DOMAIN = "arv-device-error-quark"
 
@@ -197,6 +207,7 @@ class _AravisConnection:
         self._device: Any = camera.get_device()
         self._stream: Any = None
         self._acquiring = False
+        self._async = False
         # Refuse writes to read-only nodes before they reach the camera. Range
         # checks stay off: the core checks ranges itself, and Aravis's check
         # refuses Mono16 on the CM3-U3-50S5M (usb3-vision.md, Hardware runs).
@@ -208,6 +219,7 @@ class _AravisConnection:
             modes = arv.UvUsbMode
             mode = modes.SYNC if sys.platform == "darwin" else modes.ASYNC
             self._do(lambda: camera.uv_set_usb_mode(mode))
+            self._async = mode == modes.ASYNC
 
     def _do(self, fn: Callable[[], T]) -> T:
         try:
@@ -320,12 +332,46 @@ class _AravisConnection:
         self._acquiring = False
         try:
             self._do(self._camera.stop_acquisition)
+            self._drain()
         finally:
             # Dropping the stream disables its channel, without which the
             # U3-36PxXCP-M refuses PixelFormat writes. It also discards frames
             # from before the stop. Nothing else may hold it (ids-u3-36p0xcp.md,
             # Pixel formats).
             self._stream = None
+
+    def _drain(self) -> None:
+        """Wait until the camera has finished sending, after AcquisitionStop.
+
+        Dropping an async stream mid-frame cancels its transfers part-way, which
+        wedged a CM3-U3-50S5M's stream endpoint on Linux until a power cycle
+        (usb3-vision.md, Hazards). Sync streams find the next leader themselves.
+        """
+        stream = self._stream
+        if not self._async or stream is None:
+            return
+        exposure = self._exposure_s()
+        quiet_s = _DRAIN_QUIET_S + exposure
+        now = time.perf_counter()
+        deadline = now + _DRAIN_LIMIT_S + exposure
+        received = stream.get_info_uint64_by_name("n_transferred_bytes")
+        quiet_since = now
+        while now < deadline and now - quiet_since < quiet_s:
+            time.sleep(_DRAIN_POLL_S)
+            now = time.perf_counter()
+            latest = stream.get_info_uint64_by_name("n_transferred_bytes")
+            if latest != received:
+                received, quiet_since = latest, now
+
+    def _exposure_s(self) -> float:
+        # A frame being exposed at the stop is sent once its exposure ends.
+        for name in ("ExposureTime", "ExposureTimeAbs"):
+            try:
+                if self.has(name) and self.is_readable(name):
+                    return self.get_float(name) / 1e6
+            except DeviceError:
+                pass
+        return 0.0
 
     def grab(self, timeout: float | None) -> "_AravisBuffer":
         if not self._acquiring:

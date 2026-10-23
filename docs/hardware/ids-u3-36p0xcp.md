@@ -136,6 +136,8 @@ ARAVIS_SERIAL=4110091493 pytest -m hardware tests/test_aravis_hardware.py -s
 
 ### Last run
 
+2026-10-23, Windows, Python 3.12.10, IDS peak's `ids_u3vgentlk.cti`, firmware `3.90.27889`: `tests/test_gentl_hardware.py` 17 passed, 7 skipped, the same as on Linux. Mono10g40IDS decoded to 10 bits. The IDS GigE Vision producer and Spinnaker's producer loaded beside it without trouble.
+
 2026-10-22, Fedora on Asahi Linux (arm64), Python 3.14.8, firmware `3.90.27889`, over USB 3:
 
 - `tests/test_aravis_hardware.py` (Aravis 0.8 from source, async USB mode): 22 passed, 2 skipped.

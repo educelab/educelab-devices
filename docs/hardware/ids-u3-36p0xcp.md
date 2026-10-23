@@ -97,7 +97,7 @@ The camera has **no timestamp latch**, so the driver can't read the device clock
 
 - **Free-running.** At the 162 MB/s throughput limit, Mono10g40IDS streamed 6.7 frames/s, the limit divided by the frame size. Mono8 should then manage about 8 frames/s (assumed, by the same arithmetic). 300 `not_before` Mono8 captures met 300 stale frames, at 3.2 captures per second. Verified unless marked.
 - **Newest only.** After a 1 s pause, the frame taken was exposed 13 ms before the call in one run and 278 ms in another, so the stream keeps only the newest frame. Verified.
-- **Opening.** Without a latch, open times one complete frame to get a first offset; later frames refine it.
+- **Opening.** Without a latch, open times one complete frame to get a first offset; later frames refine it. Through GenTL, which reports no arrival times, open skips that frame and opens with no offset.
 
 ## State and recovery
 

@@ -18,6 +18,7 @@ from educelab.devices.cameras.base import (
     SettingValue,
 )
 from educelab.devices.cameras.focus import FocusDrive, FocusLimit
+from educelab.devices.cameras.gentl import GenTLCamera
 from educelab.devices.cameras.simulated import (
     SimulatedCamera,
     SimulatedFileCamera,
@@ -40,6 +41,7 @@ __all__ = [
     "FocusLimit",
     "Frame",
     "FrameCamera",
+    "GenTLCamera",
     "Rounding",
     "Setting",
     "SettingValue",

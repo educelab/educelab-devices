@@ -291,6 +291,14 @@ def test_with_neither_a_latch_nor_arrivals_there_is_no_source():
         assert camera.capture_frame().metadata["timestamp_source"] is None
 
 
+def test_with_neither_a_latch_nor_arrivals_open_grabs_nothing():
+    # Grabbing would only learn there are no arrival times, after waiting for
+    # a frame a camera that isn't streaming never sends.
+    backend = only(without=["TimestampLatch"])
+    with GenICamCamera(MONO, backend):
+        assert connection(backend).grab_timeouts == []
+
+
 # --- Identity -----------------------------------------------------------------
 
 

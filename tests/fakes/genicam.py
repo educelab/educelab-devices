@@ -661,6 +661,10 @@ class FakeConnection:
         self.closed = False
         self.grab_timeouts: list[float | None] = []
 
+    @property
+    def times_arrivals(self) -> bool:
+        return self.camera.arrival_latency is not None
+
     def _do(self, fn: Callable[[], Any]) -> Any:
         try:
             return fn()

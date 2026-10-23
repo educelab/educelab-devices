@@ -196,9 +196,17 @@ class _Producer:
         except gentl.GenericException as exc:
             error = ImportError(f"could not load {path}: {exc}")
         else:
-            self.system = _translate(genicam, self.producer.create_system)
-            _translate(genicam, self.system.open)
-            return
+            try:
+                self.system = _translate(genicam, self.producer.create_system)
+                _translate(genicam, self.system.open)
+            except DeviceError as exc:
+                # An ImportError, so callers skip this producer like one that
+                # won't load; it's unloaded first so it isn't left loaded.
+                with contextlib.suppress(DeviceError):
+                    _translate(genicam, self.producer.close)
+                error = ImportError(f"could not open {path}'s system: {exc}")
+            else:
+                return
         raise error
 
     def devices(self) -> list[Any]:
@@ -242,8 +250,14 @@ def _stderr_to_log(path: str) -> Iterator[None]:
     way as the producer loads (e.g. "does not implement DSGetNumFlows" from
     FLIR's). Output from other threads in that moment is logged too.
     """
-    sys.stderr.flush()
-    saved = os.dup(2)
+    if sys.stderr is not None:
+        sys.stderr.flush()
+    try:
+        saved = os.dup(2)
+    except OSError:
+        # No stderr descriptor (e.g. under pythonw), so nothing to capture.
+        yield
+        return
     with tempfile.TemporaryFile() as captured:
         os.dup2(captured.fileno(), 2)
         try:
@@ -339,6 +353,7 @@ class _GenTLBackend:
                 if listed is None:
                     continue
                 entry, infos = listed
+                error: DeviceError | None = None
                 try:
                     info = next((i for i in infos if i.serial_number == serial), None)
                     if info is None:
@@ -351,20 +366,22 @@ class _GenTLBackend:
                     try:
                         device.open(flags)
                     except busy as exc:
-                        error: DeviceError = DeviceBusy(
+                        error = DeviceBusy(
                             f"{info.id_} is held by another program: {exc}"
                         )
                     except gentl.GenericException as exc:
                         error = DeviceError(f"{info.id_} won't open: {exc}")
-                    else:
-                        conn = _GenTLConnection(genicam, entry, device, serial)
-                        entry.open_serials.add(serial)
-                        return conn
                 except BaseException:
                     _release(entry)
                     raise
-                _release(entry)
-                raise error
+                if error is not None:
+                    _release(entry)
+                    raise error
+                # Outside the try: a connection that fails closes itself, which
+                # releases the producer, so releasing here too would be twice.
+                conn = _GenTLConnection(genicam, entry, device, serial)
+                entry.open_serials.add(serial)
+                return conn
             usable.check()
         return None
 
@@ -427,7 +444,8 @@ def _node_map(genicam: Any, port: Any, keep: list[Any]) -> Any | None:
         file_name, address, size = rest.split(";")
         file_name = file_name.lstrip("/")
         size = size.split("?")[0]
-        data = bytes(port.read(int(address, 16), int(size, 16))[1])
+        read = functools.partial(port.read, int(address, 16), int(size, 16))
+        data = bytes(_translate(genicam, read)[1])
     elif scheme.lower() == "file":
         path = unquote(urlparse(url).path)
         if os.name == "nt":
@@ -438,7 +456,10 @@ def _node_map(genicam: Any, port: Any, keep: list[Any]) -> Any | None:
         raise DeviceError(f"can't fetch the camera's description from {url}")
     if file_name.lower().endswith(".zip"):
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            member = next(n for n in archive.namelist() if n.lower().endswith(".xml"))
+            names = archive.namelist()
+            member = next((n for n in names if n.lower().endswith(".xml")), None)
+            if member is None:
+                raise DeviceError(f"the camera's description ({file_name}) has no XML")
             data = archive.read(member)
     else:
         # Ports pad the XML with NULs to the register's size.
@@ -550,6 +571,8 @@ class _Features:
 class _GenTLConnection(_Features):
     """A `Connection` onto one open GenTL device and its first data stream."""
 
+    times_arrivals = False
+
     def __init__(
         self, genicam: Any, producer: _Producer, device: Any, serial: str
     ) -> None:
@@ -600,20 +623,28 @@ class _GenTLConnection(_Features):
             )
         )
         count = max(BUFFER_COUNT, int(self._do(lambda: stream.buffer_announce_min)))
-        for i in range(count):
-            # Producers refuse a bytearray here (FLIR's, verified); like
-            # Harvesters, hand over bytes, which the producer then fills.
-            token = gentl.BufferToken(bytes(payload), i)
-            buffer = self._do(functools.partial(stream.announce_buffer, token))
-            self._buffers.append(buffer)
-            self._do(functools.partial(stream.queue_buffer, buffer))
-        # Locks the settings that change the payload while streaming (SFNC).
-        if self.is_writable("TLParamsLocked"):
-            self.set_int("TLParamsLocked", 1)
-        start = gentl.ACQ_START_FLAGS_LIST.ACQ_START_FLAGS_DEFAULT
-        self._do(lambda: stream.start_acquisition(start, -1))
+        # Set first, so a failure part-way still revokes the buffers and unlocks.
         self._acquiring = True
-        self.execute("AcquisitionStart")
+        try:
+            for i in range(count):
+                # Producers refuse a bytearray here (FLIR's, verified); like
+                # Harvesters, hand over bytes, which the producer then fills.
+                token = gentl.BufferToken(bytes(payload), i)
+                buffer = self._do(functools.partial(stream.announce_buffer, token))
+                self._buffers.append(buffer)
+                self._do(functools.partial(stream.queue_buffer, buffer))
+            # Locks the settings that change the payload while streaming (SFNC).
+            if self.is_writable("TLParamsLocked"):
+                self.set_int("TLParamsLocked", 1)
+            start = gentl.ACQ_START_FLAGS_LIST.ACQ_START_FLAGS_DEFAULT
+            self._do(lambda: stream.start_acquisition(start, -1))
+            self.execute("AcquisitionStart")
+        except BaseException:
+            try:
+                self.stop_acquisition()
+            except DeviceError as exc:
+                logger.debug("while giving up on starting acquisition: %s", exc)
+            raise
 
     def stop_acquisition(self) -> None:
         if not self._acquiring:
@@ -646,8 +677,11 @@ class _GenTLConnection(_Features):
                 self._do(functools.partial(stream.revoke_buffer, buffer))
             except DeviceError as exc:
                 problems.append(f"revoke a buffer: {exc}")
-        if self.is_writable("TLParamsLocked"):
-            self.set_int("TLParamsLocked", 0)
+        try:
+            if self.is_writable("TLParamsLocked"):
+                self.set_int("TLParamsLocked", 0)
+        except DeviceError as exc:
+            problems.append(f"unlock TLParamsLocked: {exc}")
         if problems:
             raise DeviceError("; ".join(problems))
 
@@ -685,6 +719,9 @@ class _GenTLConnection(_Features):
                 newer = self._wait_once(0)
             except DeviceTimeout:
                 break
+            except DeviceError:
+                self._do(functools.partial(self._stream.queue_buffer, buffer))
+                raise
             self._do(functools.partial(self._stream.queue_buffer, buffer))
             buffer = newer
         return _GenTLBuffer(self, buffer)

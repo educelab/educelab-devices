@@ -244,6 +244,17 @@ def test_cameras_share_one_producer(genicam):
     assert genicam.open_modules == []
 
 
+def test_a_failed_open_leaves_a_shared_producer_loaded(genicam, monkeypatch):
+    with make(MONO, genicam) as camera:
+        monkeypatch.setattr(gentl, "_node_map", lambda *args: None)
+        with pytest.raises(DeviceError, match="describes no features"):
+            make(COLOR, genicam).open()
+        monkeypatch.undo()
+        assert genicam.producers_opened == [PRODUCER]
+        camera.capture_frame()
+    assert genicam.open_modules == []
+
+
 def test_reopening_works(genicam, sim):
     camera = make(MONO, genicam)
     for _ in range(2):

@@ -176,6 +176,14 @@ class BackendContract:
         finally:
             buffer.release()
 
+    def test_buffers_carry_arrival_times_if_and_only_if_promised(self, streaming):
+        buffer = streaming.grab(1.0)
+        try:
+            arrival = buffer.host_timestamp_ns()
+        finally:
+            buffer.release()
+        assert (arrival is not None) == streaming.times_arrivals
+
     def test_pixels_are_a_copy(self, streaming):
         buffer = streaming.grab(1.0)
         pixels = buffer.pixels()

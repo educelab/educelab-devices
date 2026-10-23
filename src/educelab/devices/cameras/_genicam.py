@@ -124,6 +124,10 @@ class Connection(Protocol):
     one and drops any older ones still waiting.
     """
 
+    times_arrivals: bool
+    """Whether this library's buffers carry host arrival times
+    (`Buffer.host_timestamp_ns`)."""
+
     def has(self, name: str) -> bool:
         """Whether the camera has the node at all, whatever its access."""
         ...
@@ -630,6 +634,9 @@ class GenICamCamera(FrameCamera):
         self._arrival_gaps.clear()
         self._timestamp_offset = None
         self._timestamp_source = None
+        if not self._connection.times_arrivals:
+            logger.warning("%r can't latch its timestamp or time arrivals", self)
+            return
         if self._software_trigger:
             self._discard_waiting_frames()
         deadline = time.perf_counter() + self.capture_timeout

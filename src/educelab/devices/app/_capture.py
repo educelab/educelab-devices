@@ -177,13 +177,14 @@ def _describe(camera: "GenICamCamera") -> None:
     if "ExposureAuto" in settings:
         exposure_text += f" ({settings['ExposureAuto'].value})"
     gain = settings[GAIN].value if GAIN in settings else None
+    pixel_format = settings[PIXEL_FORMAT].value if PIXEL_FORMAT in settings else "?"
     offset = camera.timestamp_offset
     offset_text = "none" if offset is None else f"{offset:.6f} s"
     if camera.timestamp_source:
         offset_text += f" {_TIMESTAMP_SOURCES[camera.timestamp_source]}"
     print(
         f"{info.serial_number}: {info.model}, firmware {info.firmware_version}, "
-        f"{settings[PIXEL_FORMAT].value}, exposure {exposure_text}, gain {gain} dB, "
+        f"{pixel_format}, exposure {exposure_text}, gain {gain} dB, "
         f"{_throughput_text(settings)}, "
         f"trigger {settings['trigger'].value if 'trigger' in settings else 'none'}, "
         f"timestamp node {camera.timestamp_node}, timestamp offset {offset_text}"
@@ -285,16 +286,22 @@ def _benchmark(
 
     def capture(camera: "GenICamCamera", requested: datetime, index: int) -> None:
         result = results[camera]
+        # A camera that can't be timed refuses not_before; capture it untimed.
+        timed = camera.timestamp_offset is not None
         start = time.perf_counter()
         try:
-            frame = camera.capture_frame(not_before=requested, timeout=timeout)
+            frame = camera.capture_frame(
+                not_before=requested if timed else None, timeout=timeout
+            )
         except Exception as exc:  # noqa: BLE001
             # Anything, even a driver bug: an uncaught exception would only print
             # a traceback from this thread and drop the capture from the report.
             result.failures.append(f"{type(exc).__name__}: {exc}")
             return
         result.latencies_ms.append((time.perf_counter() - start) * 1000)
-        result.starts_ms.append((frame.timestamp - requested).total_seconds() * 1000)
+        if timed:
+            starts = (frame.timestamp - requested).total_seconds() * 1000
+            result.starts_ms.append(starts)
         result.stamps.append(
             (frame.metadata["frame_id"], frame.metadata["device_timestamp_ns"])
         )
@@ -349,7 +356,10 @@ def _report(camera: "GenICamCamera", result: _Results, frames: int) -> int:
         print(f"  {result.bit_depth}-bit pixels")
     if result.latencies_ms:
         print(f"  latency {_stats(result.latencies_ms)}")
+    if result.starts_ms:
         print(f"  exposure start {_stats(result.starts_ms)} after the request")
+    elif camera.timestamp_offset is None:
+        print("  frames can't be timed, so captured without not_before")
     print(
         f"  dropped {result.stale} stale, {result.incomplete} incomplete; "
         f"{result.missing_trailer} accepted with a missing trailer"

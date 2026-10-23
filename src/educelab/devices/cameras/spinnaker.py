@@ -8,10 +8,6 @@ import functools
 import logging
 import math
 import threading
-
-# Not used here, but tests patch spinnaker.time.time, as they did when the
-# capture logic lived in this module.
-import time  # noqa: F401
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from types import ModuleType, TracebackType
@@ -20,7 +16,6 @@ from typing import Any, Self, TypeVar
 import numpy.typing as npt
 
 from educelab.devices.cameras._genicam import (
-    _RETRIGGER_TURNAROUNDS,  # noqa: F401 (tests read it from here)
     PREVIEW_MAX_SIZE,
     RETRIES_BEFORE_REMEASURE,
     THROUGHPUT_LIMIT,
@@ -381,6 +376,8 @@ class _PySpinConnection:
 
     Holds the camera pointer and a `SpinnakerSystem` handle until `close()`.
     """
+
+    times_arrivals = False
 
     def __init__(self, system: SpinnakerSystem, cam: Any) -> None:
         self._system = system

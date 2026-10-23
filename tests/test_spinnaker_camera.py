@@ -13,7 +13,13 @@ import pytest
 from contracts import FrameCameraContract
 from educelab.devices import DeviceInfo
 from educelab.devices.app.cli import main
-from educelab.devices.cameras import EXPOSURE_TIME, GAIN, PIXEL_FORMAT, spinnaker
+from educelab.devices.cameras import (
+    EXPOSURE_TIME,
+    GAIN,
+    PIXEL_FORMAT,
+    _genicam,
+    spinnaker,
+)
 from educelab.devices.cameras.spinnaker import (
     THROUGHPUT_LIMIT,
     TRIGGER,
@@ -899,7 +905,7 @@ def test_a_missed_trigger_is_fired_again(triggered, fake):
     # Each wait is the exposure plus a few trigger turnarounds, not the timeout.
     exposure = triggered.setting(EXPOSURE_TIME).value
     turnaround = triggered._trigger_turnaround
-    wait = exposure + spinnaker._RETRIGGER_TURNAROUNDS * turnaround
+    wait = exposure + _genicam._RETRIGGER_TURNAROUNDS * turnaround
     assert fake.grab_timeouts[-2:] == [math.ceil(wait * 1000)] * 2
 
 

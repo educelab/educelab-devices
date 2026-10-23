@@ -99,6 +99,20 @@ def test_a_camera_without_a_latch_is_timed_by_arrival(monkeypatch, capsys):
     assert f"{MONO}: 2/2 captured" in out
 
 
+def test_a_camera_that_cant_be_timed_is_benchmarked_without_not_before(
+    monkeypatch, capsys
+):
+    # GenTL reports no arrival times, so a latchless camera has no offset.
+    genicam = FakeGenicam([FakeCamera(MONO, without={"TimestampLatch"})])
+    monkeypatch.setattr(gentl, "load_genicam", lambda: genicam)
+    monkeypatch.setattr(gentl, "find_producers", lambda: [PRODUCER])
+    assert main(["genicam", "--backend", "gentl", "--frames", "2"]) == 0
+    out = capsys.readouterr().out
+    assert f"{MONO}: 2/2 captured" in out
+    assert "frames can't be timed" in out
+    assert "exposure start" not in out
+
+
 def test_a_camera_without_auto_exposure_takes_an_exposure(monkeypatch, capsys):
     repository = FakeRepository([FakeCamera(MONO, without={"ExposureAuto"})])
     monkeypatch.setattr(aravis, "load_aravis", lambda: repository)

@@ -21,6 +21,7 @@ from typing import Any, TypeVar
 import numpy.typing as npt
 
 from educelab.devices.cameras._genicam import (
+    _EXPOSURE_NODES,
     BufferStatus,
     GenICamCamera,
     pfnc_name,
@@ -199,6 +200,8 @@ def _device_id(arv: Any, serial: str) -> str | None:
 class _AravisConnection:
     """A `Connection` onto one open Aravis camera."""
 
+    times_arrivals = True
+
     def __init__(self, arv: Any, glib: Any, camera: Any, key: tuple[int, str]) -> None:
         self._key = key
         self._arv = arv
@@ -323,7 +326,12 @@ class _AravisConnection:
         # the U3-36PxXCP-M streams nothing (ids-u3-36p0xcp.md, Hazards).
         # A stream only while acquiring, sized to the current payload.
         self._allocate()
-        self._do(self._camera.start_acquisition)
+        try:
+            self._do(self._camera.start_acquisition)
+        except DeviceError:
+            # A stream left behind keeps its channel on (see stop_acquisition).
+            self._stream = None
+            raise
         self._acquiring = True
 
     def stop_acquisition(self) -> None:
@@ -334,10 +342,9 @@ class _AravisConnection:
             self._do(self._camera.stop_acquisition)
             self._drain()
         finally:
-            # Dropping the stream disables its channel, without which the
-            # U3-36PxXCP-M refuses PixelFormat writes. It also discards frames
-            # from before the stop. Nothing else may hold it (ids-u3-36p0xcp.md,
-            # Pixel formats).
+            # Dropping the stream disables its channel (the U3-36PxXCP-M refuses
+            # PixelFormat writes until then) and discards pre-stop frames. Nothing
+            # else may hold it (ids-u3-36p0xcp.md, Pixel formats).
             self._stream = None
 
     def _drain(self) -> None:
@@ -365,9 +372,9 @@ class _AravisConnection:
 
     def _exposure_s(self) -> float:
         # A frame being exposed at the stop is sent once its exposure ends.
-        for name in ("ExposureTime", "ExposureTimeAbs"):
+        for name in _EXPOSURE_NODES:
             try:
-                if self.has(name) and self.is_readable(name):
+                if self.is_readable(name):
                     return self.get_float(name) / 1e6
             except DeviceError:
                 pass

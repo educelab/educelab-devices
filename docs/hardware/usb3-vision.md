@@ -23,7 +23,7 @@ Tags: **[V]** verified against a primary source (source file, official doc, form
 
 - Pick one backend per camera per machine, especially on Windows, where a USB device's driver binding is exclusive. [I]
 - A vendor's producer opens only that vendor's cameras (IDS's says so; FLIR's lists only FLIR cameras). Aravis opens any USB3 Vision camera. [V]
-- GenTL buffers carry no host arrival time, so a camera without a timestamp latch can't be timed through GenTL, and the driver refuses `not_before` on it. Aravis times such cameras by frame arrival. [V from the driver]
+- GenTL buffers carry no host arrival time, so a camera without a timestamp latch can't be timed through GenTL, and the driver refuses `not_before` on it. Aravis times such cameras by frame arrival. [V from the driver] Each backend's connection says whether it reports arrival times (`times_arrivals`), so opening such a camera doesn't wait for a frame it can't use. PySpin reports none either.
 
 ## How the drivers differ from Aravis and GenTL
 
@@ -76,7 +76,7 @@ Behaviour the drivers add or change, and why. Each point was verified on the har
 
 ## Manual check
 
-`el-devices genicam --backend aravis|gentl` lists cameras through the chosen backend, then captures from them all at once and reports latency, exposure start, dropped frames, bit depth, how frames were timed, and USB bandwidth. It takes the same options as `el-devices spinnaker` (`--serial`, `--frames`, `--exposure`, `--gain`, `--pixel-format`, `--throughput-limit`, `--trigger software`, `--save-missing-trailer`). With `--frames 0` it only lists. With `--backend gentl`, `--producer PATH` uses only that `.cti` file.
+`el-devices genicam --backend aravis|gentl` lists cameras through the chosen backend, then captures from them all at once and reports latency, exposure start (for cameras that can be timed; others are captured without `not_before`), dropped frames, bit depth, how frames were timed, and USB bandwidth. It takes the same options as `el-devices spinnaker` (`--serial`, `--frames`, `--exposure`, `--gain`, `--pixel-format`, `--throughput-limit`, `--trigger software`, `--save-missing-trailer`). With `--frames 0` it only lists. With `--backend gentl`, `--producer PATH` uses only that `.cti` file.
 
 The hardware tests share one suite (`tests/contracts/genicam_hardware.py`):
 

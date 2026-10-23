@@ -22,7 +22,7 @@ Project-level context outside this directory:
 <!-- Auto-populated by /conductor:new-track -->
 
 - [XLC Lights and X-Carve Stage](./tracks/xlc-xcarve_20261012/index.md) — pending
-- [Documentation Site](./tracks/docs-site_20261012/index.md) — pending
+- [Documentation Site and Machine Setup](./tracks/docs-site_20261012/index.md) — pending
 - [USB3 Vision Camera](./tracks/usb3-vision-camera_20261021/index.md) — pending
 
 ## Completed Tracks
@@ -36,4 +36,4 @@ Project-level context outside this directory:
 
 ## Getting Started
 
-Tracks are listed in planned order. `xlc-xcarve` and `usb3-vision-camera` are ready to start. The docs site can run in parallel at any time.
+Tracks are listed in planned order. `xlc-xcarve` and `usb3-vision-camera` are ready to start. The docs site and machine setup track starts after `usb3-vision-camera` merges.

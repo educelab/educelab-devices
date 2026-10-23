@@ -3,7 +3,7 @@
 **Track ID:** usb3-vision-camera_20261021
 **Type:** Feature
 **Created:** 2026-10-21
-**Status:** Draft
+**Status:** Complete
 
 ## Summary
 
@@ -28,14 +28,14 @@ As a lab developer, I want any USB3 Vision camera behind the `FrameCamera` inter
 
 ## Acceptance Criteria
 
-- [ ] The SFNC logic lives in one shared GenICam core. The Spinnaker driver is rebuilt on it with no change callers can see: its existing unit and contract tests pass unmodified, and its hardware tests pass on the CM3-U3-50S5M.
-- [ ] An Aravis backend drives the IDS camera on macOS and Linux. Neither OS needs a manufacturer SDK, only Aravis, PyGObject, and a udev rule on Linux.
-- [ ] A GenTL backend drives the IDS camera on Windows through the IDS peak producer, and is also tested on Linux as an alternative to Aravis. If no Windows machine is available, the backend ships tested against fakes and the Windows hardware check is recorded as outstanding.
-- [ ] Optional features (software trigger, throughput limit, timestamp latch, auto modes) are probed at `open()`. Settings for features the camera lacks are left out rather than failing.
-- [ ] Vendor libraries are imported lazily. A missing one raises `ImportError` that points to the install steps for each OS.
-- [ ] Both new backends pass the `Camera`/`FrameCamera` contract suites against fakes in CI.
-- [ ] `el-devices` gets a subcommand for the generic driver. Hardware docs cover installing on each OS and record what was learned about the IDS camera.
-- [ ] An ADR records the shared-core/backend design.
+- [x] The SFNC logic lives in one shared GenICam core. The Spinnaker driver is rebuilt on it with no change callers can see: its existing unit and contract tests pass unmodified, and its hardware tests pass on the CM3-U3-50S5M.
+- [x] An Aravis backend drives the IDS camera on macOS and Linux. Neither OS needs a manufacturer SDK, only Aravis, PyGObject, and a udev rule on Linux.
+- [x] A GenTL backend drives the IDS camera on Windows through the IDS peak producer, and is also tested on Linux as an alternative to Aravis. If no Windows machine is available, the backend ships tested against fakes and the Windows hardware check is recorded as outstanding.
+- [x] Optional features (software trigger, throughput limit, timestamp latch, auto modes) are probed at `open()`. Settings for features the camera lacks are left out rather than failing.
+- [x] Vendor libraries are imported lazily. A missing one raises `ImportError` that points to the install steps for each OS.
+- [x] Both new backends pass the `Camera`/`FrameCamera` contract suites against fakes in CI.
+- [x] `el-devices` gets a subcommand for the generic driver. Hardware docs cover installing on each OS and record what was learned about the IDS camera.
+- [x] An ADR records the shared-core/backend design.
 
 ## Dependencies
 

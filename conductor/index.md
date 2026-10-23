@@ -23,7 +23,6 @@ Project-level context outside this directory:
 
 - [XLC Lights and X-Carve Stage](./tracks/xlc-xcarve_20261012/index.md) — pending
 - [Documentation Site and Machine Setup](./tracks/docs-site_20261012/index.md) — pending
-- [USB3 Vision Camera](./tracks/usb3-vision-camera_20261021/index.md) — pending
 
 ## Completed Tracks
 
@@ -32,8 +31,9 @@ Project-level context outside this directory:
 - [Foldio360 Turntable](./tracks/_archive/foldio360_20261012/index.md) — complete (archived)
 - [gphoto2 Camera](./tracks/_archive/gphoto2-camera_20261012/index.md) — complete (archived)
 - [Spinnaker Camera](./tracks/_archive/spinnaker-camera_20261012/index.md) — complete (archived)
+- [USB3 Vision Camera](./tracks/_archive/usb3-vision-camera_20261021/index.md) — complete (archived)
 - [Acroname USB Hub](./tracks/_archive/acroname-hub_20261012/index.md) — complete (archived)
 
 ## Getting Started
 
-Tracks are listed in planned order. `xlc-xcarve` and `usb3-vision-camera` are ready to start. The docs site and machine setup track starts after `usb3-vision-camera` merges.
+Tracks are listed in planned order. `xlc-xcarve` is ready to start. The docs site and machine setup track starts once `usb3-vision-camera` (PR #12) merges.

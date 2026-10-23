@@ -194,7 +194,8 @@ The IDS camera: see [ids-u3-36p0xcp.md](ids-u3-36p0xcp.md#gentl-on-linux). In sh
   | Stop and start on the same stream | 3 of 3 clean |
   | The first way, in sync mode | 3 of 3 clean |
 
-  The camera has no `AcquisitionAbort`. The driver now waits before dropping an async stream (see [Hazards](#hazards)). Rerun pending.
+  The camera has no `AcquisitionAbort`. The driver now waits before dropping an async stream (see [Hazards](#hazards)).
+- **Rerun with the fix:** 23 passed, 1 skipped (the check for cameras that can't be timed), the three-camera test among the passes. Mono8 and Mono16 both captured, there were no incomplete frames, and the offset spread over 5 measurements was 10 µs. 300 `not_before` captures met 600 stale frames, at 11.9 captures per second. Switching to software trigger took 1.25 s, with a 57 ms turnaround, and the 20 triggered exposures began 9–133 ms after the request, none needing a second trigger. The IDS camera, rerun on the same machine with the fix, passed too (see [ids-u3-36p0xcp.md](ids-u3-36p0xcp.md#last-run)).
 
 ### CM3-U3-50S5M: three backends compared
 

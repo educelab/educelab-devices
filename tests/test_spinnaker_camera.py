@@ -1,6 +1,7 @@
 """`SpinnakerCamera`, tested against the fake PySpin in `fakes.pyspin`."""
 
 import math
+import re
 import sys
 import time
 from datetime import UTC, datetime, timedelta
@@ -12,7 +13,13 @@ import pytest
 from contracts import FrameCameraContract
 from educelab.devices import DeviceInfo
 from educelab.devices.app.cli import main
-from educelab.devices.cameras import EXPOSURE_TIME, GAIN, PIXEL_FORMAT, spinnaker
+from educelab.devices.cameras import (
+    EXPOSURE_TIME,
+    GAIN,
+    PIXEL_FORMAT,
+    _genicam,
+    spinnaker,
+)
 from educelab.devices.cameras.spinnaker import (
     THROUGHPUT_LIMIT,
     TRIGGER,
@@ -657,16 +664,21 @@ class TestSpinnakerCameraContractThroughputMode(TestSpinnakerCameraContract):
 # --- el-devices discover ------------------------------------------------------
 
 
-def test_el_devices_discover_lists_spinnaker_cameras(pyspin, monkeypatch, capsys):
+def test_el_devices_discover_lists_spinnaker_cameras(
+    pyspin, monkeypatch, capsys, discover_only
+):
+    discover_only("spinnaker")
     monkeypatch.setattr(spinnaker, "load_pyspin", lambda: pyspin)
     assert main(["discover"]) == 0
     out = capsys.readouterr().out
-    assert (
-        f"spinnaker: Blackfly S BFS-U3-51S5M at unknown address, serial {MONO}" in out
-    )
+    assert "spinnaker: 2 found" in out
+    assert re.search(rf"Blackfly S BFS-U3-51S5M +{MONO}", out)
 
 
-def test_el_devices_discover_without_pyspin_says_how_to_install(monkeypatch, capsys):
+def test_el_devices_discover_without_pyspin_says_how_to_install(
+    monkeypatch, capsys, discover_only
+):
+    discover_only("spinnaker")
     monkeypatch.setitem(sys.modules, "PySpin", None)
     main(["discover"])
     assert "spinnaker: unavailable" in capsys.readouterr().out
@@ -865,7 +877,7 @@ def test_a_trigger_in_the_same_clock_tick_as_not_before_counts(
     # trigger can read the same tick, with not_before rounded just after it.
     tick = time.time()
     monkeypatch.setattr(fake, "clock", lambda: tick)
-    monkeypatch.setattr("educelab.devices.cameras.spinnaker.time.time", lambda: tick)
+    monkeypatch.setattr("educelab.devices.cameras._genicam.host_time", lambda: tick)
     triggered.trigger()
     triggered.capture_frame(
         not_before=datetime.fromtimestamp(tick, UTC) + timedelta(microseconds=1)
@@ -893,7 +905,7 @@ def test_a_missed_trigger_is_fired_again(triggered, fake):
     # Each wait is the exposure plus a few trigger turnarounds, not the timeout.
     exposure = triggered.setting(EXPOSURE_TIME).value
     turnaround = triggered._trigger_turnaround
-    wait = exposure + spinnaker._RETRIGGER_TURNAROUNDS * turnaround
+    wait = exposure + _genicam._RETRIGGER_TURNAROUNDS * turnaround
     assert fake.grab_timeouts[-2:] == [math.ceil(wait * 1000)] * 2
 
 

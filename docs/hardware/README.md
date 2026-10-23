@@ -18,6 +18,8 @@ hardware doc reflects what the change taught us (workflow.md).
 | X-Carve (GRBL) | Stage | planned (`xlc-xcarve` track) | not yet written |
 | Spinnaker cameras | Frame camera | `SpinnakerCamera` (`educelab.devices.cameras.spinnaker`) | [spinnaker.md](spinnaker.md) |
 | Acroname USBHub3p | Hub | `hubs.acroname.AcronameHub` | [acroname-usbhub3p.md](acroname-usbhub3p.md) |
+| USB3 Vision cameras through Aravis or GenTL | Frame camera | `cameras.aravis.AravisCamera`, `cameras.gentl.GenTLCamera` | [usb3-vision.md](usb3-vision.md) |
+| IDS U3-36P0XCP-M-GL | Frame camera | `AravisCamera` (`GenTLCamera` untested) | [ids-u3-36p0xcp.md](ids-u3-36p0xcp.md) |
 
 Add a row when a doc is created, and link it from the Doc column.
 

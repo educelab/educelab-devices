@@ -21,7 +21,6 @@ Behavior that hasn't been checked against real PySpin is marked "assumed" in
 ``docs/hardware/spinnaker.md``.
 """
 
-import time
 import weakref
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator
@@ -30,6 +29,8 @@ from types import ModuleType
 from typing import Any
 
 import numpy as np
+
+from educelab.devices.cameras import _genicam
 
 __all__ = [
     "CameraList",
@@ -590,7 +591,8 @@ class FakeCamera:
         height: Image height in pixels.
         buffer_count: Buffers in the stream; ``GetNextImage()`` times out once
             all of them are held.
-        clock: Host clock, in seconds since the epoch.
+        clock: Host clock, in seconds since the epoch. Defaults to the
+            core's `host_time()`, which is fine-grained on every platform.
         uptime: Seconds the camera's timestamp counter has been running.
         timestamp_node: ``"Timestamp"`` or the older ``"TimestampLatchValue"``.
         firmware: ``DeviceFirmwareVersion``.
@@ -614,7 +616,7 @@ class FakeCamera:
         width: int = 8,
         height: int = 6,
         buffer_count: int = 10,
-        clock: Callable[[], float] = time.time,
+        clock: Callable[[], float] | None = None,
         uptime: float = 1000.0,
         timestamp_node: str = "Timestamp",
         firmware: str = "1.0.0.0",
@@ -630,8 +632,8 @@ class FakeCamera:
         self.width = width
         self.height = height
         self.buffer_count = buffer_count
-        self.clock = clock
-        self.device_epoch = clock() - uptime
+        self.clock = clock or (lambda: _genicam.host_time())
+        self.device_epoch = self.clock() - uptime
         self.attached = False
         self.initialized = False
         self.streaming = False

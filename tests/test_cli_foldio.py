@@ -1,6 +1,7 @@
 """``el-devices foldio``, against the fake transport."""
 
 import argparse
+import re
 import subprocess
 import sys
 
@@ -94,11 +95,14 @@ def test_device_errors_are_reported(monkeypatch, capsys):
     assert "no adapter" in capsys.readouterr().err
 
 
-def test_discover_lists_turntables(monkeypatch, capsys):
+def test_discover_lists_turntables(monkeypatch, capsys, discover_only):
+    discover_only("foldio360")
     uuid = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
     monkeypatch.setattr(f, "_bleak", fake_bleak([("AA:01", "Foldio360", (uuid,), -60)]))
     assert main(["discover"]) == 0
-    assert "foldio360: Foldio360 at AA:01" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "foldio360: 1 found" in out
+    assert re.search(r"Foldio360 .*AA:01", out)
 
 
 # -- argument handling, all of which fails before anything connects -------------

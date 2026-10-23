@@ -1,16 +1,16 @@
 {
   "id": "docs-site_20261012",
-  "title": "Documentation Site",
-  "type": "chore",
+  "title": "Documentation Site and Machine Setup",
+  "type": "feature",
   "status": "pending",
   "created": "2026-10-12T00:00:00Z",
-  "updated": "2026-10-12T00:00:00Z",
+  "updated": "2026-10-23T00:00:00Z",
   "phases": {
-    "total": 2,
+    "total": 7,
     "completed": 0
   },
   "tasks": {
-    "total": 7,
+    "total": 29,
     "completed": 0
   }
 }

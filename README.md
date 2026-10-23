@@ -25,11 +25,21 @@ backend is used:
 | `foldio360` | Foldio360 turntable (bleak) | Foldio360 track |
 | `gphoto2` | DSLRs over gphoto2 (not on Windows) | gphoto2 camera track |
 | `acroname` | Acroname USB hubs (brainstem) | Acroname hub track |
+| `gentl` | USB3 Vision cameras through a vendor GenTL producer (genicam) | USB3 Vision camera track |
 | `all` | All of the above | first driver track |
 
-Extras are declared as their driver lands. Spinnaker cameras need PySpin,
-which isn't on PyPI: install the Spinnaker SDK, then the wheel bundled with
-it (the versions must match exactly).
+Extras are declared as their driver lands. Two backends need libraries that
+aren't on PyPI as wheels:
+
+- Spinnaker cameras need PySpin: install the Spinnaker SDK, then the wheel
+  bundled with it (the versions must match exactly).
+- USB3 Vision cameras through Aravis need Aravis 0.8 and PyGObject: on macOS,
+  `brew install aravis pkgconf cairo`, then `pip install pycairo` followed by
+  `pip install PyGObject`. See
+  [docs/hardware/usb3-vision.md](docs/hardware/usb3-vision.md) for Linux.
+
+The GenTL backend also needs the camera vendor's GenTL producer, found through
+`GENICAM_GENTL64_PATH`.
 
 # Usage
 ```python
@@ -50,6 +60,8 @@ what we know about each piece of hardware.
 ```shell
 el-devices discover              # list devices the installed backends can find
 el-devices misha                 # light each band of the attached MISHA panel
+el-devices spinnaker             # benchmark the attached Spinnaker cameras
+el-devices genicam --backend aravis   # ...or USB3 Vision cameras (aravis|gentl)
 el-devices simulate              # exercise every simulated device
 el-devices simulate stage light  # ...or only some roles
 el-devices -v <command>          # log device traffic

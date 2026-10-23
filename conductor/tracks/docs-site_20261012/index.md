@@ -1,4 +1,4 @@
-# Track: Documentation Site
+# Track: Documentation Site and Machine Setup
 
 **ID:** docs-site_20261012
 **Status:** Pending
@@ -10,8 +10,8 @@
 
 ## Progress
 
-- Phases: 0/2 complete
-- Tasks: 0/7 complete
+- Phases: 0/7 complete
+- Tasks: 0/29 complete
 
 ## Quick Links
 

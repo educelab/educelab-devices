@@ -1,5 +1,6 @@
 """Cameras: devices that capture frames or camera files."""
 
+from educelab.devices.cameras.aravis import AravisCamera
 from educelab.devices.cameras.base import (
     APERTURE,
     CANONICAL_UNITS,
@@ -17,6 +18,7 @@ from educelab.devices.cameras.base import (
     SettingValue,
 )
 from educelab.devices.cameras.focus import FocusDrive, FocusLimit
+from educelab.devices.cameras.gentl import GenTLCamera
 from educelab.devices.cameras.simulated import (
     SimulatedCamera,
     SimulatedFileCamera,
@@ -31,6 +33,7 @@ __all__ = [
     "GAIN",
     "ISO",
     "PIXEL_FORMAT",
+    "AravisCamera",
     "Camera",
     "CameraFile",
     "FileCamera",
@@ -38,6 +41,7 @@ __all__ = [
     "FocusLimit",
     "Frame",
     "FrameCamera",
+    "GenTLCamera",
     "Rounding",
     "Setting",
     "SettingValue",

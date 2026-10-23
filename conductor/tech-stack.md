@@ -15,8 +15,10 @@
 | bleak | `[foldio360]` | BLE |
 | pyserial | `[serial]` | MISHA, XLC, X-Carve |
 | brainstem | `[acroname]` | Raises `ImportError` at import on unrecognized Linux distros |
+| genicam | `[gentl]` | EMVA's GenICam binding, for GenTL producers. Wheels only (cp310–cp314), none for Intel macOS. GenICam licence, not OSI |
 | — | `[all]` | All of the above |
 | PySpin | manual | Not on PyPI. Install the Spinnaker SDK (4.4.0 or newer), then its bundled wheel; versions must match exactly |
+| Aravis 0.8, PyGObject | manual | Aravis from Homebrew or apt; PyGObject (with pycairo first) builds against it. See `docs/hardware/usb3-vision.md` |
 
 All vendor SDKs are imported lazily inside their backend module.
 

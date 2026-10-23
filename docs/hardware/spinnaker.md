@@ -2,7 +2,13 @@
 
 Machine-vision cameras driven through Teledyne FLIR's Spinnaker SDK and its Python
 bindings, PySpin. The lab uses them in the `pgs-scan` rigs (several cameras capturing
-together). Driver: `SpinnakerCamera` in `educelab.devices.cameras.spinnaker`.
+together). Driver: `SpinnakerCamera` in `educelab.devices.cameras.spinnaker`. Its
+acquisition, settings, trigger, and timestamp behaviour lives in the GenICam core
+(`educelab.devices.cameras._genicam`, [ADR 0006](../adr/0006-genicam-cameras-share-a-core.md)),
+which the [USB3 Vision drivers](usb3-vision.md) share, so what this doc records about that
+behaviour applies to them too until their own hardware runs say otherwise. The same
+cameras also run through `AravisCamera` and `GenTLCamera`, without PySpin; those runs are
+in [usb3-vision.md](usb3-vision.md#hardware-runs).
 
 > Checked on one rig of five Chameleon3 CM3-U3-50S5M cameras, 2026-10-16 to 2026-10-20
 > (see Manual check). Facts marked **assumed** or **unknown** are still open; the rig
@@ -206,7 +212,11 @@ before choosing a mode for another pixel format.
   3.12's `time.time()` and `datetime.now()` tick every 15.6 ms, so a `not_before` taken
   just before a trigger often reads the same tick, and `datetime`'s rounding to the
   microsecond can put it after the trigger. Without the tolerance, every such capture
-  fired a second trigger (seen in CI, 2026-10-21).
+  fired a second trigger (seen in CI, 2026-10-21). The driver itself now reads host time
+  from `perf_counter`, lined up with the wall clock at one of its ticks (`host_time()` in
+  the GenICam core), because the coarse clock also threw the latched timestamp offset off
+  by up to 8 ms (usb3-vision.md, Hardware runs, Windows). A caller's `not_before` from
+  `datetime.now()` is still up to 15.6 ms early there.
 - **Priming:** on the CM3-U3-50S5M (20305113 and 20305122, 2026-10-20), the first
   capture after switching to `"Software"` got no frame in three hardware-test runs in a
   row, while 500 captures per camera from `el-devices spinnaker` missed none. Whenever
@@ -659,6 +669,17 @@ intact. Still open: the same facts for other models, and the frame-ID assumption
 (step 5, not yet run on any model).
 
 ### Last run
+
+**2026-10-22**, after the driver moved onto the shared GenICam core (ADR 0006). Same host
+and cameras, Python 3.12.15, on 20298452 (`spinnaker-tests-refactor-1.log`): all 16
+hardware tests passed. Timestamp node `Timestamp`, offset spread 35 µs over 5
+measurements, 300 captures with 600 stale, 0 incomplete, 0 re-measured, and dtype
+reference drift 0. Throughput limit 180.864 MB/s (range 5.024–180.864, step 5.024).
+Switching to software trigger took 0.193 s, with a 58 ms turnaround, and all 20 triggered
+captures began 1.8–3.3 ms after the request with no re-fires. These match the runs before
+the move, so the move changed nothing callers can see.
+
+### Run of 2026-10-20
 
 **2026-10-20**, same host, SDK and cameras as 2026-10-19. 20305114 negotiated USB 3 this
 time (95 MB/s uncapped), so all five cameras shared the hub's one upstream link.

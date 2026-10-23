@@ -73,7 +73,7 @@ time if it can't:
 - **macOS**: one universal library. **Verified** with Python 3.13.15 and brainstem
   2.12.5, controlling `0x1A43352C`, 2026-10-16.
 
-Only macOS has been used with a hub; the Linux and Windows notes come from the SDK.
+macOS has been used to control a hub, and Linux (Fedora) to list one; the other Linux and the Windows notes come from the SDK.
 
 Importing `educelab.devices.hubs` never imports `brainstem`. The SDK is loaded on the
 first `discover()` or `open()`, so these failures only affect this backend.
@@ -81,7 +81,8 @@ first `discover()` or `open()`, so these failures only affect this backend.
 ### Linux permissions
 
 Without a udev rule, only root can open the hub. Acroname's SDK download ships a
-rule like the one below (**assumed**; the PyPI wheel doesn't include it). Save it as
+rule like the one below (**assumed**; the PyPI wheel doesn't include it). The rule
+below works (**verified** on Fedora, 2026-10-23). Save it as
 `/etc/udev/rules.d/99-brainstem.rules`, then run
 `sudo udevadm control --reload-rules && sudo udevadm trigger` and replug the hub:
 
@@ -89,10 +90,11 @@ rule like the one below (**assumed**; the PyPI wheel doesn't include it). Save i
 SUBSYSTEM=="usb", ATTRS{idVendor}=="24ff", MODE="0666"
 ```
 
-How a missing rule shows up is **unknown**. The driver says to check udev rules
-when the SDK returns its permission error (12), but the SDK may instead report the
-hub as not found. Running `el-devices hub status` as a normal user on Linux, with and
-without the rule, would settle both questions.
+A missing rule hides the hub silently: without it, `el-devices hub list` printed
+"No USBHub3p hubs found." and gave no permission error. With the rule, the hub
+listed. **Verified** on Fedora, 2026-10-23. So the SDK loads on at least one
+distribution outside its bundled list. Whether `open()` returns the permission error
+(12) instead of `DeviceNotFound` is unchecked.
 
 ## Protocol
 
@@ -339,5 +341,5 @@ checked later that day.
   for the 5.1 s watched. After `power_cycle()` it reconnected at USB 3 in 3.4–3.6 s,
   and at USB 2 in 3.8 s with a `USB2` limit.
 
-Not checked on hardware: Linux and Windows, whether the enumeration delay takes effect
+Not checked on hardware: controlling a hub on Linux or Windows, whether the enumeration delay takes effect
 without a save, and behavior after a hub power loss.

@@ -18,7 +18,7 @@ Tags: **[V]** verified against a primary source (source file, official doc, form
 | OS | Aravis 0.8 (PyGObject) | GenTL (`genicam` + a vendor `.cti`) |
 |---|---|---|
 | macOS arm64 | Yes: Homebrew `aravis` + pip PyGObject. Verified with IDS and FLIR cameras. | FLIR cameras only, through Spinnaker's producer (verified). IDS has no macOS producer. |
-| Linux x86_64/arm64 | Yes: apt `gir1.2-aravis-0.8` + udev rule + usbfs memory. Not yet run on hardware. | Yes: IDS peak's `ids_u3vgentl.cti`. Not yet run on hardware. |
+| Linux x86_64/arm64 | Yes: apt `gir1.2-aravis-0.8` or a source build, + udev rule + usbfs memory. Verified with the IDS camera on Fedora; FLIR cameras listed. | Yes: IDS peak's `ids_u3vgentl.cti`. Verified with the IDS camera on Fedora. |
 | Windows | Only through MSYS2 (not pip-friendly), and it conflicts with IDS's driver. | Yes: IDS peak's `ids_u3vgentlk.cti`. Not yet run on hardware. |
 
 - Pick one backend per camera per machine, especially on Windows, where a USB device's driver binding is exclusive. [I]
@@ -288,6 +288,15 @@ Every option, for the library and for the typelib: [I unless marked]
 | Build with `meson setup --prefix=/usr` | Yes | Yes | Needs nothing else, but installs files the package manager doesn't know about into `/usr`, where a later Aravis package could overwrite them. |
 | A packaged Aravis (COPR, or `dnf search aravis`) | Yes | Yes | Installs to `/usr` and is managed by `dnf`; depends on a third-party repository and its version. |
 
+**Building PyGObject on Fedora.** pip builds both pycairo and PyGObject from source, so they need the headers of the venv's Python and of cairo, GLib and gobject-introspection. On a fresh Fedora machine with Python 3.14, this set let both build (use `python3.12-devel` instead for a 3.12 venv): [V for the set, 2026-10-23]
+
+```bash
+sudo dnf install gcc pkgconf-pkg-config python3-devel cairo-devel cairo-gobject-devel gobject-introspection-devel
+pip install pycairo && pip install PyGObject
+```
+
+Which of these were strictly needed wasn't isolated. Another Fedora machine built them without the step, probably because earlier builds had already installed the packages. Without the Python headers, pycairo's meson build fails saying it can't find Python. [V for the symptom; I for which packages]
+
 Then install the udev rule and raise usbfs memory as below.
 
 ### udev rule
@@ -305,6 +314,7 @@ Then install the udev rule and raise usbfs memory as below.
   ```
 - Suggested install: `sudo cp aravis.rules /etc/udev/rules.d/70-aravis.rules && sudo udevadm control --reload-rules && sudo udevadm trigger`. The file name is up to you. [I]
 - IDS peak ships its own rule and an `ids_install_udev_rule.sh` in `share/ids-peak/scripts`. [V] (IDS peak Linux readme)
+- **A missing rule hides cameras silently.** Aravis skips a USB device it can't open, logging only `Failed to open USB device` (`arvuvinterface.c`). On Fedora with Aravis built from source, `arv-tool-0.8` listed the IDS camera, which IDS peak's rule covers, but none of the FLIR cameras. Installing `aravis.rules` made them appear. [V 2026-10-23]
 
 ### usbfs memory
 - The Linux kernel's default `usbfs_memory_mb` is **16 MB**. Aravis' USB stream code comments: "The kernel USB memory buffer limit has been reached (default 16MBytes) ... `sudo modprobe usbcore usbfs_memory_mb=1000`". [V] (`src/arvuvstream.c`)

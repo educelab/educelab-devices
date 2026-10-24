@@ -331,6 +331,7 @@ class _GenTLBackend:
                         info.model or "GenTL camera",
                         address=info.id_,
                         serial_number=info.serial_number,
+                        vendor=info.vendor or None,
                     )
                     for info in infos
                 )

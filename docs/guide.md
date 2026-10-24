@@ -69,6 +69,10 @@ closed one. A closed device can be opened again.
 - **`discover()` is a classmethod** that lists devices of that type attached to the host,
   as `DeviceInfo`s, without opening them. Drivers that can't enumerate return `[]`.
   `el-devices discover` runs every installed backend's `discover()`.
+- **`info` identifies a device**: `backend`, `model`, and, where known, `address`,
+  `serial_number`, `firmware_version` and `vendor`. Every camera reports `vendor` once
+  open, if the hardware can say; most drivers fill in more once open. A camera's hardware
+  doc says where its strings come from.
 
 ---
 
@@ -307,7 +311,8 @@ devices: moves take time and can be stopped, captures take the exposure time, an
 drives hit limits. They pass the same contract tests (`tests/contracts/`) as the real
 drivers, so code that works against a simulation should work against the hardware.
 `SimulatedFileCamera(bulb=True, auto_iso=True)` starts with `exposure_time` and `iso`
-reading as `None`, like a DSLR at Bulb and Auto ISO.
+reading as `None`, like a DSLR at Bulb and Auto ISO. `SimulatedCamera(color=True)` acts
+like a colour camera: it also offers `RGB8` and starts in it, as GenICam colour cameras do.
 
 `el-devices simulate` runs each one through a few operations, which is a quick way to
 check an install.

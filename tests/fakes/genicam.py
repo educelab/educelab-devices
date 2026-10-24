@@ -755,7 +755,7 @@ class FakeBackend:
 
     def discover(self) -> list[DeviceInfo]:
         return [
-            DeviceInfo(self.name, c.model, serial_number=c.serial)
+            DeviceInfo(self.name, c.model, serial_number=c.serial, vendor=c.vendor)
             for c in self.cameras
             if c.attached
         ]

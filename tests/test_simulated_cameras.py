@@ -23,6 +23,12 @@ class TestSimulatedCamera(FrameCameraContract):
         return SimulatedCamera
 
 
+class TestSimulatedColorCamera(FrameCameraContract):
+    @pytest.fixture
+    def make_device(self):
+        return functools.partial(SimulatedCamera, color=True)
+
+
 class TestSimulatedFileCamera(FileCameraContract):
     @pytest.fixture
     def make_device(self):
@@ -62,6 +68,30 @@ def test_pixel_format_sets_dtype():
         assert frame.pixels.shape == (24, 32)
         camera.set_setting(PIXEL_FORMAT, "Mono16")
         assert camera.capture_frame().pixels.dtype == np.uint16
+
+
+def test_mono_camera_offers_no_rgb():
+    with SimulatedCamera() as camera:
+        assert "RGB8" not in camera.setting(PIXEL_FORMAT).choices
+
+
+def test_color_camera_starts_in_rgb8_with_distinct_channels():
+    with SimulatedCamera(width=32, height=24, color=True) as camera:
+        frame = camera.capture_frame()
+        assert frame.pixel_format == "RGB8"
+        assert frame.pixels.dtype == np.uint8
+        assert frame.pixels.shape == (24, 32, 3)
+        red, green, blue = frame.pixels.reshape(-1, 3).mean(axis=0)
+        assert red > green > blue
+        assert camera.preview_frame().ndim == 3
+        camera.set_setting(PIXEL_FORMAT, "Mono8")
+        assert camera.capture_frame().pixels.shape == (24, 32)
+
+
+def test_sensor_size_is_reported():
+    with SimulatedCamera(width=32, height=24) as camera:
+        assert camera.setting("sensor_width").value == 32
+        assert camera.setting("sensor_height").value == 24
 
 
 def test_capture_takes_the_exposure_time():

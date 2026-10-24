@@ -310,7 +310,11 @@ def test_info_before_open_names_the_serial(backend):
 
 def test_info_after_open_has_model_and_firmware(camera):
     assert camera.info == DeviceInfo(
-        "fake", "U3-36P0XCP-M", serial_number=MONO, firmware_version="1.0.0"
+        "fake",
+        "U3-36P0XCP-M",
+        serial_number=MONO,
+        firmware_version="1.0.0",
+        vendor="IDS Imaging",
     )
 
 

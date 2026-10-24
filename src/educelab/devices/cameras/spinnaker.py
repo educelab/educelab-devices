@@ -269,6 +269,7 @@ def _describe(pyspin: Any, cam: Any) -> DeviceInfo | None:
     try:
         serial = read("DeviceSerialNumber")
         model = read("DeviceModelName")
+        vendor = read("DeviceVendorName")
     except pyspin.SpinnakerException as exc:
         # Log the text, not the exception: a kept log record would hold its
         # traceback, and with it ``cam``, which blocks releasing the system.
@@ -276,7 +277,9 @@ def _describe(pyspin: Any, cam: Any) -> DeviceInfo | None:
         return None
     if serial is None:
         logger.warning("Spinnaker camera %r has no readable serial number", model)
-    return DeviceInfo(BACKEND, model or "Spinnaker camera", serial_number=serial)
+    return DeviceInfo(
+        BACKEND, model or "Spinnaker camera", serial_number=serial, vendor=vendor
+    )
 
 
 def _get_by_serial(pyspin: Any, cameras: Any, serial: str) -> Any | None:

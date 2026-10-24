@@ -307,6 +307,13 @@ def test_several_widgets_are_written_in_one_tree_round_trip():
     ]
 
 
+def test_open_reads_the_vendor():
+    camera = GPhoto2Camera(library=FakeLibrary(FakeCamera()))
+    assert camera.info.vendor is None
+    with camera:
+        assert camera.info.vendor == "Nikon Corporation"
+
+
 def test_open_reads_the_serial_number_and_firmware_alone():
     attached = FakeCamera(
         widgets=[
@@ -384,6 +391,7 @@ def test_open_and_close_the_camera_at_a_port():
             model="Nikon Z7_2",
             address="usb:020,007",
             serial_number="6001234",
+            vendor="Nikon Corporation",
         )
     assert not wanted.is_open
 

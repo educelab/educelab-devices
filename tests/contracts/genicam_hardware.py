@@ -107,7 +107,17 @@ class GenICamHardwareTests:
         info = camera.info
         print(f"info: {info} (opened as {serial})")
         assert info.serial_number
+        assert info.vendor
         assert info.model != f"{self.driver.label} camera"
+
+    def test_opening_keeps_the_discovered_vendor_and_model(self, camera, serial):
+        # Discovery reads the transport layer, an open camera its own nodes.
+        # Consumers write these into EXIF and key saved config on them.
+        found = {i.serial_number: i for i in self.driver.discover()}[serial]
+        opened = camera.info
+        print(f"discovered: {found.vendor!r} {found.model!r}")
+        print(f"opened: {opened.vendor!r} {opened.model!r}")
+        assert (opened.vendor, opened.model) == (found.vendor, found.model)
 
     def test_settings_the_camera_offers(self, camera):
         # Records which optional features this model has (usb3-vision.md).

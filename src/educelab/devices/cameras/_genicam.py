@@ -405,6 +405,7 @@ class GenICamCamera(FrameCamera):
         self._backend = backend
         self._conn: Connection | None = None
         self._model = f"{self.label} camera"
+        self._vendor: str | None = None
         self._firmware: str | None = None
         self._own_serial: str | None = None
         self._timestamp_node: str | None = None
@@ -429,6 +430,7 @@ class GenICamCamera(FrameCamera):
             self._model,
             serial_number=self._own_serial or self._serial,
             firmware_version=self._firmware,
+            vendor=self._vendor,
         )
 
     @property
@@ -496,6 +498,7 @@ class GenICamCamera(FrameCamera):
             raise DeviceNotFound(self._not_found_message())
         try:
             self._model = self._read_string("DeviceModelName") or self._model
+            self._vendor = self._read_string("DeviceVendorName")
             self._firmware = self._read_string("DeviceFirmwareVersion")
             self._own_serial = self._read_string("DeviceSerialNumber")
             self._configure()

@@ -48,6 +48,7 @@ class BackendContract:
         found = {info.serial_number: info for info in backend.discover()}
         assert set(found) == {SERIAL, OTHER}
         assert found[SERIAL].model == "U3-36P0XCP-M"
+        assert found[SERIAL].vendor == "IDS Imaging"
         assert found[SERIAL].backend == backend.name
         assert not sim.opened
 

@@ -25,6 +25,11 @@ in [usb3-vision.md](usb3-vision.md#hardware-runs).
   the camera (verified on the CM3-U3-50S5M, SDK 4.4.0.246, 2026-10-16: `discover()`
   listed all five with serial and model without calling `Init()`). The serial number is
   how the driver addresses a camera.
+- **Vendor and model strings:** `discover()` reports `vendor` and `model` from these
+  `TLDevice` nodes. An open camera reports them from its own node map instead (through
+  the shared GenICam core, as on every backend). Whether the two match on the
+  CM3-U3-50S5M is **unknown**; the strings `pgs-scan` 1.x wrote into EXIF and its saved
+  config came from `TLDevice`. See [usb3-vision.md](usb3-vision.md#how-the-drivers-differ-from-aravis-and-gentl).
 
 ## Installing PySpin
 

@@ -24,6 +24,8 @@ drives over PTP.
   failed read, leaves them `None`. The Z7 II pads its serial with zeros to 32 digits
   (`00000000000000000000000003057001`) and reports firmware `V1.62`. `open()` takes
   0.13 s including both reads. **verified** (`gphoto2-hw-open-linux-1.log`).
+- `vendor` comes from the `manufacturer` widget, read the same way. libgphoto2's PTP
+  driver fills it from the camera's device info. **assumed**: not yet read on the Z7 II.
 
 ## Transport
 

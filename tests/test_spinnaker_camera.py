@@ -197,6 +197,7 @@ def test_info_after_open_has_model_and_firmware(camera):
         "Blackfly S BFS-U3-51S5M",
         serial_number=MONO,
         firmware_version="1.0.0.0",
+        vendor="FLIR",
     )
 
 

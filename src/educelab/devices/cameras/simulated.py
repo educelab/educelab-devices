@@ -38,6 +38,9 @@ _NOISE_SIGMA = 0.01
 _PREVIEW_STRIDE = 4
 # A real shutter at Bulb stays open while the button is held. Simulate a short hold.
 _BULB_EXPOSURE_S = _REFERENCE_EXPOSURE_S
+_VENDOR = "EduceLab"
+# Per-channel scale for colour frames, so the channels differ.
+_RGB_TINT = np.array([1.0, 0.85, 0.7])
 
 
 class SimulatedCamera(FrameCamera):
@@ -50,27 +53,35 @@ class SimulatedCamera(FrameCamera):
         width: Frame width in pixels.
         height: Frame height in pixels.
         seed: Seed for the noise, for repeatable frames.
+        color: Act like a colour camera, which also offers ``RGB8`` and starts
+            in it, as GenICam colour cameras do.
     """
 
-    def __init__(self, width: int = 640, height: int = 480, seed: int = 0) -> None:
+    def __init__(
+        self, width: int = 640, height: int = 480, seed: int = 0, *, color: bool = False
+    ) -> None:
         super().__init__()
         self._width = width
         self._height = height
+        self._color = color
         self._rng = np.random.default_rng(seed)
         self._frame_count = 0
+        formats = ("Mono8", "Mono16", "RGB8") if color else ("Mono8", "Mono16")
         self._store = {
             s.name: s
             for s in (
                 Setting(EXPOSURE_TIME, 0.01, 1e-5, 10.0, unit="s"),
                 Setting(GAIN, 0.0, 0.0, 24.0, unit="dB"),
-                Setting(PIXEL_FORMAT, "Mono8", choices=("Mono8", "Mono16")),
+                Setting(PIXEL_FORMAT, "RGB8" if color else "Mono8", choices=formats),
                 Setting("sensor_width", width, unit="px", read_only=True),
+                Setting("sensor_height", height, unit="px", read_only=True),
             )
         }
 
     @property
     def info(self) -> DeviceInfo:
-        return DeviceInfo(backend="simulated", model="SimulatedCamera")
+        model = "SimulatedColorCamera" if self._color else "SimulatedCamera"
+        return DeviceInfo(backend="simulated", model=model, vendor=_VENDOR)
 
     def _open(self) -> None:
         pass
@@ -114,13 +125,17 @@ class SimulatedCamera(FrameCamera):
         )
 
     def _render(self) -> npt.NDArray[np.float64]:
-        return _render(
+        """The image in the current pixel format's shape: height × width × 3 for RGB8."""
+        image = _render(
             self._width,
             self._height,
             _number(self._store[EXPOSURE_TIME]),
             _number(self._store[GAIN]),
             self._rng,
         )
+        if self._store[PIXEL_FORMAT].value == "RGB8":
+            return image[..., np.newaxis] * _RGB_TINT
+        return image
 
 
 class SimulatedFileCamera(FileCamera):
@@ -171,7 +186,9 @@ class SimulatedFileCamera(FileCamera):
 
     @property
     def info(self) -> DeviceInfo:
-        return DeviceInfo(backend="simulated", model="SimulatedFileCamera")
+        return DeviceInfo(
+            backend="simulated", model="SimulatedFileCamera", vendor=_VENDOR
+        )
 
     def _open(self) -> None:
         pass

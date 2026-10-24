@@ -79,6 +79,7 @@ def run(args: argparse.Namespace) -> int:
 
 
 _COLUMNS = (
+    ("VENDOR", "vendor"),
     ("MODEL", "model"),
     ("SERIAL", "serial_number"),
     ("ADDRESS", "address"),

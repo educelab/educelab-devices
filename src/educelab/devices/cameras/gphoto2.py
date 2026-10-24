@@ -106,6 +106,7 @@ _DOC = "docs/hardware/gphoto2-cameras.md"
 # Read one at a time at open(), which is quick; the whole tree takes seconds.
 _SERIAL_WIDGET = "serialnumber"
 _FIRMWARE_WIDGET = "deviceversion"
+_VENDOR_WIDGET = "manufacturer"
 
 
 def usb_claimed_hint() -> str:
@@ -151,6 +152,7 @@ class GPhoto2Camera(FileCamera):
         self._model: str | None = None
         self._serial_number: str | None = None
         self._firmware_version: str | None = None
+        self._vendor: str | None = None
         # How to write each setting from the last settings read: the widget and
         # a converter to its native value. Every write validates (and so reads)
         # first, so this is never stale.
@@ -174,6 +176,7 @@ class GPhoto2Camera(FileCamera):
             address=self._port,
             serial_number=self._serial_number,
             firmware_version=self._firmware_version,
+            vendor=self._vendor,
         )
 
     @property
@@ -244,6 +247,7 @@ class GPhoto2Camera(FileCamera):
         self._model = session.model
         self._serial_number = self._identity(session, _SERIAL_WIDGET)
         self._firmware_version = self._identity(session, _FIRMWARE_WIDGET)
+        self._vendor = self._identity(session, _VENDOR_WIDGET)
         logger.debug("%r opened: %s", self, self._model)
         self._keep_alive_stop = threading.Event()
         self._keep_alive_thread = threading.Thread(

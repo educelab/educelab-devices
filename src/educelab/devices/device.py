@@ -39,6 +39,8 @@ class DeviceInfo:
         serial_number: Hardware serial number, if the device reports one.
         firmware_version: Firmware version, if known. Usually only available
             once the device is open.
+        vendor: Manufacturer, as the device names itself (e.g. ``"FLIR"``).
+            Every camera reports one once open, if the hardware can say.
     """
 
     backend: str
@@ -46,6 +48,7 @@ class DeviceInfo:
     address: str | None = None
     serial_number: str | None = None
     firmware_version: str | None = None
+    vendor: str | None = None
 
 
 @dataclass(frozen=True, eq=False)

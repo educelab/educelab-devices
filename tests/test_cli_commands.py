@@ -101,7 +101,12 @@ class TwoCameras(Device):
     @classmethod
     def discover(cls) -> list[DeviceInfo]:
         return [
-            DeviceInfo("fake", "Chameleon3 CM3-U3-50S5M", serial_number="20298452"),
+            DeviceInfo(
+                "fake",
+                "Chameleon3 CM3-U3-50S5M",
+                serial_number="20298452",
+                vendor="Point Grey Research",
+            ),
             DeviceInfo("fake", "Cam", address="usb:1-2", serial_number="7"),
         ]
 
@@ -128,9 +133,10 @@ def test_discover_lines_devices_up_in_columns(backends, capsys):
     backends(("TwoCameras", ""))
     main(["discover"])
     header, first, second = capsys.readouterr().out.splitlines()[1:4]
-    assert header.split() == ["MODEL", "SERIAL", "ADDRESS"]
+    assert header.split() == ["VENDOR", "MODEL", "SERIAL", "ADDRESS"]
     for row in (first, second):
         assert row.startswith("  ")
+    assert first.index("Chameleon3") == second.index("Cam") == header.index("MODEL")
     assert first.index("20298452") == second.index("7") == header.index("SERIAL")
     assert second.index("usb:1-2") == header.index("ADDRESS")
 

@@ -331,7 +331,7 @@ class _GenTLBackend:
                         info.model or "GenTL camera",
                         address=info.id_,
                         serial_number=info.serial_number,
-                        vendor=info.vendor or None,
+                        vendor=_listed_vendor(genicam, info),
                     )
                     for info in infos
                 )
@@ -422,6 +422,17 @@ class _Usable:
                 f"No GenTL producer would load ({'; '.join(self.problems)}). "
                 f"{GENTL_INSTALL_HINT}"
             )
+
+
+def _listed_vendor(genicam: Any, info: Any) -> str | None:
+    """The vendor a producer lists for a camera, or ``None`` if it can't say."""
+    try:
+        return str(info.vendor) or None
+    except genicam.gentl.GenericException as exc:
+        logger.warning(
+            "GenTL camera %s has no readable vendor: %s", info.serial_number, exc
+        )
+        return None
 
 
 def _release_quietly(entry: _Producer) -> None:

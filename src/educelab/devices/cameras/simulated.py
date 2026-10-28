@@ -97,8 +97,7 @@ class SimulatedCamera(FrameCamera):
         self._store[name] = dataclasses.replace(self._store[name], value=value)
 
     def _preview_frame(self) -> npt.NDArray[np.uint8]:
-        image = self._render()[::_PREVIEW_STRIDE, ::_PREVIEW_STRIDE]
-        return _quantize(image, np.uint8)
+        return _quantize(self._render(_PREVIEW_STRIDE), np.uint8)
 
     def _capture_frame(self, not_before: datetime | None, timeout: float) -> Frame:
         # Frames are rendered on demand, so only a future not_before needs a wait.
@@ -124,15 +123,17 @@ class SimulatedCamera(FrameCamera):
             metadata,
         )
 
-    def _render(self) -> npt.NDArray[np.float64]:
-        """The image in the current pixel format's shape: height × width × 3 for RGB8."""
+    def _render(self, stride: int = 1) -> npt.NDArray[np.float64]:
+        """The image in the current pixel format's shape: height × width × 3 for
+        RGB8. Every ``stride``-th pixel is kept, before tinting.
+        """
         image = _render(
             self._width,
             self._height,
             _number(self._store[EXPOSURE_TIME]),
             _number(self._store[GAIN]),
             self._rng,
-        )
+        )[::stride, ::stride]
         if self._store[PIXEL_FORMAT].value == "RGB8":
             return image[..., np.newaxis] * _RGB_TINT
         return image

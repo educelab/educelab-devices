@@ -23,9 +23,12 @@ drives over PTP.
   is too slow for `open()` (see [Settings](#settings)). A camera without them, or a
   failed read, leaves them `None`. The Z7 II pads its serial with zeros to 32 digits
   (`00000000000000000000000003057001`) and reports firmware `V1.62`. `open()` takes
-  0.13 s including both reads. **verified** (`gphoto2-hw-open-linux-1.log`).
-- `vendor` comes from the `manufacturer` widget, read the same way. libgphoto2's PTP
-  driver fills it from the camera's device info. **assumed**: not yet read on the Z7 II.
+  0.13 s including both reads. **verified** (`gphoto2-hw-open-linux-1.log`), before the
+  vendor read below was added.
+- `vendor` comes from the `manufacturer` widget, read the same way at `open()`, so
+  `open()` now makes three reads. libgphoto2's PTP driver fills it from the camera's
+  device info. `discover()` can't report it: libgphoto2's camera list has no vendor.
+  **assumed**: not yet read on the Z7 II, and the open time with three reads is unmeasured.
 
 ## Transport
 

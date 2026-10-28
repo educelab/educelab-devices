@@ -318,6 +318,13 @@ def test_info_after_open_has_model_and_firmware(camera):
     )
 
 
+def test_a_vendor_that_cant_be_read_doesnt_stop_open(backend, fake):
+    fake.failures["read DeviceVendorName"] = FakeCameraError("access", "nope")
+    with GenICamCamera(MONO, backend) as camera:
+        assert camera.info.vendor is None
+        assert camera.info.model == "U3-36P0XCP-M"
+
+
 def test_info_after_open_reports_the_cameras_own_serial(backend, fake):
     # E.g. Aravis lists FLIR cameras by USB serial, but the camera knows its own.
     fake.set("DeviceSerialNumber", "20298452")

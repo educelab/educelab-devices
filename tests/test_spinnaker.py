@@ -246,6 +246,17 @@ def test_discover_reports_a_camera_without_a_readable_serial(pyspin):
     assert infos[0].vendor == "FLIR"
 
 
+def test_discover_lists_a_camera_whose_vendor_cant_be_read(pyspin, monkeypatch):
+    def fail():
+        raise SpinnakerException("node not available")
+
+    node = pyspin.system.cameras[0].tl_device_nodes["DeviceVendorName"]
+    monkeypatch.setattr(node, "ToString", fail)
+    infos = SpinnakerSystem(pyspin=pyspin).discover()
+    assert infos[0].serial_number == "20000001"
+    assert infos[0].vendor is None
+
+
 def test_discover_raises_device_error_when_enumeration_fails(pyspin, monkeypatch):
     def fail():
         raise SpinnakerException("transport layer error")

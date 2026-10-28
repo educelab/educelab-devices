@@ -113,8 +113,14 @@ class GenICamHardwareTests:
     def test_opening_keeps_the_discovered_vendor_and_model(self, camera, serial):
         # Discovery reads the transport layer, an open camera its own nodes.
         # Consumers write these into EXIF and key saved config on them.
-        found = {i.serial_number: i for i in self.driver.discover()}[serial]
         opened = camera.info
+        camera.close()  # a backend may not list a camera that is open
+        try:
+            listed = {i.serial_number: i for i in self.driver.discover()}
+        finally:
+            camera.open()
+        assert serial in listed
+        found = listed[serial]
         print(f"discovered: {found.vendor!r} {found.model!r}")
         print(f"opened: {opened.vendor!r} {opened.model!r}")
         assert (opened.vendor, opened.model) == (found.vendor, found.model)

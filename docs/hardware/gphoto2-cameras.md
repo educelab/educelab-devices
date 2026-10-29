@@ -28,7 +28,9 @@ drives over PTP.
 - `vendor` comes from the `manufacturer` widget, read the same way at `open()`, so
   `open()` now makes three reads. libgphoto2's PTP driver fills it from the camera's
   device info. `discover()` can't report it: libgphoto2's camera list has no vendor.
-  **assumed**: not yet read on the Z7 II, and the open time with three reads is unmeasured.
+  The Z7 II reports `Nikon Corporation`. Each identity read took about 1 ms, and `open()`
+  with all three took 0.24 s. **verified** (body `…03057001`, macOS 27, python-gphoto2
+  2.6.4, 2026-10-29, after `killall -9 ptpcamerad`).
 
 ## Transport
 

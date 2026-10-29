@@ -317,7 +317,10 @@ class SerialTransport:
                 chunk = conn.readline()
             except OSError as exc:
                 raise self._lost(exc) from exc
-            # readline() returns what it has so far when it times out.
+            # readline() returns what it has so far when it times out. With
+            # nothing at all, the wait is over, even if the clock disagrees.
+            if not chunk:
+                break
             self._partial += chunk
             if self._partial.endswith(b"\n"):
                 line = self._partial.decode("ascii", errors="replace").strip()

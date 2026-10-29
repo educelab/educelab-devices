@@ -226,7 +226,11 @@ def test_handshake_without_an_answer_returns_none():
 
 
 class CountingSerial(StubSerial):
-    """A StubSerial counting timeout changes, each a reconfigure in pyserial."""
+    """A StubSerial counting timeout changes, each a reconfigure in pyserial.
+
+    Its reads time out at once, as if just before the deadline, which a
+    coarse clock (Windows) makes common.
+    """
 
     def __init__(self):
         self.timeout_changes = 0
@@ -237,16 +241,24 @@ class CountingSerial(StubSerial):
             self.timeout_changes += 1
         super().__setattr__(name, value)
 
+    def readline(self):
+        return self.chunks.pop(0) if self.chunks else b""
+
 
 def test_repeated_reads_with_one_timeout_set_it_once():
     # A reader thread polls read_line(0.1) for the life of the connection.
     stub = CountingSerial()
     transport = open_transport(stub)
-    before = stub.timeout_changes
     for _ in range(5):
         with pytest.raises(DeviceTimeout):
-            transport.read_line(0.01)
-    assert stub.timeout_changes - before == 1
+            transport.read_line(0.1)
+    assert stub.timeout_changes == 1
+
+
+def test_a_partial_line_waits_out_the_rest_of_the_timeout():
+    stub = CountingSerial()
+    stub.chunks = [b"Grbl 1.1", b"g\n"]
+    assert open_transport(stub).read_line(0.1) == "Grbl 1.1g"
 
 
 def test_wait_for_skips_lines_until_one_parses():

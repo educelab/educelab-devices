@@ -526,7 +526,8 @@ def test_position_is_live_during_a_move(real_time):
 
 def test_position_times_out_without_a_status_report(machine, stage):
     machine.mute_status = True
-    time.sleep(xcarve.STATUS_INTERVAL_S)
+    # Twice over, so a coarse clock (Windows) can't leave the last report fresh.
+    time.sleep(2 * xcarve.STATUS_INTERVAL_S)
     with pytest.raises(DeviceTimeout):
         stage.position()
 

@@ -399,8 +399,8 @@ once it is closed.
 | `gain` | `Gain` | dB → dB | Read-only while `GainAuto` isn't `Off` |
 | `ExposureAuto`, `GainAuto` | same | symbol → symbol | Choices are `Off` and `Continuous`; `Once` is left out |
 | `pixel_format` | `PixelFormat` | symbol → symbol | Only Mono8, Mono16, RGB8 and 8/16-bit Bayer; changing it pauses acquisition |
-| `width`, `height` | `Width`, `Height` | px → px | Read-only: the size of the frames a capture returns. The driver never sets a region of interest |
-| `sensor_width`, `sensor_height` | `SensorWidth`, `SensorHeight` | px → px | Read-only; left out on a camera without them. Not yet checked on hardware |
+| `width`, `height` | `Width`, `Height` | px → px | Read-only: the size of the frames a capture returns. The driver never sets a region of interest. 2448 × 2048 on the CM3-U3-50S5M, matching captured frames (all five, 2026-10-29) |
+| `sensor_width`, `sensor_height` | `SensorWidth`, `SensorHeight` | px → px | Read-only; left out on a camera without them. 2448 × 2048 on the CM3-U3-50S5M: as found, no crop (`OffsetX` = `OffsetY` = 0) |
 | `throughput_limit` | `DeviceLinkThroughputLimit` | MB/s → bytes/s (× 10^6) | Reads `None` while `DeviceLinkThroughputLimitMode` is Off; writing sets the mode On first ([Settings](#settings)) |
 | `current_throughput` | `DeviceLinkCurrentThroughput` | MB/s ← bytes/s (÷ 10^6) | Read-only |
 | `resulting_frame_rate` | `AcquisitionResultingFrameRate` | Hz → Hz | Read-only; not on the CM3-U3-50S5M |

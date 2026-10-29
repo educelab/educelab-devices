@@ -2,7 +2,7 @@
 
 An XLC2 can't be found automatically, so set ``XLC2_PORT`` to its port, e.g.
 ``/dev/cu.usbmodem00001``. The board needs firmware 2.0.0
-(docs/hardware/xlc.md#flashing). Channels are lit at 25%; the 940 nm array is
+(docs/hardware/xlc2.md#flashing). Channels are lit at 25%; the 940 nm array is
 invisible to the eye.
 """
 

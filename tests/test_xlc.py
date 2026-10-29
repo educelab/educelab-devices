@@ -1,6 +1,7 @@
 import pytest
 
 from contracts import LightContract
+from educelab.devices import _serial
 from educelab.devices._serial import PortInfo, SerialTransport
 from educelab.devices.errors import (
     CommandRejected,
@@ -173,7 +174,7 @@ def test_every_0_to_255_duty_survives_a_round_trip_through_a_level():
 
 
 def test_channel_ids_are_stable():
-    # Consumers store these in presets and metadata (docs/hardware/xlc.md).
+    # Consumers store these in presets and metadata (docs/hardware/xlc2.md).
     assert [c.id for c in XLC2("COM5").channels] == ["white", "940nm"]
 
 
@@ -232,6 +233,15 @@ def test_close_turns_off_both_outputs():
     assert not fake.is_open
 
 
+@pytest.mark.parametrize("reply", [[], ["ERR invalid command"]], ids=["silent", "ERR"])
+def test_close_turns_off_the_940nm_array_even_if_the_strip_fails(reply, caplog):
+    fake = scripted(("<B,0>", reply), ("<X,0>", ["OK"]))
+    light = opened(make_xlc2(fake))
+    light.close()
+    fake.assert_done()
+    assert "could not turn off" in caplog.text
+
+
 def test_close_after_unplugging_still_closes(caplog):
     fake = scripted()
     light = opened(make_xlc2(fake))
@@ -252,7 +262,7 @@ OTHER = PortInfo("/dev/cu.usbserial-120", vid=0x1A86, pid=0x7523, serial_number=
 def attach(monkeypatch, boards):
     """Attach ``boards``, a mapping of PortInfo to the ScriptedSerial behind it."""
     by_device = {port.device: fake for port, fake in boards.items()}
-    monkeypatch.setattr(xlc, "list_ports", lambda: list(boards))
+    monkeypatch.setattr(_serial, "list_ports", lambda: list(boards))
     monkeypatch.setattr(
         xlc,
         "_default_transport",
@@ -265,7 +275,7 @@ def test_discover_finds_nothing_without_touching_ports(monkeypatch):
     def no_listing():
         raise AssertionError("discover() listed ports")
 
-    monkeypatch.setattr(xlc, "list_ports", no_listing)
+    monkeypatch.setattr(_serial, "list_ports", no_listing)
     assert XLC2.discover() == []
 
 

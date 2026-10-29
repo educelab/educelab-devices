@@ -1,14 +1,20 @@
 """The XLC2 light controller for the pgs-scan gantry rigs, over USB serial.
 
-Protocol, firmware history and flashing: docs/hardware/xlc.md.
+Protocol, firmware history and flashing: docs/hardware/xlc2.md.
 """
 
 import logging
 import re
 
-from educelab.devices._serial import PortInfo, SerialTransport, handshake, list_ports
+from educelab.devices._serial import (
+    SerialTransport,
+    command,
+    handshake,
+    parse_version,
+    port_with_serial_number,
+)
 from educelab.devices.device import DeviceInfo
-from educelab.devices.errors import CommandRejected, DeviceError, DeviceNotFound
+from educelab.devices.errors import DeviceError, DeviceNotFound
 from educelab.devices.lights.base import RGB, Channel, Light
 
 __all__ = ["XLC2"]
@@ -17,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 BAUD_RATE = 9600
 # Opening the port resets the board (DTR), and pgs-scan waits 2 s before its
-# handshake. See docs/hardware/xlc.md#transport.
+# handshake. See docs/hardware/xlc2.md#transport.
 RESET_SETTLE_S = 2.0
 HANDSHAKE_TIMEOUT_S = 2.0
 REPLY_TIMEOUT_S = 1.0
@@ -48,7 +54,7 @@ class XLC2(Light):
         serial_number: USB serial number of the board's port, matched exactly
             but ignoring case. Found again on each `open()`, so it survives
             the port being renamed after a replug. Only useful for a board
-            whose bridge has a unique one (docs/hardware/xlc.md).
+            whose bridge has a unique one (docs/hardware/xlc2.md).
         transport: Connection to use instead of opening ``port`` with
             pyserial. For tests.
 
@@ -89,7 +95,7 @@ class XLC2(Light):
         """Find nothing: an XLC2 can't be recognized without opening its port.
 
         Its USB descriptors don't identify it, and opening a port to ask
-        resets the board behind it (docs/hardware/xlc.md#identity).
+        resets the board behind it (docs/hardware/xlc2.md#identity).
         """
         return []
 
@@ -108,7 +114,7 @@ class XLC2(Light):
     def _open(self) -> None:
         if self._serial_number is not None:
             # Found again on each open, in case a replug renamed the port.
-            port = _find_port(self._serial_number)
+            port = port_with_serial_number(self._serial_number)
             self._transport = _default_transport(port.device)
             self._port = port.device
             self._serial_number = port.serial_number
@@ -126,13 +132,13 @@ class XLC2(Light):
                     "or that the board isn't held by another program"
                 )
             hardware, firmware = identity
-            if _version(firmware) < MIN_FIRMWARE:
+            if parse_version(firmware) < MIN_FIRMWARE:
                 minimum = ".".join(map(str, MIN_FIRMWARE))
                 raise DeviceError(
                     f"{self!r} has firmware {firmware}, but this driver needs "
                     f"{minimum} or newer. Reflash the board with the firmware in "
                     "firmware/xlc2/ of the educelab-devices repository; "
-                    "docs/hardware/xlc.md#flashing has the steps."
+                    "docs/hardware/xlc2.md#flashing has the steps."
                 )
             self._hardware_version = hardware
             self._firmware_version = firmware
@@ -154,22 +160,24 @@ class XLC2(Light):
     def _set_level(self, channel: Channel, level: float) -> None:
         self._command(COMMANDS[channel.id], round(level * MAX_DUTY))
 
+    def _all_off(self) -> None:
+        # Each output separately, so one failing doesn't leave the other lit.
+        failures = []
+        for channel in CHANNELS:
+            try:
+                self._set_level(channel, 0.0)
+            except DeviceError as exc:
+                failures.append(exc)
+        if failures:
+            raise failures[0]
+
     def _set_color(self, channel: Channel, color: RGB) -> None:
         raise NotImplementedError("XLC2 channels are monochromatic")
 
     def _command(self, *fields: object) -> None:
         """Send one framed command and wait for its OK."""
-        command = "<" + ",".join(map(str, fields)) + ">"
-        transport = self._require_transport()
-        transport.reset_input()
-        transport.write_line(command)
-        reply = transport.read_line()
-        if reply == "OK":
-            return
-        if reply.startswith("ERR"):
-            reason = reply[3:].strip() or "no reason given"
-            raise CommandRejected(f"{self!r} rejected {command!r}: {reason}")
-        raise DeviceError(f"{self!r} answered {command!r} with {reply!r}")
+        line = "<" + ",".join(map(str, fields)) + ">"
+        command(self._require_transport(), line, self)
 
     def _require_transport(self) -> SerialTransport:
         assert self._transport is not None, "no transport before open()"
@@ -180,14 +188,6 @@ def _default_transport(port: str) -> SerialTransport:
     return SerialTransport(
         port, baudrate=BAUD_RATE, timeout=REPLY_TIMEOUT_S, reset_settle=RESET_SETTLE_S
     )
-
-
-def _find_port(serial_number: str) -> PortInfo:
-    wanted = serial_number.casefold()
-    for port in list_ports():
-        if port.serial_number and port.serial_number.casefold() == wanted:
-            return port
-    raise DeviceNotFound(f"no serial port has USB serial number {serial_number!r}")
 
 
 def _parse_identity(line: str) -> tuple[str | None, str] | None:
@@ -201,11 +201,3 @@ def _parse_identity(line: str) -> tuple[str | None, str] | None:
         return parts[1], parts[2]
     old = re.fullmatch(rf"{NAME} \(FW ([^)]*)\)", line.strip(), re.IGNORECASE)
     return (None, old[1]) if old else None
-
-
-def _version(text: str) -> tuple[int, ...]:
-    """Parse ``"2.0.0"``; anything unparseable sorts below every release."""
-    try:
-        return tuple(int(part) for part in text.split("."))
-    except ValueError:
-        return ()

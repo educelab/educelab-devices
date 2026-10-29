@@ -9,11 +9,15 @@ from educelab.devices._serial import (
     PortInfo,
     PortMatch,
     SerialTransport,
+    command,
+    find_ports,
     handshake,
-    list_ports,
+    only_port,
+    parse_version,
+    port_with_serial_number,
 )
 from educelab.devices.device import DeviceInfo
-from educelab.devices.errors import CommandRejected, DeviceError, DeviceNotFound
+from educelab.devices.errors import DeviceError, DeviceNotFound
 from educelab.devices.lights.base import RGB, Channel, Light
 
 __all__ = ["MishaLight"]
@@ -122,7 +126,7 @@ class MishaLight(Light):
                 address=port.device,
                 serial_number=port.serial_number,
             )
-            for port in NAMED_PANELS.matching(list_ports())
+            for port in find_ports(NAMED_PANELS)
         ]
 
     @property
@@ -154,7 +158,7 @@ class MishaLight(Light):
                     "or that the board isn't held by another program"
                 )
             _, hardware, firmware = identity
-            if _version(firmware) < MIN_FIRMWARE:
+            if parse_version(firmware) < MIN_FIRMWARE:
                 minimum = ".".join(map(str, MIN_FIRMWARE))
                 raise DeviceError(
                     f"{self!r} has firmware {firmware}, but this driver needs "
@@ -169,28 +173,15 @@ class MishaLight(Light):
             raise
 
     def _find_port(self) -> PortInfo:
-        ports = list_ports()
         if self._serial_number is not None:
-            wanted = self._serial_number.casefold()
-            for port in ports:
-                if port.serial_number and port.serial_number.casefold() == wanted:
-                    return port
-            raise DeviceNotFound(
-                f"no serial port has USB serial number {self._serial_number!r}"
-            )
-        panels = NAMED_PANELS.matching(ports)
-        if not panels:
-            raise DeviceNotFound(
-                "no named MISHA panel is attached. Pass port= or serial_number= "
-                "for a panel that isn't named (docs/hardware/misha.md#naming-a-panel)."
-            )
-        if len(panels) > 1:
-            choices = ", ".join(f"{p.serial_number} at {p.device}" for p in panels)
-            raise DeviceError(
-                f"several MISHA panels are attached ({choices}); "
-                "choose one with serial_number="
-            )
-        return panels[0]
+            return port_with_serial_number(self._serial_number)
+        return only_port(
+            NAMED_PANELS,
+            name="named MISHA panel",
+            plural="MISHA panels",
+            hint="Pass port= or serial_number= for a panel that isn't named "
+            "(docs/hardware/misha.md#naming-a-panel).",
+        )
 
     def _close(self) -> None:
         try:
@@ -225,18 +216,9 @@ class MishaLight(Light):
             raise DeviceError(f"{self!r} reported a state it can't be in: {answer!r}")
         return wavelength, percent
 
-    def _command(self, command: str) -> str:
+    def _command(self, line: str) -> str:
         """Send a command, wait for its OK, and return any answer after it."""
-        transport = self._require_transport()
-        transport.reset_input()
-        transport.write_line(command)
-        reply = transport.read_line()
-        if reply == "OK" or reply.startswith("OK "):
-            return reply[3:].strip()
-        if reply.startswith("ERR"):
-            reason = reply[3:].strip() or "no reason given"
-            raise CommandRejected(f"{self!r} rejected {command!r}: {reason}")
-        raise DeviceError(f"{self!r} answered {command!r} with {reply!r}")
+        return command(self._require_transport(), line, self)
 
     def _require_transport(self) -> SerialTransport:
         # Only None before a light without a port first finds its panel.
@@ -256,11 +238,3 @@ def _parse_identity(line: str) -> tuple[str, str, str] | None:
     if len(parts) != 3 or parts[0].casefold() not in ACCEPTED_NAMES:
         return None
     return parts[0], parts[1], parts[2]
-
-
-def _version(text: str) -> tuple[int, ...]:
-    """Parse ``"2.0.0"``; anything unparseable sorts below every release."""
-    try:
-        return tuple(int(part) for part in text.split("."))
-    except ValueError:
-        return ()

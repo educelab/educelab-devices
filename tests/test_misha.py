@@ -1,6 +1,7 @@
 import pytest
 
 from contracts import LightContract
+from educelab.devices import _serial
 from educelab.devices._serial import PortInfo, SerialTransport
 from educelab.devices.device import DeviceInfo
 from educelab.devices.errors import (
@@ -48,7 +49,7 @@ def emulated(firmware=None):
 class TestMishaContract(LightContract):
     @pytest.fixture(autouse=True)
     def no_ports(self, monkeypatch):
-        monkeypatch.setattr(misha, "list_ports", list)
+        monkeypatch.setattr(_serial, "list_ports", list)
 
     @pytest.fixture
     def make_device(self):
@@ -269,7 +270,7 @@ ARDUINO = PortInfo("/dev/cu.usbmodem1", vid=0x2341, pid=0x0043, serial_number="M
 def attach(monkeypatch, boards):
     """Attach ``boards``, a mapping of PortInfo to the ScriptedSerial behind it."""
     by_device = {port.device: fake for port, fake in boards.items()}
-    monkeypatch.setattr(misha, "list_ports", lambda: list(boards))
+    monkeypatch.setattr(_serial, "list_ports", lambda: list(boards))
     monkeypatch.setattr(
         misha,
         "_default_transport",

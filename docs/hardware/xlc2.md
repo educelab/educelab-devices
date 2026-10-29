@@ -146,7 +146,8 @@ and an unknown command looks the same as a failure. Hazards of this firmware, fi
 - Nothing persists. Both outputs are off after a reset, including the one caused by
   opening the port.
 - The board can't report its outputs, so the driver's levels are the last ones it set.
-  It turns both outputs off on open and close, as `pgs-scan` does.
+  It turns both outputs off on open and close, as `pgs-scan` does, sending each off
+  command even if the other fails, so a missed reply can't leave the 940 nm array lit.
 
 ## Hazards
 

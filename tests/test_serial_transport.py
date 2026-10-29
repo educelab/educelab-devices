@@ -4,7 +4,13 @@ import time
 import pytest
 
 from educelab.devices import _serial
-from educelab.devices.errors import DeviceNotFound, DeviceTimeout, NotConnected
+from educelab.devices.errors import (
+    CommandRejected,
+    DeviceError,
+    DeviceNotFound,
+    DeviceTimeout,
+    NotConnected,
+)
 
 
 def test_missing_pyserial_names_the_extra(monkeypatch):
@@ -217,3 +223,85 @@ def test_handshake_finds_the_reply_behind_chatter():
 def test_handshake_without_an_answer_returns_none():
     transport = open_transport(StubSerial([b"$GPGGA,123519\n"]))
     assert _serial.handshake(transport, "ID", lambda line: None, timeout=0.05) is None
+
+
+class CountingSerial(StubSerial):
+    """A StubSerial counting timeout changes, each a reconfigure in pyserial."""
+
+    def __init__(self):
+        self.timeout_changes = 0
+        super().__init__()
+
+    def __setattr__(self, name, value):
+        if name == "timeout" and getattr(self, "timeout", None) != value:
+            self.timeout_changes += 1
+        super().__setattr__(name, value)
+
+
+def test_repeated_reads_with_one_timeout_set_it_once():
+    # A reader thread polls read_line(0.1) for the life of the connection.
+    stub = CountingSerial()
+    transport = open_transport(stub)
+    before = stub.timeout_changes
+    for _ in range(5):
+        with pytest.raises(DeviceTimeout):
+            transport.read_line(0.01)
+    assert stub.timeout_changes - before == 1
+
+
+def test_wait_for_skips_lines_until_one_parses():
+    transport = open_transport(StubSerial([b"noise\n", b"Grbl 1.1g\n"]))
+    reply = _serial.wait_for(
+        transport, lambda line: line[5:] if line.startswith("Grbl") else None
+    )
+    assert reply == "1.1g"
+    assert _serial.wait_for(transport, lambda line: line, timeout=0.02) is None
+
+
+@pytest.mark.parametrize(
+    ("reply", "raised", "match"),
+    [
+        (b"ERR bad index\n", CommandRejected, "bad index"),
+        (b"ERR\n", CommandRejected, "no reason given"),
+        (b"what?\n", DeviceError, "what"),
+    ],
+)
+def test_command_raises_unless_the_reply_is_ok(reply, raised, match):
+    transport = open_transport(StubSerial([reply]))
+    with pytest.raises(raised, match=match):
+        _serial.command(transport, "B,1", "<board>")
+
+
+def test_command_returns_what_follows_ok():
+    stub = StubSerial([b"OK 128\n"])
+    assert _serial.command(open_transport(stub), "B?", "<board>") == "128"
+    assert stub.written == [b"B?\n"]
+
+
+def test_parse_version_sorts_unparseable_text_first():
+    assert _serial.parse_version("2.10.0") > _serial.parse_version("2.9.1")
+    assert _serial.parse_version("dev") < _serial.parse_version("0.0.1")
+
+
+A = _serial.PortInfo("/dev/ttyA", serial_number="Panel-A")
+B = _serial.PortInfo("/dev/ttyB", serial_number="PANEL-AB")
+
+
+def test_port_with_serial_number_matches_exactly_ignoring_case(monkeypatch):
+    monkeypatch.setattr(_serial, "list_ports", lambda: [B, A])
+    assert _serial.port_with_serial_number("panel-a") == A
+    with pytest.raises(DeviceNotFound, match="PANEL"):
+        _serial.port_with_serial_number("PANEL")
+
+
+def test_only_port_needs_exactly_one_match(monkeypatch):
+    match = _serial.PortMatch(serial_number="panel")
+    names = {"name": "panel", "plural": "panels", "hint": "Plug one in."}
+    monkeypatch.setattr(_serial, "list_ports", lambda: [A])
+    assert _serial.only_port(match, **names) == A
+    monkeypatch.setattr(_serial, "list_ports", lambda: [A, B])
+    with pytest.raises(DeviceError, match="several panels.*Panel-A at /dev/ttyA"):
+        _serial.only_port(match, **names)
+    monkeypatch.setattr(_serial, "list_ports", list)
+    with pytest.raises(DeviceNotFound, match="no panel is attached. Plug one in."):
+        _serial.only_port(match, **names)

@@ -19,6 +19,14 @@ def status(transport):
     return transport.read_line()
 
 
+def wait_until(predicate, timeout=2.0):
+    """Poll ``predicate`` until it's true, so slow CI clocks don't matter."""
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, "timed out waiting"
+        time.sleep(0.001)
+
+
 def homed(**kwargs):
     machine = GrblMachine(**kwargs)
     transport = connect(machine)
@@ -69,19 +77,18 @@ def test_jog_runs_at_its_feed_rate_then_goes_idle():
     transport.write_line("$J=G53 G21 X-31 F6000")
     assert transport.read_line() == "ok"
     assert status(transport).startswith("<Jog|")
-    time.sleep(0.02)
+    wait_until(lambda: status(transport).startswith("<Idle|"))
     assert status(transport) == "<Idle|MPos:-31.000,-1.000,-1.000|FS:0,0>"
 
 
 def test_z_is_capped_at_its_own_maximum_rate():
-    machine, transport = homed(speedup=100.0)
-    # 10 mm of Z at 750 mm/min is 0.8 s, or 8 ms at 100x, whatever F says.
+    machine, transport = homed(speedup=4.0)
+    # 10 mm of Z at 750 mm/min is 0.8 s, or 0.2 s at 4x; at F10000 it'd be 15 ms.
+    started = time.monotonic()
     transport.write_line("$J=G53 G21 Z-11 F10000")
     transport.read_line()
-    time.sleep(0.004)
-    assert machine.moving
-    time.sleep(0.01)
-    assert not machine.moving
+    wait_until(lambda: not machine.moving)
+    assert time.monotonic() - started >= 0.2
 
 
 def test_jog_cancel_stops_partway():
@@ -102,7 +109,7 @@ def test_relative_jogs_queue_up():
     transport.write_line("$J=G91 G21 X-5 F6000")
     transport.write_line("$J=G91 G21 X-5 F6000")
     assert [transport.read_line(), transport.read_line()] == ["ok", "ok"]
-    time.sleep(0.01)
+    wait_until(lambda: not machine.moving)
     assert machine.current_position() == (-11.0, -1.0, -1.0)
 
 

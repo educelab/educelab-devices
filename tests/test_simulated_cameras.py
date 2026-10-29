@@ -9,8 +9,12 @@ from contracts import FileCameraContract, FrameCameraContract
 from educelab.devices.cameras import (
     EXPOSURE_TIME,
     GAIN,
+    HEIGHT,
     ISO,
     PIXEL_FORMAT,
+    SENSOR_HEIGHT,
+    SENSOR_WIDTH,
+    WIDTH,
     SimulatedCamera,
     SimulatedFileCamera,
 )
@@ -27,6 +31,12 @@ class TestSimulatedColorCamera(FrameCameraContract):
     @pytest.fixture
     def make_device(self):
         return functools.partial(SimulatedCamera, color=True)
+
+
+class TestSimulatedAutoCamera(FrameCameraContract):
+    @pytest.fixture
+    def make_device(self):
+        return functools.partial(SimulatedCamera, auto=True)
 
 
 class TestSimulatedFileCamera(FileCameraContract):
@@ -88,10 +98,49 @@ def test_color_camera_starts_in_rgb8_with_distinct_channels():
         assert camera.capture_frame().pixels.shape == (24, 32)
 
 
-def test_sensor_size_is_reported():
+def test_frame_and_sensor_size_are_reported():
     with SimulatedCamera(width=32, height=24) as camera:
-        assert camera.setting("sensor_width").value == 32
-        assert camera.setting("sensor_height").value == 24
+        for name, size in (
+            (WIDTH, 32),
+            (HEIGHT, 24),
+            (SENSOR_WIDTH, 32),
+            (SENSOR_HEIGHT, 24),
+        ):
+            assert camera.setting(name).value == size
+            assert camera.setting(name).read_only
+
+
+def test_auto_modes_are_offered_only_on_request():
+    with SimulatedCamera() as camera:
+        assert "ExposureAuto" not in camera.settings()
+    with SimulatedCamera(auto=True) as camera:
+        assert camera.setting("ExposureAuto").choices == ("Off", "Continuous")
+        assert camera.setting("GainAuto").value == "Continuous"
+
+
+def test_auto_exposure_locks_exposure_time_and_varies_it_per_frame():
+    with SimulatedCamera(auto=True) as camera:
+        assert camera.setting(EXPOSURE_TIME).read_only
+        exposures = {camera.capture_frame().metadata[EXPOSURE_TIME] for _ in range(3)}
+        assert len(exposures) == 3
+        last = camera.setting(EXPOSURE_TIME).value
+        camera.set_setting("ExposureAuto", "Off")
+        assert camera.setting(EXPOSURE_TIME).value == last
+        camera.set_setting(EXPOSURE_TIME, 0.002)
+        assert camera.capture_frame().metadata[EXPOSURE_TIME] == 0.002
+
+
+def test_auto_gain_makes_up_for_a_short_manual_exposure():
+    with SimulatedCamera(auto=True) as camera:
+        camera.set_setting("ExposureAuto", "Off")
+        camera.set_setting(EXPOSURE_TIME, 0.001)
+        gains = {camera.capture_frame().metadata[GAIN] for _ in range(3)}
+        assert len(gains) == 3
+        assert all(gain > 15 for gain in gains)
+        assert camera.setting(GAIN).read_only
+        camera.set_setting("GainAuto", "Off")
+        camera.set_setting(GAIN, 0.0)
+        assert camera.capture_frame().metadata[GAIN] == 0.0
 
 
 def test_capture_takes_the_exposure_time():

@@ -49,6 +49,7 @@ What the driver reaches, and what's missing. Verified with `arv-tool-0.8 -n <id>
 | `ExposureAuto` | none | **Missing.** The driver leaves the setting out. |
 | `gain` | `Gain` (dB) | 1.0 to 8.04 dB. No `GainAuto`. |
 | `pixel_format` | `PixelFormat` | Mono8 and `Mono10g40IDS` only; other entries are listed as "Not available". See [Pixel formats](#pixel-formats). |
+| `width`, `height`, `sensor_width`, `sensor_height` | `Width`, `Height`, `SensorWidth`, `SensorHeight` | Not yet checked. |
 | `throughput_limit` | `DeviceLinkThroughputLimit` | 108 to 300 MB/s in 2 MB/s steps; 162 MB/s as found. |
 | `trigger` | `TriggerSelector`, `TriggerMode`, `TriggerSource`, `TriggerSoftware` | `FrameStart` (used) and `ExposureStart`; sources `Software` and `Line0`. |
 | timestamps | `Timestamp`, `TimestampLatch` | **Missing.** See [Timestamps](#timestamps). |

@@ -218,7 +218,9 @@ code.
 Units: seconds for time, millimetres for linear axes, degrees for rotary axes, and
 fractions from 0.0 to 1.0 for light levels. Canonical camera settings (`exposure_time` in
 seconds, `gain` in dB, `iso`, `aperture` as an f-number, `pixel_format`) mean the same thing
-on every camera. Other settings use the camera's own names. Gain and ISO are both
+on every camera. Frame cameras also report their size in pixels through read-only canonical
+settings: `width` and `height` for the frames a capture will return, so they're known before
+the first capture, and `sensor_width` and `sensor_height` for the whole sensor. Other settings use the camera's own names. Gain and ISO are both
 canonical but are not interchangeable: converting between them needs a camera's base ISO,
 so each camera exposes whichever it has natively. Features only one camera has so far,
 such as binning or a DSLR's image size, also use native names.
@@ -313,6 +315,9 @@ drivers, so code that works against a simulation should work against the hardwar
 `SimulatedFileCamera(bulb=True, auto_iso=True)` starts with `exposure_time` and `iso`
 reading as `None`, like a DSLR at Bulb and Auto ISO. `SimulatedCamera(color=True)` acts
 like a colour camera: it also offers `RGB8` and starts in it, as GenICam colour cameras do.
+`SimulatedCamera(auto=True)` offers `ExposureAuto` and `GainAuto` (`Off` or `Continuous`)
+under their GenICam names, starting at `Continuous`. While one is on, `exposure_time` or
+`gain` is read-only and changes a little from frame to frame, as the frame metadata shows.
 
 `el-devices simulate` runs each one through a few operations, which is a quick way to
 check an install.

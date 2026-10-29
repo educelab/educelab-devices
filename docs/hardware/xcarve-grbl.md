@@ -37,11 +37,10 @@ does. Whether every X-Controller's serial number starts that way is **assumed** 
 
 - 115200 baud, 8N1.
 - Opening the port resets the controller (DTR), and it sends its banner once it has
-  booted: `Grbl 1.1g ['$' for help]`. With homing enabled it then reports
-  `[MSG:'$H'|'$X' to unlock]` and refuses motion until homed. `pgs-scan` reads the
-  banner right after opening, which suggests the reset; not observed directly. The
-  driver waits up to 5 s for the banner, and if none comes, sends a soft reset
-  (`0x18`) and waits again.
+  booted: `Grbl 1.1g ['$' for help]`, then `[MSG:'$H'|'$X' to unlock]`. Until homed it
+  is in `Alarm` at machine position 0, 0, 0 and refuses motion. **Verified** on macOS,
+  2026-10-29. The driver waits up to 5 s for the banner, and if none comes, sends a
+  soft reset (`0x18`) and waits again.
 
 ## Protocol
 
@@ -64,27 +63,41 @@ Every move is a jog (`$J=`), as in `pgs-scan`, because jog-cancel stops a jog cl
 without the feed-hold and reset that a `G1` move would need. GRBL caps each axis at its
 own maximum rate (`$110`–`$112`) and slows the whole move to match.
 
-### Settings the driver reads
+### Settings
 
-| Setting | Meaning | Value per `pgs-scan` |
+The driver reads `$$` on every open and never writes settings. **Verified** on the
+`XCONTROLLER3HPX2Z` unit, 2026-10-29:
+
+| Setting | Meaning | Value |
 |---|---|---|
-| `$110`, `$111` | X, Y maximum rate, mm/min | 10000 |
-| `$112` | Z maximum rate, mm/min | 750 |
+| `$10` | Status report mask | 115: includes `MPos`, which the driver needs |
+| `$20`, `$21` | Soft limits, hard limits | both on |
+| `$22` | Homing | on |
+| `$23` | Homing direction invert mask | 3: X and Y home toward negative |
+| `$24`, `$25` | Homing feed, seek rate, mm/min | 25, 750 |
+| `$27` | Homing pull-off, mm | 1 |
+| `$100`, `$101`, `$102` | Steps/mm, X, Y, Z | 40, 40, 188.947 |
+| `$110`, `$111`, `$112` | Maximum rate, mm/min | 10000, 10000, 750 |
+| `$120`, `$121`, `$122` | Acceleration, mm/s² | 500, 500, 50 |
+| `$130`, `$131`, `$132` | Maximum travel, mm | 700, 700, 70 |
 
-The driver reads these on every open and never writes settings. Its speed is limited to
-the fastest axis's rate, 166.7 mm/s on these values.
+The driver uses `$110`–`$112`: its speed is limited to the fastest axis's rate,
+166.7 mm/s on these values. Status reports must include `MPos` (bit 0 of `$10`); the
+driver doesn't convert `WPos`, so a controller set to report it would make every move
+time out. The reports also carry `Bf`, `WCO` and `Ov` fields, which the driver ignores.
 
-Status reports must include `MPos` (`$10` with its machine-position bit set). The
-driver doesn't convert `WPos`; a controller set to report it will make every move time
-out. **Unknown** on our unit.
+With soft limits on, GRBL itself rejects any jog outside its travel with `error:15`, as
+a second guard behind the driver's limits.
 
 ## Coordinates and limits
 
 Positions are GRBL machine coordinates in mm. `pgs-scan` bounds them to
-X −699 to 0, Y −699 to 0 and Z −45 to −1, which places home at the positive end of
-each axis. After homing, GRBL with the default build reports each axis at minus the
-pull-off distance (`$27`, typically 1 mm), not 0. **Unknown** on our unit; the first
-rig check should record the position after `$H`.
+X −699 to 0, Y −699 to 0 and Z −45 to −1. GRBL 1.1 (`limits.c`, without
+`HOMING_FORCE_SET_ORIGIN`) sets an axis that homes toward positive to minus the
+pull-off, and one that homes toward negative to minus its travel plus the pull-off. With
+`$23=3`, `$27=1` and `$130`–`$132` as above, homing should leave the gantry at
+X −699, Y −699, Z −1, the corner of `pgs-scan`'s bounds (**assumed**, from the
+source; the rig check records it).
 
 The driver takes its limits from the consumer and raises `PositionError` for any target
 outside them, before sending anything (`pgs-scan` #71 clamped instead, then waited
@@ -94,13 +107,13 @@ forever for the stage to reach the unclamped target).
 
 - **Status polling**: every 0.2 s during a move, GRBL's recommended maximum of 5 Hz.
 - **Arrival**: a move is done when the state is `Idle` within 0.05 mm of the target on
-  every axis. X-Carve steps are coarser than GRBL's 0.001 mm reports (e.g. 40 steps/mm,
-  0.025 mm, on stock X and Y; **assumed**).
+  every axis. Steps are coarser than GRBL's 0.001 mm reports: 0.025 mm on X and Y
+  (`$100`, `$101`), about 0.005 mm on Z.
 - **Move timeout**: twice the predicted time (at the stage's speed, each axis held to
   its own maximum rate, ignoring acceleration), plus 5 s. On timeout the driver sends
   jog-cancel (`pgs-scan` #67 had no timeout).
-- **Homing timeout**: 120 s by default. Homing seeks across each axis's whole travel at
-  the homing rate (`$25`), so a slow `$25` needs a longer one.
+- **Homing timeout**: 120 s by default. Homing seeks at `$25` (750 mm/min), so crossing
+  the full 700 mm of X or Y takes about 56 s; a slower `$25` needs a longer timeout.
 
 ## State and recovery
 
@@ -118,17 +131,23 @@ forever for the stage to reach the unclamped target).
   it while another program is using it.
 - **`stop()` during homing soft-resets the controller**, because homing ignores
   jog-cancel. The machine stops at once, without decelerating.
-- **`jog()` runs to the axis limit you gave** unless stopped. Limits wider than the
-  machine's travel will run it into its hard limit switch, which alarms.
+- **`jog()` runs to the axis limit you gave** unless stopped. With soft limits on
+  (`$20=1`), GRBL rejects a jog past its travel with `error:15`; were they off, limits
+  wider than the travel would run the gantry into a hard limit switch, which alarms.
 - **Z is slow**: 750 mm/min, against 10000 for X and Y. A combined move takes as long
   as its Z part needs.
 
 ## Unknowns
 
-- Whether opening the port resets the controller on every host OS.
-- The position after homing, the `$27` pull-off, and `$10`'s status report mask.
-- Each axis's actual travel (`$130`–`$132`), and whether soft limits (`$20`) are on.
+- Whether opening the port resets the controller on Linux and Windows too.
+- The position after homing (predicted X −699, Y −699, Z −1).
+- Whether other X-Controllers have the same settings.
 
 ## Manual check
 
-Not yet run.
+### Last run
+
+2026-10-29, macOS, X-Controller `XCONTROLLER3HPX2Z`, GRBL 1.1g.
+
+- `el-devices xcarve status`: banner and alarm lock on open, settings as above, position
+  0, 0, 0 in `Alarm`. No motion.

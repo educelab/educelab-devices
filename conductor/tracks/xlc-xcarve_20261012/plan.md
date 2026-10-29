@@ -33,7 +33,7 @@ Lights first (small, reuse the serial transport), then the GRBL stage, then docs
 - [x] Task 2.1: Build a scripted GRBL fake (banner, `$H`, `$J`, `?` status reports, alarms, real-time bytes).
 - [x] Task 2.2: Write tests for open without homing, `home()` with timeout, and moves-before-homing raising; implement.
 - [x] Task 2.3: Write tests for limits (raise, never clamp), blocking moves with arrival tolerance and timeouts; implement.
-- [ ] Task 2.4: Write tests for `jog`, `stop()` during a move, live `position()`, alarm events; implement the internal status polling.
+- [x] Task 2.4: Write tests for `jog`, `stop()` during a move, live `position()`, alarm events; implement the internal status polling.
 - [ ] Task 2.5: Run the `Stage` contract suite.
 
 ### Verification

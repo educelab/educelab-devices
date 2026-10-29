@@ -11,10 +11,10 @@
   },
   "tasks": {
     "total": 14,
-    "completed": 8
+    "completed": 9
   },
   "current_phase": 2,
-  "current_task": "2.4",
+  "current_task": "2.5",
   "commits": [
     "3f85a42: Copy the XLC1 and XLC2 firmware from pgs-scan unchanged",
     "d81e832: Record the XLC1 and XLC2 protocol as copied",
@@ -25,6 +25,7 @@
     "ad363ac: Record how an XLC2 shows up on the host",
     "2e24441: Drop XLC1, whose units are retired",
     "6c9ffb1: Emulate GRBL 1.1 for the X-Carve driver's tests",
-    "ea254af: Open and home the X-Carve without moving on open"
+    "ea254af: Open and home the X-Carve without moving on open",
+    "e70701f: Make X-Carve moves block until they arrive, with a timeout"
   ]
 }

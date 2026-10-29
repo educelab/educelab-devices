@@ -1,18 +1,20 @@
 import threading
+import time
 
 import pytest
 
 from educelab.devices._serial import PortInfo, SerialTransport
-from educelab.devices.device import DeviceInfo
+from educelab.devices.device import DeviceInfo, Disconnected
 from educelab.devices.errors import (
     CommandRejected,
     DeviceError,
     DeviceNotFound,
     DeviceTimeout,
+    NotConnected,
     PositionError,
 )
 from educelab.devices.stages import xcarve
-from educelab.devices.stages.xcarve import XCarve
+from educelab.devices.stages.xcarve import GrblAlarm, XCarve
 from fakes.grbl import SOFT_RESET, GrblMachine
 from fakes.serial_port import ScriptedSerial
 
@@ -369,3 +371,152 @@ def test_default_move_limit_follows_distance_and_speed(homed):
     # A long slow move gets longer than Stage.move_timeout's 60 s.
     homed.set_speed(1.0)
     assert homed._move_limit(start, {**start, "x": -101.0}) > homed.move_timeout
+
+
+# Jogging, stopping, and live position
+
+
+@pytest.fixture
+def real_time():
+    """A homed stage on a machine that moves at its real speed."""
+    machine = GrblMachine(speedup=1.0)
+    stage = make_stage(machine)
+    stage.open()
+    stage.home()
+    yield stage, machine
+    stage.close()
+
+
+def in_background(call, *args):
+    """Run ``call`` on a thread; returns the thread and what it raised."""
+    raised = []
+
+    def run():
+        try:
+            call(*args)
+        except DeviceError as exc:
+            raised.append(exc)
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    return thread, raised
+
+
+@pytest.mark.parametrize(
+    ("direction", "expected"),
+    [(1, "$J=G53 G21 X0.000 F3000"), (-1, "$J=G53 G21 X-699.000 F3000")],
+)
+def test_jog_heads_for_the_axis_limit_and_returns(homed, machine, direction, expected):
+    homed.set_speed(50.0)
+    homed.jog("x", direction)
+    assert jogs(machine)[-1] == expected
+
+
+def test_stop_ends_a_jog_short_of_the_limit(real_time):
+    stage, machine = real_time
+    stage.jog("x", -1)
+    assert machine.moving
+    time.sleep(0.1)
+    stage.stop()
+    assert machine.realtime[-1] == xcarve.JOG_CANCEL[0]
+    assert not machine.moving
+    assert -699.0 < stage.position()["x"] < -1.0
+
+
+def test_stop_interrupts_a_move_running_on_another_thread(real_time):
+    stage, machine = real_time
+    thread, raised = in_background(stage.move_to, {"x": -600.0})
+    time.sleep(0.3)
+    stage.stop()
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert isinstance(raised[0], PositionError)
+    assert "stop()" in str(raised[0])
+    assert not machine.moving
+
+
+def test_a_move_after_stop_runs_normally(real_time):
+    stage, _ = real_time
+    stage.stop()
+    stage.move_to({"x": -5.0})
+    assert stage.position()["x"] == pytest.approx(-5.0)
+
+
+def test_stop_during_homing_resets_the_controller():
+    machine = GrblMachine(homing_s=30.0)
+    with make_stage(machine) as stage:
+        thread, raised = in_background(stage.home)
+        time.sleep(0.2)
+        stage.stop()
+        thread.join(timeout=5)
+        assert isinstance(raised[0], PositionError)
+        assert machine.realtime[-1] == SOFT_RESET
+        assert not stage.is_homed
+
+
+def test_position_is_live_during_a_move(real_time):
+    stage, _ = real_time
+    thread, _ = in_background(stage.move_to, {"x": -100.0})
+    seen = []
+    while thread.is_alive():
+        seen.append(stage.position()["x"])
+        time.sleep(0.1)
+    assert any(-100.0 < x < -1.0 for x in seen)
+    assert seen == sorted(seen, reverse=True)
+
+
+def test_position_times_out_without_a_status_report(machine, stage):
+    machine.mute_status = True
+    time.sleep(xcarve.STATUS_INTERVAL_S)
+    with pytest.raises(DeviceTimeout):
+        stage.position()
+
+
+# Alarms, resets, and lost connections
+
+
+def test_alarm_during_a_move_raises_and_reaches_listeners(real_time):
+    stage, machine = real_time
+    events = []
+    stage.add_listener(events.append)
+    threading.Timer(0.3, machine.alarm, args=(1,)).start()
+    with pytest.raises(DeviceError, match="hard limit"):
+        stage.move_to({"x": -600.0})
+    assert [(type(e), e.code, e.meaning) for e in events] == [
+        (GrblAlarm, 1, "hard limit triggered")
+    ]
+    assert not stage.is_homed
+    with pytest.raises(PositionError, match="homed"):
+        stage.move_to({"x": -5.0})
+
+
+def test_alarm_while_idle_loses_homing(homed, machine):
+    events = []
+    homed.add_listener(events.append)
+    machine.alarm(2)
+    time.sleep(0.3)
+    assert [e.code for e in events] == [2]
+    assert not homed.is_homed
+    homed.home()
+    homed.move_to({"x": -5.0})
+
+
+def test_unexpected_reset_loses_homing(homed, machine, caplog):
+    machine.write(bytes([SOFT_RESET]))
+    time.sleep(0.3)
+    assert not homed.is_homed
+    assert "reset unexpectedly" in caplog.text
+
+
+def test_unplugging_reaches_listeners_and_later_calls_raise(homed, machine):
+    events = []
+    homed.add_listener(events.append)
+    machine.unplug()
+    time.sleep(0.3)
+    assert [type(e) for e in events] == [Disconnected]
+    with pytest.raises(NotConnected):
+        homed.position()
+    with pytest.raises((NotConnected, PositionError)):
+        homed.move_to({"x": -5.0})
+    homed.close()
+    assert not homed.is_open

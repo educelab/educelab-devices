@@ -193,6 +193,7 @@ class XCarve(Stage):
         self._last_alarm = ""
         self._lost: str | None = None
         self._homing = False
+        self._polling = False
         self._expect_reset = False
         self._stop_requested = threading.Event()
         self._reader: threading.Thread | None = None
@@ -363,38 +364,73 @@ class XCarve(Stage):
         alarms = self._alarms
         started = time.monotonic()
         deadline = started + timeout
-        while True:
-            if self._stop_requested.is_set():
-                raise PositionError(f"stop() interrupted the move of {self!r}")
-            status = self._query_status()
-            if self._alarms != alarms:
-                raise DeviceError(f"{self!r} raised {self._last_alarm} while moving")
-            if status.state == "Idle":
-                if _arrived(status.position, goal):
-                    return
-                if time.monotonic() - started > START_GRACE_S:
-                    raise PositionError(
-                        f"{self!r} stopped short at {_format(status.position)}, "
-                        f"moving to {_format(goal)}"
+        self._polling = True
+        try:
+            while True:
+                if self._stop_requested.is_set():
+                    self._settle()
+                    raise PositionError(f"stop() interrupted the move of {self!r}")
+                status = self._query_status()
+                if self._alarms != alarms:
+                    raise DeviceError(
+                        f"{self!r} raised {self._last_alarm} while moving"
                     )
-            if time.monotonic() >= deadline:
-                self._abort(JOG_CANCEL)
-                raise DeviceTimeout(
-                    f"{self!r} didn't reach {_format(goal)} in {timeout:g} s; "
-                    "the move was cancelled"
-                )
-            self._stop_requested.wait(STATUS_INTERVAL_S)
+                if status.state == "Idle":
+                    if _arrived(status.position, goal):
+                        return
+                    if time.monotonic() - started > START_GRACE_S:
+                        raise PositionError(
+                            f"{self!r} stopped short at {_format(status.position)}, "
+                            f"moving to {_format(goal)}"
+                        )
+                if time.monotonic() >= deadline:
+                    self._abort(JOG_CANCEL)
+                    raise DeviceTimeout(
+                        f"{self!r} didn't reach {_format(goal)} in {timeout:g} s; "
+                        "the move was cancelled"
+                    )
+                self._stop_requested.wait(STATUS_INTERVAL_S)
+        finally:
+            self._polling = False
 
     def _jog(self, axis: str, direction: int) -> None:
-        raise NotImplementedError
+        # GRBL jogs are finite, so a continuous jog is one to the axis's limit.
+        limits = self._axis(axis)
+        target = limits.maximum if direction > 0 else limits.minimum
+        assert target is not None
+        self._command(
+            f"$J=G53 G21 {axis.upper()}{target:.3f} F{self._speed_mm_s * 60:.0f}"
+        )
 
     def _stop(self) -> None:
-        raise NotImplementedError
+        self._stop_requested.set()
+        if self._lost is not None:
+            return
+        # Homing ignores jog-cancel; only a reset stops it, and loses homing.
+        self._abort(SOFT_RESET if self._homing else JOG_CANCEL)
+
+    def _motion_starting(self) -> None:
+        self._stop_requested.clear()
+        self._check_link()
+
+    def _settle(self, timeout: float = REPLY_TIMEOUT_S) -> None:
+        """Wait for a cancelled jog to finish decelerating, best effort."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                if self._query_status().state != "Jog":
+                    return
+            except DeviceError:
+                return
+            time.sleep(STATUS_INTERVAL_S / 2)
 
     def _position(self) -> Mapping[str, float]:
+        # While a move polls, its latest report is fresh enough; otherwise ask.
         status = self._status
-        if status is None or time.monotonic() - status.at > STATUS_INTERVAL_S:
+        stale = status is None or time.monotonic() - status.at > STATUS_INTERVAL_S
+        if not self._polling or stale:
             status = self._query_status()
+        assert status is not None
         return dict(status.position)
 
     def _speed(self) -> Setting:
@@ -438,10 +474,11 @@ class XCarve(Stage):
         deadline = time.monotonic() + timeout
         while True:
             self._check_link()
-            if self._alarms != alarms:
-                raise DeviceError(f"{self!r} raised {self._last_alarm} during {line!r}")
+            # Checked first: stopping homing resets GRBL, which may also alarm.
             if self._stop_requested.is_set():
                 raise PositionError(f"stop() interrupted {line!r} on {self!r}")
+            if self._alarms != alarms:
+                raise DeviceError(f"{self!r} raised {self._last_alarm} during {line!r}")
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 if aborting is not None:

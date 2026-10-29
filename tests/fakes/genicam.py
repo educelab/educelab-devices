@@ -176,6 +176,8 @@ class FakeCamera:
         color: Whether the sensor has a Bayer filter, which adds color formats.
         width: Image width in pixels.
         height: Image height in pixels.
+        sensor_size: ``SensorWidth`` and ``SensorHeight``, the full sensor.
+            Defaults to the image size.
         buffer_count: Buffers in the stream; grabs time out once all are held.
         clock: Host clock, in seconds since the epoch. Defaults to the
             core's `host_time()`, which is fine-grained on every platform.
@@ -215,6 +217,7 @@ class FakeCamera:
         color: bool = False,
         width: int = 8,
         height: int = 6,
+        sensor_size: tuple[int, int] | None = None,
         buffer_count: int = 10,
         clock: Callable[[], float] | None = None,
         uptime: float = 1000.0,
@@ -272,6 +275,7 @@ class FakeCamera:
                 formats = ["RGB8", "BayerRG8", "BayerRG16", *formats]
         formats = tuple(formats)
         auto_mode = "Continuous" if auto else "Off"
+        sensor_width, sensor_height = sensor_size or (width, height)
 
         def unless_streaming() -> Access:
             return "RO" if self.streaming else "RW"
@@ -315,6 +319,8 @@ class FakeCamera:
             Node("DeviceFirmwareVersion", "string", firmware, access="RO"),
             Node("Width", "int", width, width, width, access="RO"),
             Node("Height", "int", height, height, height, access="RO"),
+            Node("SensorWidth", "int", sensor_width, access="RO"),
+            Node("SensorHeight", "int", sensor_height, access="RO"),
             Node(
                 "PixelFormat",
                 "enum",

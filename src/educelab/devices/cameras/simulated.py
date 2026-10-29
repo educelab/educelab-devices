@@ -2,6 +2,7 @@
 
 import dataclasses
 import logging
+import math
 import time
 from collections.abc import Mapping
 from datetime import UTC, datetime
@@ -13,8 +14,12 @@ import numpy.typing as npt
 from educelab.devices.cameras.base import (
     EXPOSURE_TIME,
     GAIN,
+    HEIGHT,
     ISO,
     PIXEL_FORMAT,
+    SENSOR_HEIGHT,
+    SENSOR_WIDTH,
+    WIDTH,
     CameraFile,
     FileCamera,
     Frame,
@@ -41,6 +46,13 @@ _BULB_EXPOSURE_S = _REFERENCE_EXPOSURE_S
 _VENDOR = "EduceLab"
 # Per-channel scale for colour frames, so the channels differ.
 _RGB_TINT = np.array([1.0, 0.85, 0.7])
+# GenICam's auto-mode switches and the setting each one locks while on.
+_AUTO_MODES = ("Off", "Continuous")
+_AUTO_LOCKS = {"ExposureAuto": EXPOSURE_TIME, "GainAuto": GAIN}
+# Auto modes aim at twice the reference exposure, so auto gain alone at the
+# default exposure always adds some gain. The aim wanders by _AUTO_HUNT.
+_AUTO_TARGET_S = 2 * _REFERENCE_EXPOSURE_S
+_AUTO_HUNT = 0.1
 
 
 class SimulatedCamera(FrameCamera):
@@ -49,34 +61,67 @@ class SimulatedCamera(FrameCamera):
     Brightness scales with ``exposure_time`` and ``gain``, and each capture
     takes ``exposure_time`` seconds.
 
+    With ``auto``, it also offers ``ExposureAuto`` and ``GainAuto`` (``Off`` or
+    ``Continuous``), as GenICam cameras do, both starting at ``Continuous``.
+    While one is on, the setting it controls is read-only, and each capture
+    picks a slightly different value for it, which the frame's metadata
+    records. As on real cameras, exposure is adjusted first: with both on,
+    gain stays at its minimum unless exposure reaches its limit. Turning a
+    mode off keeps the last value.
+
     Args:
         width: Frame width in pixels.
         height: Frame height in pixels.
-        seed: Seed for the noise, for repeatable frames.
+        seed: Seed for the noise and the auto modes, for repeatable frames.
         color: Act like a colour camera, which also offers ``RGB8`` and starts
             in it, as GenICam colour cameras do.
+        auto: Offer auto exposure and auto gain.
+        sensor_size: The whole sensor as ``(width, height)``, for a camera
+            whose frames are cropped from a larger sensor. Defaults to the
+            frame size.
     """
 
     def __init__(
-        self, width: int = 640, height: int = 480, seed: int = 0, *, color: bool = False
+        self,
+        width: int = 640,
+        height: int = 480,
+        seed: int = 0,
+        *,
+        color: bool = False,
+        auto: bool = False,
+        sensor_size: tuple[int, int] | None = None,
     ) -> None:
         super().__init__()
+        sensor_width, sensor_height = sensor_size or (width, height)
+        if sensor_width < width or sensor_height < height:
+            raise ValueError(
+                f"sensor_size {sensor_size} is smaller than the frame {width}x{height}"
+            )
         self._width = width
         self._height = height
         self._color = color
         self._rng = np.random.default_rng(seed)
+        # Separate, so turning auto on doesn't change the noise.
+        self._auto_rng = np.random.default_rng([seed, 1])
         self._frame_count = 0
         formats = ("Mono8", "Mono16", "RGB8") if color else ("Mono8", "Mono16")
-        self._store = {
-            s.name: s
-            for s in (
-                Setting(EXPOSURE_TIME, 0.01, 1e-5, 10.0, unit="s"),
-                Setting(GAIN, 0.0, 0.0, 24.0, unit="dB"),
-                Setting(PIXEL_FORMAT, "RGB8" if color else "Mono8", choices=formats),
-                Setting("sensor_width", width, unit="px", read_only=True),
-                Setting("sensor_height", height, unit="px", read_only=True),
-            )
-        }
+        settings = [
+            Setting(EXPOSURE_TIME, 0.01, 1e-5, 10.0, unit="s", read_only=auto),
+            Setting(GAIN, 0.0, 0.0, 24.0, unit="dB", read_only=auto),
+            Setting(PIXEL_FORMAT, "RGB8" if color else "Mono8", choices=formats),
+        ]
+        if auto:
+            settings += [
+                Setting(n, "Continuous", choices=_AUTO_MODES) for n in _AUTO_LOCKS
+            ]
+        for name, size in (
+            (WIDTH, width),
+            (HEIGHT, height),
+            (SENSOR_WIDTH, sensor_width),
+            (SENSOR_HEIGHT, sensor_height),
+        ):
+            settings.append(Setting(name, size, unit="px", read_only=True))
+        self._store = {s.name: s for s in settings}
 
     @property
     def info(self) -> DeviceInfo:
@@ -95,11 +140,17 @@ class SimulatedCamera(FrameCamera):
     def _set_setting(self, name: str, value: SettingValue) -> None:
         logger.debug("%s = %r", name, value)
         self._store[name] = dataclasses.replace(self._store[name], value=value)
+        if name in _AUTO_LOCKS:
+            locked = _AUTO_LOCKS[name]
+            self._store[locked] = dataclasses.replace(
+                self._store[locked], read_only=value != "Off"
+            )
 
     def _preview_frame(self) -> npt.NDArray[np.uint8]:
         return _quantize(self._render(_PREVIEW_STRIDE), np.uint8)
 
     def _capture_frame(self, not_before: datetime | None, timeout: float) -> Frame:
+        self._run_auto()
         # Frames are rendered on demand, so only a future not_before needs a wait.
         exposure = _number(self._store[EXPOSURE_TIME])
         wait = 0.0
@@ -122,6 +173,32 @@ class SimulatedCamera(FrameCamera):
             datetime.now(UTC),
             metadata,
         )
+
+    def _run_auto(self) -> None:
+        """Pick this frame's exposure and gain for the auto modes that are on,
+        with exposure tried before gain."""
+        exposure_auto = self._auto_on("ExposureAuto")
+        gain_auto = self._auto_on("GainAuto")
+        if not (exposure_auto or gain_auto):
+            return
+        hunt = self._auto_rng.uniform(1 - _AUTO_HUNT, 1 + _AUTO_HUNT)
+        target = _AUTO_TARGET_S * hunt
+        gain = 0.0 if gain_auto else _number(self._store[GAIN])
+        if exposure_auto:
+            self._set_auto_value(EXPOSURE_TIME, target / 10 ** (gain / 20))
+        if gain_auto:
+            exposure = _number(self._store[EXPOSURE_TIME])
+            self._set_auto_value(GAIN, 20 * math.log10(target / exposure))
+
+    def _auto_on(self, name: str) -> bool:
+        setting = self._store.get(name)
+        return setting is not None and setting.value == "Continuous"
+
+    def _set_auto_value(self, name: str, value: float) -> None:
+        setting = self._store[name]
+        assert setting.minimum is not None and setting.maximum is not None
+        value = min(max(value, setting.minimum), setting.maximum)
+        self._store[name] = dataclasses.replace(setting, value=value)
 
     def _render(self, stride: int = 1) -> npt.NDArray[np.float64]:
         """The image in the current pixel format's shape: height × width × 3 for

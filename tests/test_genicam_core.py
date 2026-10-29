@@ -10,7 +10,16 @@ import pytest
 
 from contracts import FrameCameraContract
 from educelab.devices import DeviceInfo
-from educelab.devices.cameras import EXPOSURE_TIME, GAIN, PIXEL_FORMAT, _genicam
+from educelab.devices.cameras import (
+    EXPOSURE_TIME,
+    GAIN,
+    HEIGHT,
+    PIXEL_FORMAT,
+    SENSOR_HEIGHT,
+    SENSOR_WIDTH,
+    WIDTH,
+    _genicam,
+)
 from educelab.devices.cameras._genicam import (
     THROUGHPUT_LIMIT,
     TRIGGER,
@@ -355,6 +364,10 @@ def test_settings_cover_exposure_gain_format_auto_modes_and_throughput(camera):
         GAIN,
         "GainAuto",
         PIXEL_FORMAT,
+        WIDTH,
+        HEIGHT,
+        SENSOR_WIDTH,
+        SENSOR_HEIGHT,
         THROUGHPUT_LIMIT,
         TRIGGER,
         "current_throughput",
@@ -406,6 +419,20 @@ def test_auto_modes_offer_off_and_continuous(camera):
     assert camera.setting("GainAuto").choices == ("Off", "Continuous")
 
 
+def test_frame_size_is_reported_before_the_first_capture(camera, fake):
+    width, height = camera.setting(WIDTH), camera.setting(HEIGHT)
+    assert (width.value, height.value) == (fake.width, fake.height)
+    assert (width.unit, width.read_only) == ("px", True)
+    assert camera.capture_frame().pixels.shape == (height.value, width.value)
+
+
+def test_sensor_size_can_differ_from_the_frame_size():
+    with GenICamCamera(MONO, only(sensor_size=(32, 24))) as camera:
+        assert camera.setting(SENSOR_WIDTH).value == 32
+        assert camera.setting(SENSOR_HEIGHT).value == 24
+        assert camera.setting(WIDTH).value == 8
+
+
 def test_pixel_formats_are_the_ones_the_driver_can_shape(backend):
     with GenICamCamera(MONO, backend) as mono:
         assert mono.setting(PIXEL_FORMAT).choices == ("Mono8", "Mono16")
@@ -445,6 +472,10 @@ ALL_SETTINGS = {
     GAIN,
     "GainAuto",
     PIXEL_FORMAT,
+    WIDTH,
+    HEIGHT,
+    SENSOR_WIDTH,
+    SENSOR_HEIGHT,
     THROUGHPUT_LIMIT,
     TRIGGER,
     "current_throughput",
@@ -463,6 +494,7 @@ ALL_SETTINGS = {
         (["AcquisitionResultingFrameRate"], {"resulting_frame_rate"}),
         (["ExposureAuto"], {"ExposureAuto"}),
         (["Gain", "GainAuto"], {GAIN, "GainAuto"}),
+        (["SensorWidth", "SensorHeight"], {SENSOR_WIDTH, SENSOR_HEIGHT}),
         (["AcquisitionMode"], set()),
         (["TriggerSelector"], set()),
         (["Timestamp"], set()),

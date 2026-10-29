@@ -16,7 +16,11 @@ from educelab.devices.app.cli import main
 from educelab.devices.cameras import (
     EXPOSURE_TIME,
     GAIN,
+    HEIGHT,
     PIXEL_FORMAT,
+    SENSOR_HEIGHT,
+    SENSOR_WIDTH,
+    WIDTH,
     _genicam,
     spinnaker,
 )
@@ -222,6 +226,10 @@ def test_settings_cover_exposure_gain_format_auto_modes_and_throughput(camera):
         GAIN,
         "GainAuto",
         PIXEL_FORMAT,
+        WIDTH,
+        HEIGHT,
+        SENSOR_WIDTH,
+        SENSOR_HEIGHT,
         THROUGHPUT_LIMIT,
         TRIGGER,
         "current_throughput",

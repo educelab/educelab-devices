@@ -19,8 +19,12 @@ __all__ = [
     "CANONICAL_UNITS",
     "EXPOSURE_TIME",
     "GAIN",
+    "HEIGHT",
     "ISO",
     "PIXEL_FORMAT",
+    "SENSOR_HEIGHT",
+    "SENSOR_WIDTH",
+    "WIDTH",
     "Camera",
     "CameraFile",
     "FileCamera",
@@ -38,6 +42,11 @@ GAIN = "gain"
 ISO = "iso"
 APERTURE = "aperture"
 PIXEL_FORMAT = "pixel_format"
+# The size of the frames a capture returns, and of the whole sensor. Read-only.
+WIDTH = "width"
+HEIGHT = "height"
+SENSOR_WIDTH = "sensor_width"
+SENSOR_HEIGHT = "sensor_height"
 
 CANONICAL_UNITS: Mapping[str, str | None] = {
     EXPOSURE_TIME: "s",
@@ -45,6 +54,10 @@ CANONICAL_UNITS: Mapping[str, str | None] = {
     ISO: None,
     APERTURE: "f-number",
     PIXEL_FORMAT: None,
+    WIDTH: "px",
+    HEIGHT: "px",
+    SENSOR_WIDTH: "px",
+    SENSOR_HEIGHT: "px",
 }
 """Unit of each canonical setting. Settings not listed use the camera's own name."""
 

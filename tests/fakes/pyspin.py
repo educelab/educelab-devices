@@ -728,6 +728,8 @@ class FakeCamera:
             StringNode(self, "DeviceFirmwareVersion", firmware, access=RO),
             IntegerNode(self, "Width", width, access=RO),
             IntegerNode(self, "Height", height, access=RO),
+            IntegerNode(self, "SensorWidth", width, access=RO),
+            IntegerNode(self, "SensorHeight", height, access=RO),
             self.pixel_format,
             EnumNode(
                 self,

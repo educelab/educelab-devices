@@ -4,7 +4,14 @@ import numpy as np
 import pytest
 
 from contracts.device import DeviceContract
-from educelab.devices.cameras import CANONICAL_UNITS, PIXEL_FORMAT, CameraFile, Frame
+from educelab.devices.cameras import (
+    CANONICAL_UNITS,
+    HEIGHT,
+    PIXEL_FORMAT,
+    WIDTH,
+    CameraFile,
+    Frame,
+)
 from educelab.devices.errors import DeviceTimeout, NotConnected
 
 
@@ -102,6 +109,13 @@ class FrameCameraContract(CameraContract):
         if PIXEL_FORMAT not in settings:
             pytest.skip("camera has no pixel_format setting")
         assert device.capture_frame().pixel_format == settings[PIXEL_FORMAT].value
+
+    def test_frame_size_matches_setting(self, device):
+        settings = device.settings()
+        if WIDTH not in settings or HEIGHT not in settings:
+            pytest.skip("camera reports no frame size")
+        size = (settings[HEIGHT].value, settings[WIDTH].value)
+        assert device.capture_frame().pixels.shape[:2] == size
 
 
 class FileCameraContract(CameraContract):

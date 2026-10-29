@@ -193,5 +193,14 @@ arduino-cli upload -b <fqbn> -p <port> firmware/xlc2/XLC2_firmware
 
 ## Manual check
 
-Not yet run. The track's final phase flashes the updated firmware on a rig and records
-the results here.
+### Last run
+
+2026-10-29, macOS, the XLC2 at `/dev/cu.usbmodem00001` (HT42B534 bridge, serial `0000`),
+flashed with 2.0.0 from the Arduino IDE by the maintainer. Its port kept the same name
+after flashing.
+
+- `el-devices xlc`: handshake `EduceLab XLC2,1.0,2.0.0`; `<B,64>`, `<X,64>` and the
+  zeros each answered with one `OK`.
+- `pytest -m hardware tests/test_xlc_hardware.py` with `XLC2_PORT` set: 8 passed. Each
+  channel and all-off were acknowledged, and `<B,256>`, `<B>`, `<L,222,9>` and `<Q>`
+  were rejected with the documented reasons. **Verified**: the 2.0.0 protocol above.

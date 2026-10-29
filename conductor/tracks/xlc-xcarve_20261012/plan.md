@@ -3,7 +3,7 @@
 **Track ID:** xlc-xcarve_20261012
 **Spec:** [spec.md](./spec.md)
 **Created:** 2026-10-12
-**Status:** [~] In Progress
+**Status:** [x] Complete
 
 ## Overview
 
@@ -51,14 +51,14 @@ Lights first (small, reuse the serial transport), then the GRBL stage, then docs
 
 ### Verification
 
-- [ ] Maintainer confirms lights and gantry on a rig.
+- [x] Maintainer confirms lights and gantry on a rig (2026-10-29).
 
 ## Final Verification
 
-- [ ] All acceptance criteria met
-- [ ] Tests passing
-- [ ] Documentation updated
-- [ ] Ready for review
+- [x] All acceptance criteria met
+- [x] Tests passing
+- [x] Documentation updated
+- [x] Ready for review
 
 ---
 

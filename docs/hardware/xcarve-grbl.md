@@ -4,8 +4,7 @@ The Inventables X-Carve gantry on the `pgs-scan` rigs, driven by its X-Controlle
 runs GRBL 1.1 behind an FTDI USB-serial bridge. Three linear axes, `x`, `y` and `z`,
 homed against limit switches.
 
-Driver: `educelab.devices.stages.xcarve.XCarve`. Manual check: planned,
-`el-devices xcarve`.
+Driver: `educelab.devices.stages.xcarve.XCarve`. Manual check: `el-devices xcarve`.
 
 Unless marked otherwise, facts below are **assumed**: they come from `pgs-scan`'s
 `XController` (`pgs_scan/components/motion_stages.py`, `dev`) and from GRBL 1.1's

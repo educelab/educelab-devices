@@ -23,6 +23,8 @@ SUBCOMMANDS = (
     "misha",
     "simulate",
     "spinnaker",
+    "xcarve",
+    "xlc",
 )
 
 

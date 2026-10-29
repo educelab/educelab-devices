@@ -11,10 +11,10 @@
   },
   "tasks": {
     "total": 14,
-    "completed": 11
+    "completed": 12
   },
   "current_phase": 3,
-  "current_task": "3.2",
+  "current_task": "3.3",
   "commits": [
     "3f85a42: Copy the XLC1 and XLC2 firmware from pgs-scan unchanged",
     "d81e832: Record the XLC1 and XLC2 protocol as copied",
@@ -28,6 +28,7 @@
     "ea254af: Open and home the X-Carve without moving on open",
     "e70701f: Make X-Carve moves block until they arrive, with a timeout",
     "113babe: Jog and stop the X-Carve, and report alarms and lost links",
-    "b0bd381: Run the Stage contract on the X-Carve, and list it in discover"
+    "b0bd381: Run the Stage contract on the X-Carve, and list it in discover",
+    "ae7e736: Document the X-Carve and its GRBL controller"
   ]
 }

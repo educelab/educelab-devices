@@ -11,7 +11,7 @@ older revision of this board. Its units have been retired (maintainer, 2026-10-2
 this package has no XLC1 driver or firmware. Its 1.1 firmware is in `pgs-scan` and in
 this repository's history (commit `3f85a42`).
 
-Driver: `educelab.devices.lights.xlc.XLC2`. Manual check: planned, `el-devices xlc`.
+Driver: `educelab.devices.lights.xlc.XLC2`. Manual check: `el-devices xlc`.
 
 `discover()` finds nothing, and a board is opened by `port=` or by its USB
 `serial_number=`. Nothing in the USB descriptors identifies an XLC2 (see

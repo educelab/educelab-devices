@@ -101,7 +101,11 @@ whole numbers from 0 to 255.
 | `<S,a,b,c,d>` | Clears the strip, then sets four segments (pixels 0–54, 55–110, 111–166, 167–221) to grey `a`–`d` |
 | `<L,i,n>` | Pixel `i` (0–221) to grey `n` |
 
-The driver uses `<B>` for channel `white` and `<X>` for channel `940nm`.
+The driver uses `<B>` for channel `white` and `<X>` for channel `940nm`. These channel
+IDs are stable: consumers store them in presets and metadata (`pgs-scan` does, keeping
+its own display labels `XLSγ` and `XL4`), so renaming one is a breaking change. A level
+is the duty divided by 255, and every whole duty from 0 to 255 survives the round trip
+through a level exactly, which a test pins.
 
 | Reply | Cause |
 |---|---|

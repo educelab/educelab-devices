@@ -93,9 +93,9 @@ def toward_middle(stage, axis_name, distance):
 
 def test_open_reports_grbl_and_its_rates(gantry):
     assert gantry.info.firmware_version.startswith("1.1")
-    print(f"\nmaximum rates, mm/s: {gantry._max_rates}")
+    print(f"\nmaximum rates, mm/s: {gantry.max_rates()}")
     print(f"settings: {sorted(gantry._settings.items())}")
-    assert set(gantry._max_rates) == {"x", "y", "z"}
+    assert set(gantry.max_rates()) == {"x", "y", "z"}
 
 
 def test_position_is_reported_without_homing(gantry):

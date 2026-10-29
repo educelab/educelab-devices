@@ -26,9 +26,9 @@ observing the machine.
 
 The FTDI chip's memory has been programmed with that serial number and description, so
 the controller can be recognized without opening its port. `XCarve.discover()` matches
-VID `0403`, PID `6001` and a serial number containing `XCONTROLLER`, as `pgs-scan`
-does. Whether every X-Controller's serial number starts that way is **assumed** from
-`pgs-scan`; check each new unit.
+VID `0403`, PID `6001` and a serial number containing `XCONTROLLER` anywhere, ignoring
+case, as `pgs-scan` does. That every X-Controller's serial number contains it is
+**assumed** from `pgs-scan`; check each new unit.
 
 - **Firmware**: `Grbl 1.1g`, from the banner `pgs-scan` expects. The driver reports
   whatever version the banner gives.
@@ -82,7 +82,8 @@ The driver reads `$$` on every open and never writes settings. **Verified** on t
 | `$130`, `$131`, `$132` | Maximum travel, mm | 700, 700, 70 |
 
 The driver uses `$110`–`$112`: its speed is limited to the fastest axis's rate,
-166.7 mm/s on these values. Status reports must include `MPos` (bit 0 of `$10`); the
+166.7 mm/s on these values, and `XCarve.max_rates()` reports all three in mm/s, for
+consumers that record them (`pgs-scan` writes them into each scan's metadata). Status reports must include `MPos` (bit 0 of `$10`); the
 driver doesn't convert `WPos`, so a controller set to report it would make every move
 time out. The reports also carry `Bf`, `WCO` and `Ov` fields, which the driver ignores.
 

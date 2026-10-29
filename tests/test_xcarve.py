@@ -368,6 +368,20 @@ def test_moves_use_the_current_speed(machine, homed):
     assert jogs(machine)[-1].endswith(" F600")
 
 
+def test_max_rates_are_each_axis_rate_from_grbl_in_mm_per_s():
+    machine = GrblMachine(settings={110: 9000.0, 111: 6000.0, 112: 600.0})
+    with make_stage(machine) as stage:
+        assert stage.max_rates() == {"x": 150.0, "y": 100.0, "z": 10.0}
+        rates = stage.max_rates()
+        rates["z"] = 0.0
+        assert stage.max_rates()["z"] == 10.0
+
+
+def test_max_rates_need_an_open_stage():
+    with pytest.raises(NotConnected):
+        make_stage(GrblMachine()).max_rates()
+
+
 def test_a_jog_grbl_rejects_raises_command_rejected():
     machine = GrblMachine(settings={20: 1.0, 130: 100.0})
     with make_stage(machine) as stage:

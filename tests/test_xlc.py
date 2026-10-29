@@ -161,6 +161,22 @@ def test_levels_read_back_as_set():
     assert (light.level("white"), light.level("940nm")) == (0.25, 0.75)
 
 
+def test_every_0_to_255_duty_survives_a_round_trip_through_a_level():
+    # pgs-scan's saved presets store integer duties, passed in as b / 255; a
+    # change to the scaling must not change their light output.
+    fake, firmware = emulated()
+    light = opened(make_xlc2(fake))
+    for duty in range(256):
+        light.set_level("white", duty / 255)
+        light.set_level("940nm", duty / 255)
+        assert (firmware.pixels[0], firmware.xl4) == (duty, duty)
+
+
+def test_channel_ids_are_stable():
+    # Consumers store these in presets and metadata (docs/hardware/xlc.md).
+    assert [c.id for c in XLC2("COM5").channels] == ["white", "940nm"]
+
+
 def test_all_off_turns_off_both_outputs():
     fake, firmware = emulated()
     light = opened(make_xlc2(fake))

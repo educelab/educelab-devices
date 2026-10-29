@@ -18,7 +18,12 @@ from educelab.devices._serial import (
     SerialTransport,
     list_ports,
 )
-from educelab.devices.device import DeviceEvent, DeviceInfo, Disconnected
+from educelab.devices.device import (
+    DeviceEvent,
+    DeviceInfo,
+    Disconnected,
+    synchronized,
+)
 from educelab.devices.errors import (
     CommandRejected,
     DeviceError,
@@ -437,6 +442,18 @@ class XCarve(Stage):
             status = self._query_status()
         assert status is not None
         return dict(status.position)
+
+    @synchronized
+    def max_rates(self) -> dict[str, float]:
+        """Each axis's maximum rate in mm/s, as GRBL reported it on open.
+
+        These are ``$110``–``$112``. GRBL holds each axis to its own rate,
+        slowing a combined move to match, whatever the stage's speed.
+
+        Raises:
+            NotConnected: The stage isn't open.
+        """
+        return dict(self._max_rates)
 
     def _speed(self) -> Setting:
         return Setting(

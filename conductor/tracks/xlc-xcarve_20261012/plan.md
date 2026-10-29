@@ -17,7 +17,7 @@ Lights first (small, reuse the serial transport), then the GRBL stage, then docs
 - [x] Task 1.2: Update both firmwares to reply `OK`/`ERR <reason>` to every command, remove debug prints, and bump versions; check `pgs-scan` `dev`'s XLC classes against the new replies.
   - Both boards are 2.0.0, hardware `1.0`, with a MISHA-style handshake reply (`EduceLab XLC1,1.0,2.0.0`); see the spec deviation. `pgs-scan` `dev` refuses 2.0.0 boards at the handshake, so a rig is reflashed only with its migration (`docs/hardware/xlc.md`). XLC1 drops `<B,n>`, which never did anything. Checked by compiling both sketches on a host against stubbed Arduino libraries; not yet compiled for a board (`arduino-cli` not installed, board type unknown).
 - [x] Task 1.3: Write handshake and command tests for `XLC1` on a scripted fake; implement.
-- [ ] Task 1.4: Write handshake and command tests for `XLC2`; implement.
+- [x] Task 1.4: Write handshake and command tests for `XLC2`; implement.
 - [ ] Task 1.5: Implement `discover()` for both; run the `Light` contract suite.
 
 ### Verification

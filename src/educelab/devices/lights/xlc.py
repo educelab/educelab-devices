@@ -12,7 +12,7 @@ from educelab.devices.device import DeviceInfo
 from educelab.devices.errors import CommandRejected, DeviceError, DeviceNotFound
 from educelab.devices.lights.base import RGB, Channel, ChannelKind, Light
 
-__all__ = ["XLC1"]
+__all__ = ["XLC1", "XLC2"]
 
 logger = logging.getLogger(__name__)
 
@@ -170,6 +170,36 @@ class XLC1(_XLCLight):
 
     def _all_off(self) -> None:
         self._command("C", 0, 0, 0)
+
+
+class XLC2(_XLCLight):
+    """The XLC2 controller: a white LED strip and a 940 nm array.
+
+    Channel ``"white"`` sets every pixel of the strip to the same level, and
+    ``"940nm"`` drives the XL4 infrared array. Levels are PWM duties, so a
+    level is a fraction of full drive, not of light output. Opening and
+    closing turn both off. Needs firmware 2.0.0 or newer.
+
+    Args:
+        port: Serial port, e.g. ``"COM3"`` or ``"/dev/ttyUSB0"``.
+        transport: Connection to use instead of opening ``port`` with
+            pyserial. For tests.
+    """
+
+    MODEL = "XLC2"
+    CHANNELS = (Channel("white"), Channel("940nm", wavelength_nm=940.0))
+    # The command letter that sets each channel's duty.
+    COMMANDS: ClassVar[dict[str, str]] = {"white": "B", "940nm": "X"}
+
+    @property
+    def channels(self) -> tuple[Channel, ...]:
+        return self.CHANNELS
+
+    def _set_level(self, channel: Channel, level: float) -> None:
+        self._command(self.COMMANDS[channel.id], _duty(level))
+
+    def _set_color(self, channel: Channel, color: RGB) -> None:
+        raise NotImplementedError("XLC2 channels are monochromatic")
 
 
 def _default_transport(port: str) -> SerialTransport:

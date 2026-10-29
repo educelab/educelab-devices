@@ -9,9 +9,9 @@ from educelab.devices.errors import (
     DeviceTimeout,
 )
 from educelab.devices.lights import ChannelKind, xlc
-from educelab.devices.lights.xlc import XLC1
+from educelab.devices.lights.xlc import XLC1, XLC2
 from fakes.serial_port import ScriptedSerial
-from fakes.xlc import XLC1_IDENTITY, XLCFirmware
+from fakes.xlc import XLC1_IDENTITY, XLC2_IDENTITY, XLCFirmware
 
 
 @pytest.fixture(autouse=True)
@@ -27,6 +27,10 @@ def make_xlc1(fake, port="/dev/ttyXLC"):
     return XLC1(port, transport=make_transport(fake, port))
 
 
+def make_xlc2(fake, port="/dev/ttyXLC"):
+    return XLC2(port, transport=make_transport(fake, port))
+
+
 def opened(light):
     light.open()
     return light
@@ -35,6 +39,13 @@ def opened(light):
 def xlc1_scripted(*steps):
     """An XLC1 that identifies itself and is turned off on open, then ``steps``."""
     return ScriptedSerial([("<?>", [XLC1_IDENTITY]), ("<C,0,0,0>", ["OK"]), *steps])
+
+
+def xlc2_scripted(*steps):
+    """An XLC2 that identifies itself and is turned off on open, then ``steps``."""
+    return ScriptedSerial(
+        [("<?>", [XLC2_IDENTITY]), ("<B,0>", ["OK"]), ("<X,0>", ["OK"]), *steps]
+    )
 
 
 def emulated(board="XLC1"):
@@ -51,12 +62,23 @@ def test_firmware_emulation_matches_the_documented_protocol():
     assert xlc1("<B,10>") == ["ERR unknown command"]
     assert xlc1("<C, 4 ,5, 6 >") == ["OK"]
     assert xlc1.color == (4, 5, 6)
+    xlc2 = XLCFirmware("XLC2")
+    assert xlc2("<C,1,2,3>") == ["ERR unknown command"]
+    assert xlc2("<L,222,9>") == ["ERR index out of range"]
+    assert xlc2("<S,1,2,3,4>") == ["OK"]
+    assert xlc2.pixels[54:56] == [1, 2]
 
 
 class TestXLC1Contract(LightContract):
     @pytest.fixture
     def make_device(self):
         return lambda: make_xlc1(emulated()[0])
+
+
+class TestXLC2Contract(LightContract):
+    @pytest.fixture
+    def make_device(self):
+        return lambda: make_xlc2(emulated("XLC2")[0])
 
 
 # XLC1: opening
@@ -185,6 +207,78 @@ def test_a_late_reply_is_not_mistaken_for_the_next_one():
     fake.queue("OK")
     with pytest.raises(CommandRejected):
         light.set_color("rgb", (0.0, 1.0, 0.0))
+
+
+# XLC2
+
+
+def test_xlc2_open_identifies_the_board_and_turns_both_outputs_off():
+    fake = xlc2_scripted()
+    light = opened(make_xlc2(fake))
+    fake.assert_done()
+    assert light.info.model == "XLC2"
+    assert light.info.firmware_version == "2.0.0"
+    assert light.hardware_version == "1.0"
+    assert light.level("white") == 0.0
+    assert light.level("940nm") == 0.0
+
+
+def test_xlc2_has_a_white_strip_and_a_940nm_array():
+    white, ir = make_xlc2(ScriptedSerial()).channels
+    assert (white.id, white.kind, white.wavelength_nm) == ("white", "mono", None)
+    assert (ir.id, ir.kind, ir.wavelength_nm) == ("940nm", "mono", 940.0)
+
+
+def test_xlc2_levels_go_to_the_strip_and_the_array():
+    fake = xlc2_scripted(("<B,128>", ["OK"]), ("<X,255>", ["OK"]), ("<X,3>", ["OK"]))
+    light = opened(make_xlc2(fake))
+    light.set_level("white", 0.5)
+    light.set_level("940nm", 1.0)
+    light.set_level("940nm", 0.01)
+    fake.assert_done()
+
+
+def test_xlc2_levels_read_back_as_set():
+    fake, firmware = emulated("XLC2")
+    light = opened(make_xlc2(fake))
+    light.set_level("white", 0.25)
+    light.set_level("940nm", 0.75)
+    assert firmware.pixels == [64] * 222
+    assert firmware.xl4 == 191
+    assert (light.level("white"), light.level("940nm")) == (0.25, 0.75)
+
+
+def test_xlc2_all_off_turns_off_both_outputs():
+    fake, firmware = emulated("XLC2")
+    light = opened(make_xlc2(fake))
+    light.set_level("white", 1.0)
+    light.set_level("940nm", 1.0)
+    light.all_off()
+    assert (firmware.pixels, firmware.xl4) == ([0] * 222, 0)
+
+
+def test_xlc2_close_turns_off_both_outputs():
+    fake = xlc2_scripted(("<B,0>", ["OK"]), ("<X,0>", ["OK"]))
+    opened(make_xlc2(fake)).close()
+    fake.assert_done()
+
+
+@pytest.mark.parametrize(
+    "identity",
+    ["EduceLab XLC2 (FW 1.2.0)", "EduceLab XLC2,1.0,1.2.0"],
+    ids=["1.2.0 handshake", "1.2.0"],
+)
+def test_xlc2_open_refuses_old_firmware(identity):
+    fake = ScriptedSerial([("<?>", [identity])])
+    with pytest.raises(DeviceError, match="firmware/xlc2"):
+        opened(make_xlc2(fake))
+    assert not fake.is_open
+
+
+def test_xlc2_does_not_open_an_xlc1():
+    fake = ScriptedSerial([("<?>", [XLC1_IDENTITY])])
+    with pytest.raises(DeviceNotFound):
+        opened(make_xlc2(fake))
 
 
 # Closing

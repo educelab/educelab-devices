@@ -19,6 +19,8 @@ Lights first (small, reuse the serial transport), then the GRBL stage, then docs
 - [x] Task 1.3: Write handshake and command tests for `XLC1` on a scripted fake; implement.
 - [x] Task 1.4: Write handshake and command tests for `XLC2`; implement.
 - [x] Task 1.5: Implement `discover()` for both; run the `Light` contract suite.
+  - `discover()` returns `[]`: no USB descriptor identifies an XLC, and opening a port to ask resets the board behind it. Boards open by `port=` or `serial_number=` (maintainer's choice, 2026-10-29).
+  - XLC1 units are retired (2026-10-29), so the XLC1 driver, tests and `firmware/xlc1/` were removed after Tasks 1.1–1.5. `XLC2` absorbed the shared base.
 
 ### Verification
 

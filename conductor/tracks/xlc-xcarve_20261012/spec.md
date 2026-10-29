@@ -7,7 +7,7 @@
 
 ## Summary
 
-Port the XLC1 and XLC2 light controllers to `Light` drivers and the X-Carve gantry (GRBL 1.1g) to a `Stage` driver, from `pgs-scan` `dev`, fixing the known serial and motion defects, and bring the XLC firmware into this repo, updated to acknowledge every command.
+Port the XLC2 light controller to a `Light` driver and the X-Carve gantry (GRBL 1.1g) to a `Stage` driver, from `pgs-scan` `dev`, fixing the known serial and motion defects, and bring the XLC firmware into this repo, updated to acknowledge every command.
 
 ## Context
 
@@ -19,17 +19,17 @@ As the `pgs-scan` developer, I want the gantry and its lights behind the `Stage`
 
 ## Acceptance Criteria
 
-- [ ] `XLC1` (`lights.xlc`): handshake `<?>` → `EduceLab XLC1,1.0,x.y.z`; one RGB channel `"rgb"`; `set_color` → `<C,r,g,b>`; `set_level` scales a grey value.
+- ~~`XLC1` (`lights.xlc`)~~: dropped 2026-10-29, as XLC1 units are retired. A driver was written and then removed; the original firmware stays in the history (`3f85a42`).
 - [ ] `XLC2` (`lights.xlc`): handshake `<?>` → `EduceLab XLC2,1.0,x.y.z`; channels `"white"` (`<B,n>`) and `"940nm"` (`<X,n>`, wavelength metadata 940); levels scaled to the firmware's brightness range.
-- [ ] XLC1 and XLC2 firmware updated to 2.0.0: every command is answered with exactly one line, `OK` or `ERR <reason>`; debug prints (`Got a brightness command`, …) removed; the handshake reply becomes `name,hardware version,firmware version` like MISHA's (changed from "handshake strings unchanged" on 2026-10-29: XLC1's old string has its version baked in, so a bump changes it anyway). Drivers wait for `OK`, raise `CommandRejected` on `ERR`, and refuse older firmware with a `DeviceError` pointing to the reflash steps.
+- [ ] XLC2 firmware updated to 2.0.0: every command is answered with exactly one line, `OK` or `ERR <reason>`; debug prints (`Got a brightness command`, …) removed; the handshake reply becomes `name,hardware version,firmware version` like MISHA's (changed from "handshake strings unchanged" on 2026-10-29, to match MISHA). Drivers wait for `OK`, raise `CommandRejected` on `ERR`, and refuse older firmware with a `DeviceError` pointing to the reflash steps.
 - [ ] Port matching requires all given criteria (no #84); no shared mutable buffers between instances.
 - [ ] `XCarve` (`stages.xcarve`): GRBL banner on open, **no homing on open**; `can_home` and `requires_homing` true, and `home()` runs `$H` with a timeout; moves before homing raise.
 - [ ] Axes `"x"`, `"y"`, `"z"` (linear, mm, machine coordinates) with limits passed in by the consumer; out-of-limit targets raise instead of clamping (fixes #71).
 - [ ] `move_to`/`move_by` block until GRBL reports `Idle` at the target within tolerance, with a default timeout from distance and feed rate (fixes #67); `jog` uses `$J` and returns immediately; `stop()` sends jog-cancel/feed-hold real-time bytes and is callable during a move.
 - [ ] `position()` is served from status reports polled internally during moves, so it is live for GRBL; alarms and unexpected disconnects are delivered to listeners and raise on the next call.
 - [ ] The feed rate is the stage's `speed()` (a range in mm/s, converted from GRBL's mm/min) and is changed with `set_speed()`. The starting feed rate is a constructor parameter, not a hidden constant.
-- [ ] Contract suites pass on scripted fake transports (XLC protocol, GRBL protocol).
-- [ ] Firmware copied to `firmware/xlc1/` and `firmware/xlc2/` unchanged first, with provenance in the commit message, then updated.
+- [ ] Contract suites pass on scripted fake transports (XLC2 protocol, GRBL protocol).
+- [ ] Firmware copied to `firmware/xlc2/` unchanged first, with provenance in the commit message, then updated.
 - [ ] `docs/hardware/xlc.md` and `docs/hardware/xcarve-grbl.md`.
 - [ ] `el-devices xlc` and `el-devices xcarve` subcommands.
 

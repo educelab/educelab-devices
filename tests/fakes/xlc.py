@@ -1,28 +1,20 @@
-"""An emulation of the XLC1 and XLC2 firmware's serial protocol."""
+"""An emulation of the XLC2 firmware's serial protocol."""
 
-XLC1_IDENTITY = "EduceLab XLC1,1.0,2.0.0"
 XLC2_IDENTITY = "EduceLab XLC2,1.0,2.0.0"
 XLC2_PIXELS = 222
+# Fields each command takes.
+ARITY = {"B": 1, "X": 1, "S": 4, "L": 2}
 
 
 class XLCFirmware:
-    """Answers commands the way XLC1 or XLC2 firmware 2.0.0 does.
+    """Answers commands the way XLC2 firmware 2.0.0 does.
 
-    Pass an instance as a `ScriptedSerial` responder. XLC1 keeps ``color``,
-    an ``(r, g, b)`` of 0–255 duties. XLC2 keeps ``pixels``, the strip's
-    grey levels, and ``xl4``, the 940 nm array's duty.
-
-    Args:
-        board: ``"XLC1"`` or ``"XLC2"``.
-        identity: The handshake reply, for emulating other firmware.
+    Pass an instance as a `ScriptedSerial` responder. ``pixels`` holds the
+    strip's grey levels and ``xl4`` the 940 nm array's duty, both 0–255.
     """
 
-    def __init__(self, board: str = "XLC1", identity: str | None = None) -> None:
-        self.board = board
-        self.identity = identity or (
-            XLC1_IDENTITY if board == "XLC1" else XLC2_IDENTITY
-        )
-        self.color = (0, 0, 0)
+    def __init__(self, identity: str = XLC2_IDENTITY) -> None:
+        self.identity = identity
         self.pixels = [0] * XLC2_PIXELS
         self.xl4 = 0
 
@@ -37,20 +29,15 @@ class XLCFirmware:
         if len(body) > 31:
             return ["ERR invalid command"]
         command, *fields = body.split(",")
-        arity = (
-            {"C": 3} if self.board == "XLC1" else {"B": 1, "X": 1, "S": 4, "L": 2}
-        ).get(command)
-        if arity is None:
+        if command not in ARITY:
             return ["ERR unknown command"]
         values = [_level(field) for field in fields]
-        if len(values) != arity or None in values:
+        if len(values) != ARITY[command] or None in values:
             return ["ERR invalid command"]
         return self._apply(command, values)
 
     def _apply(self, command: str, values: list) -> list[str]:
-        if command == "C":
-            self.color = tuple(values)
-        elif command == "B":
+        if command == "B":
             self.pixels = [values[0]] * XLC2_PIXELS
         elif command == "X":
             self.xl4 = values[0]

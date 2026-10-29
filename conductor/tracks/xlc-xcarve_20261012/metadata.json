@@ -2,18 +2,18 @@
   "id": "xlc-xcarve_20261012",
   "title": "XLC Lights and X-Carve Stage",
   "type": "feature",
-  "status": "in_progress",
+  "status": "complete",
   "created": "2026-10-12T00:00:00Z",
   "updated": "2026-10-29T00:00:00Z",
   "phases": {
     "total": 3,
-    "completed": 2
+    "completed": 3
   },
   "tasks": {
     "total": 14,
     "completed": 14
   },
-  "current_phase": 3,
+  "current_phase": null,
   "current_task": null,
   "commits": [
     "3f85a42: Copy the XLC1 and XLC2 firmware from pgs-scan unchanged",
@@ -35,6 +35,9 @@
     "7549969: Record the X-Controller's settings from the first rig check",
     "48b650f: Record the XLC2's first run on firmware 2.0.0",
     "e04fb33: Record homing on the rig and the XLC2's board",
-    "ee770df: Match GRBL replies by counting, and stop retrying failed homing"
+    "ee770df: Match GRBL replies by counting, and stop retrying failed homing",
+    "64b2bdb: Record the X-Carve's hardware test run after the switch repair",
+    "6828e7d: Tick the xlc-xcarve acceptance criteria",
+    "e8f3f4a: Report the X-Carve's per-axis rates, as pgs-scan needs"
   ]
 }

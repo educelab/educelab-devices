@@ -31,7 +31,7 @@ Planned tracks, in order. All are registered in [tracks.md](./tracks.md).
 | 2 | MISHA lights | Serial driver; firmware moved in from `usb-dslr-capture-demo/misha/MISHA` |
 | 3 | Foldio360 | Stage + halo light; client, protocol docs, and tests moved in from `~/source/foldio360`, which is then archived |
 | 4 | gphoto2 camera | Camera files, settings, live view, keep-alive, recovery, focus drive (Nikon Z7 II first; Canon later) |
-| 5 | XLC lights and X-Carve | Serial drivers from `pgs-scan` `dev`; firmware moved in; fixes #71 and #84 |
+| 5 | XLC lights and X-Carve | Serial drivers from `pgs-scan` `dev`; XLC2 firmware moved in and updated to 2.0.0; fixes #67, #71 and #84. XLC1 dropped, as its units are retired |
 | 6 | Spinnaker camera | `SpinnakerSystem` + per-camera driver; fixes #83 and #90 |
 | 7 | Acroname hub | `brainstem`-based Hub |
 | 8 | USB3 Vision camera | Shared GenICam core from the Spinnaker driver; Aravis (Linux/macOS) and GenTL (Windows) backends; IDS U3-36P0XCP-M-GL first |

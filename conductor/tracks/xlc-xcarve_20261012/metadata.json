@@ -11,7 +11,7 @@
   },
   "tasks": {
     "total": 14,
-    "completed": 4
+    "completed": 5
   },
   "current_phase": 1,
   "current_task": "1.5",
@@ -19,6 +19,7 @@
     "3f85a42: Copy the XLC1 and XLC2 firmware from pgs-scan unchanged",
     "d81e832: Record the XLC1 and XLC2 protocol as copied",
     "6e9f055: Answer every XLC command with OK or ERR",
-    "9b6e6ba: Add the XLC1 light driver"
+    "9b6e6ba: Add the XLC1 light driver",
+    "b33da92: Add the XLC2 light driver"
   ]
 }

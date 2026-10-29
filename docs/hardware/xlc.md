@@ -10,8 +10,14 @@ It was copied from `pgs-scan` `dev` at `aed0b5e` (2022-11-01) and updated to 2.0
 The two boards are separate devices, not revisions of one board, so each reports
 hardware version `1.0`.
 
-Driver: planned, `educelab.devices.lights.xlc` (`XLC1`, `XLC2`). Manual check: planned,
+Driver: `educelab.devices.lights.xlc` (`XLC1`, `XLC2`). Manual check: planned,
 `el-devices xlc`.
+
+`discover()` finds nothing, and a board is opened by `port=` or by its USB
+`serial_number=`. Nothing in the USB descriptors identifies an XLC (see
+[Identity](#identity)), and opening a port to send the handshake resets the board
+behind it, which could be the X-Carve's homed GRBL controller. Revisit this once the
+units' USB descriptors are recorded.
 
 Unless marked otherwise, everything below is **assumed**: it is read from the firmware
 sources and from `pgs-scan`'s `XLC1`/`XLC2` classes (`pgs_scan/components/lights.py`,

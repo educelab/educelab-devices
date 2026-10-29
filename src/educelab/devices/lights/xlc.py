@@ -7,7 +7,7 @@ import logging
 import re
 from typing import ClassVar
 
-from educelab.devices._serial import SerialTransport, handshake
+from educelab.devices._serial import PortInfo, SerialTransport, handshake, list_ports
 from educelab.devices.device import DeviceInfo
 from educelab.devices.errors import CommandRejected, DeviceError, DeviceNotFound
 from educelab.devices.lights.base import RGB, Channel, ChannelKind, Light
@@ -42,13 +42,17 @@ class _XLCLight(Light):
         self,
         port: str | None = None,
         *,
+        serial_number: str | None = None,
         transport: SerialTransport | None = None,
     ) -> None:
+        if port is not None and serial_number is not None:
+            raise ValueError(f"give {type(self).__name__} a port or a serial number")
         super().__init__()
         if transport is None and port is not None:
             transport = _default_transport(port)
         self._transport = transport
         self._port = None if transport is None else transport.port
+        self._serial_number = serial_number
         self._firmware_version: str | None = None
         self._hardware_version: str | None = None
 
@@ -58,8 +62,18 @@ class _XLCLight(Light):
             backend="xlc",
             model=self.MODEL,
             address=self._port,
+            serial_number=self._serial_number,
             firmware_version=self._firmware_version,
         )
+
+    @classmethod
+    def discover(cls) -> list[DeviceInfo]:
+        """Find nothing: an XLC can't be recognized without opening its port.
+
+        Its USB descriptors don't identify it, and opening a port to ask
+        resets the board behind it (docs/hardware/xlc.md#identity).
+        """
+        return []
 
     @property
     def hardware_version(self) -> str | None:
@@ -70,8 +84,17 @@ class _XLCLight(Light):
         return f"<{type(self).__name__} {self._port or '(no port)'}>"
 
     def _open(self) -> None:
+        if self._serial_number is not None:
+            # Found again on each open, in case a replug renamed the port.
+            port = self._find_port(self._serial_number)
+            self._transport = _default_transport(port.device)
+            self._port = port.device
+            self._serial_number = port.serial_number
         if self._transport is None:
-            raise DeviceNotFound(f"give {type(self).__name__} a port")
+            raise DeviceNotFound(
+                f"{type(self).__name__} needs port= or serial_number=; "
+                "an XLC can't be found any other way"
+            )
         transport = self._transport
         transport.open()
         try:
@@ -109,6 +132,14 @@ class _XLCLight(Light):
             logger.warning("%r could not turn off before closing: %s", self, exc)
         finally:
             self._require_transport().close()
+
+    @staticmethod
+    def _find_port(serial_number: str) -> PortInfo:
+        wanted = serial_number.casefold()
+        for port in list_ports():
+            if port.serial_number and port.serial_number.casefold() == wanted:
+                return port
+        raise DeviceNotFound(f"no serial port has USB serial number {serial_number!r}")
 
     def _parse_identity(self, line: str) -> tuple[str | None, str] | None:
         """(hardware, firmware) if ``line`` is this model's handshake reply.

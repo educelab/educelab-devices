@@ -1,7 +1,7 @@
 import pytest
 
 from contracts import LightContract
-from educelab.devices._serial import SerialTransport
+from educelab.devices._serial import PortInfo, SerialTransport
 from educelab.devices.errors import (
     CommandRejected,
     DeviceError,
@@ -299,3 +299,67 @@ def test_close_after_unplugging_still_closes(caplog):
     light.close()
     assert not light.is_open
     assert "could not turn off" in caplog.text
+
+
+# Discovery and finding a board by serial number
+
+CH340 = PortInfo(
+    "/dev/cu.usbserial-110", vid=0x1A86, pid=0x7523, serial_number="XLC2-0001"
+)
+OTHER = PortInfo("/dev/cu.usbserial-120", vid=0x1A86, pid=0x7523, serial_number="A1")
+
+
+def attach(monkeypatch, boards):
+    """Attach ``boards``, a mapping of PortInfo to the ScriptedSerial behind it."""
+    by_device = {port.device: fake for port, fake in boards.items()}
+    monkeypatch.setattr(xlc, "list_ports", lambda: list(boards))
+    monkeypatch.setattr(
+        xlc,
+        "_default_transport",
+        lambda port: make_transport(by_device[port], port),
+    )
+    return boards
+
+
+@pytest.mark.parametrize("cls", [XLC1, XLC2])
+def test_discover_finds_nothing_without_touching_ports(monkeypatch, cls):
+    def no_listing():
+        raise AssertionError("discover() listed ports")
+
+    monkeypatch.setattr(xlc, "list_ports", no_listing)
+    assert cls.discover() == []
+
+
+def test_serial_number_picks_the_port_ignoring_case(monkeypatch):
+    boards = attach(monkeypatch, {OTHER: ScriptedSerial(), CH340: emulated("XLC2")[0]})
+    with XLC2(serial_number="xlc2-0001") as light:
+        assert light.info.address == CH340.device
+        assert light.info.serial_number == "XLC2-0001"
+    assert boards[OTHER].opened_with is None
+
+
+def test_serial_number_must_match_exactly(monkeypatch):
+    attach(monkeypatch, {CH340: emulated("XLC2")[0]})
+    with pytest.raises(DeviceNotFound, match="XLC2-000"):
+        XLC2(serial_number="XLC2-000").open()
+
+
+def test_reopening_by_serial_number_finds_a_replugged_board(monkeypatch):
+    attach(monkeypatch, {CH340: emulated("XLC2")[0]})
+    light = XLC2(serial_number="XLC2-0001")
+    light.open()
+    light.close()
+    replugged = PortInfo("/dev/cu.usbserial-140", serial_number="XLC2-0001")
+    attach(monkeypatch, {replugged: emulated("XLC2")[0]})
+    light.open()
+    assert light.info.address == replugged.device
+
+
+def test_port_and_serial_number_are_exclusive():
+    with pytest.raises(ValueError):
+        XLC1("COM3", serial_number="XLC2-0001")
+
+
+def test_open_without_a_port_or_serial_number_says_which_to_give():
+    with pytest.raises(DeviceNotFound, match="port=.*serial_number="):
+        XLC1().open()

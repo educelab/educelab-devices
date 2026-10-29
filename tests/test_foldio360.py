@@ -234,6 +234,16 @@ def test_default_timeout_comes_from_the_timing_model(monkeypatch):
     assert max(limits) == pytest.approx(f.watchdog_seconds(90, 1), abs=0.05)
 
 
+def test_move_timeout_replaces_the_timing_model():
+    dev, _ = table(hold_moves=True)
+    dev.move_timeout = 0.1
+    started = time.monotonic()
+    with pytest.raises(DeviceTimeout):
+        dev.move_to({"theta": 90.0})
+    # The timing model would allow several seconds.
+    assert time.monotonic() - started < 1.0
+
+
 def test_explicit_timeout_bounds_the_move():
     dev, t = table(hold_moves=True)
     with pytest.raises(DeviceTimeout):

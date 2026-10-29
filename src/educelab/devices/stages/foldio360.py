@@ -111,10 +111,6 @@ _ARRIVAL_TOLERANCE_DEG = 1
 # Open questions), so longer turns are split into legs of one revolution.
 _MAX_LEG_DEG = 360
 
-# What Stage passes the hooks for timeout=None. The base rejects timeouts <= 0,
-# so no caller's value can collide with it.
-_DEFAULT_TIMEOUT = -1.0
-
 # How often a move waiting for its OK checks for stop().
 _POLL_S = 0.05
 
@@ -466,7 +462,7 @@ class Foldio360(Stage):
     target; otherwise it raises `PositionError`.
 
     With ``timeout=None``, a move's limit comes from the predicted move time
-    (`watchdog_seconds`) rather than `move_timeout`. Turns longer than one
+    (`watchdog_seconds`), unless `move_timeout` is set. Turns longer than one
     revolution are made as several rotations of at most 360°.
 
     The LED ring is a separate `Light`, `halo`, on the same connection.
@@ -491,6 +487,8 @@ class Foldio360(Stage):
             bleak's default.
         transport: Replaces the BLE transport; tests inject a fake.
     """
+
+    move_timeout = None
 
     def __init__(
         self,
@@ -586,12 +584,7 @@ class Foldio360(Stage):
 
     # -- stage hooks --------------------------------------------------------------
 
-    def _timeout(self, timeout: float | None) -> float:
-        # None reaches the hooks as a sentinel meaning "derive from the timing
-        # model"; math.inf still means "no limit", as the guide promises.
-        return _DEFAULT_TIMEOUT if timeout is None else super()._timeout(timeout)
-
-    def _move_to(self, targets: Mapping[str, float], timeout: float) -> None:
+    def _move_to(self, targets: Mapping[str, float], timeout: float | None) -> None:
         self._check_idle()
         target = round(targets[_THETA]) % 360
         current = self._read_position()
@@ -600,7 +593,10 @@ class Foldio360(Stage):
         self._turn(delta, current, timeout)
 
     def _move_by(
-        self, offsets: Mapping[str, float], start: Mapping[str, float], timeout: float
+        self,
+        offsets: Mapping[str, float],
+        start: Mapping[str, float],
+        timeout: float | None,
     ) -> None:
         self._check_idle()
         self._turn(round(offsets[_THETA]), round(start[_THETA]) % 360, timeout)
@@ -815,18 +811,18 @@ class Foldio360(Stage):
         if self._running:
             raise DeviceBusy(f"{self!r} is running a capture sequence")
 
-    def _turn(self, degrees: int, start: int, timeout: float) -> None:
-        """Turn by a signed whole-degree offset, in legs of at most 360°."""
-        default = timeout == _DEFAULT_TIMEOUT
-        deadline = time.monotonic() + timeout
+    def _turn(self, degrees: int, start: int, timeout: float | None) -> None:
+        """Turn by a signed whole-degree offset, in legs of at most 360°.
+
+        With no ``timeout``, each leg's limit comes from the timing model.
+        """
+        deadline = None if timeout is None else time.monotonic() + timeout
         remaining = degrees
         position = start
         while remaining:
             leg = max(-_MAX_LEG_DEG, min(_MAX_LEG_DEG, remaining))
-            if default:
+            if deadline is None:
                 limit = watchdog_seconds(leg, self._speed_level)
-            elif math.isinf(timeout):
-                limit = math.inf
             else:
                 limit = deadline - time.monotonic()
                 if limit <= 0:

@@ -33,6 +33,7 @@ BACKENDS: tuple[Backend, ...] = (
     Backend("gphoto2", "educelab.devices.cameras.gphoto2", "GPhoto2Camera"),
     Backend("misha", "educelab.devices.lights.misha", "MishaLight"),
     Backend("spinnaker", "educelab.devices.cameras.spinnaker", "SpinnakerCamera"),
+    Backend("xcarve", "educelab.devices.stages.xcarve", "XCarve"),
 )
 
 

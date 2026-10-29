@@ -3,7 +3,7 @@
 **Track ID:** xlc-xcarve_20261012
 **Spec:** [spec.md](./spec.md)
 **Created:** 2026-10-12
-**Status:** [ ] Not Started
+**Status:** [x] Complete
 
 ## Overview
 
@@ -13,49 +13,52 @@ Lights first (small, reuse the serial transport), then the GRBL stage, then docs
 
 ### Tasks
 
-- [ ] Task 1.1: Copy both firmwares into `firmware/xlc1/` and `firmware/xlc2/` unchanged (provenance commit); record the current protocol and ranges in `docs/hardware/xlc.md`.
-- [ ] Task 1.2: Update both firmwares to reply `OK`/`ERR <reason>` to every command, remove debug prints, and bump versions; check `pgs-scan` `dev`'s XLC classes against the new replies.
-- [ ] Task 1.3: Write handshake and command tests for `XLC1` on a scripted fake; implement.
-- [ ] Task 1.4: Write handshake and command tests for `XLC2`; implement.
-- [ ] Task 1.5: Implement `discover()` for both; run the `Light` contract suite.
+- [x] Task 1.1: Copy both firmwares into `firmware/xlc1/` and `firmware/xlc2/` unchanged (provenance commit); record the current protocol and ranges in `docs/hardware/xlc.md`.
+- [x] Task 1.2: Update both firmwares to reply `OK`/`ERR <reason>` to every command, remove debug prints, and bump versions; check `pgs-scan` `dev`'s XLC classes against the new replies.
+  - Both boards are 2.0.0, hardware `1.0`, with a MISHA-style handshake reply (`EduceLab XLC1,1.0,2.0.0`); see the spec deviation. `pgs-scan` `dev` refuses 2.0.0 boards at the handshake, so a rig is reflashed only with its migration (`docs/hardware/xlc.md`). XLC1 drops `<B,n>`, which never did anything. Checked by compiling both sketches on a host against stubbed Arduino libraries; not yet compiled for a board (`arduino-cli` not installed, board type unknown).
+- [x] Task 1.3: Write handshake and command tests for `XLC1` on a scripted fake; implement.
+- [x] Task 1.4: Write handshake and command tests for `XLC2`; implement.
+- [x] Task 1.5: Implement `discover()` for both; run the `Light` contract suite.
+  - `discover()` returns `[]`: no USB descriptor identifies an XLC, and opening a port to ask resets the board behind it. Boards open by `port=` or `serial_number=` (maintainer's choice, 2026-10-29).
+  - XLC1 units are retired (2026-10-29), so the XLC1 driver, tests and `firmware/xlc1/` were removed after Tasks 1.1–1.5. `XLC2` absorbed the shared base.
 
 ### Verification
 
-- [ ] XLC tests and contracts pass.
+- [x] XLC tests and contracts pass.
 
 ## Phase 2: X-Carve stage
 
 ### Tasks
 
-- [ ] Task 2.1: Build a scripted GRBL fake (banner, `$H`, `$J`, `?` status reports, alarms, real-time bytes).
-- [ ] Task 2.2: Write tests for open without homing, `home()` with timeout, and moves-before-homing raising; implement.
-- [ ] Task 2.3: Write tests for limits (raise, never clamp), blocking moves with arrival tolerance and timeouts; implement.
-- [ ] Task 2.4: Write tests for `jog`, `stop()` during a move, live `position()`, alarm events; implement the internal status polling.
-- [ ] Task 2.5: Run the `Stage` contract suite.
+- [x] Task 2.1: Build a scripted GRBL fake (banner, `$H`, `$J`, `?` status reports, alarms, real-time bytes).
+- [x] Task 2.2: Write tests for open without homing, `home()` with timeout, and moves-before-homing raising; implement.
+- [x] Task 2.3: Write tests for limits (raise, never clamp), blocking moves with arrival tolerance and timeouts; implement.
+- [x] Task 2.4: Write tests for `jog`, `stop()` during a move, live `position()`, alarm events; implement the internal status polling.
+- [x] Task 2.5: Run the `Stage` contract suite.
 
 ### Verification
 
-- [ ] GRBL tests and contracts pass; #67, #71, #84 covered by regression tests.
+- [x] GRBL tests and contracts pass; #67, #71, #84 covered by regression tests.
 
 ## Phase 3: Docs, CLI, hardware verification
 
 ### Tasks
 
-- [ ] Task 3.1: Write `docs/hardware/xcarve-grbl.md`.
-- [ ] Task 3.2: Add `el-devices xlc` and `el-devices xcarve` subcommands.
-- [ ] Task 3.3: Write `@pytest.mark.hardware` tests for lights and gantry.
-- [ ] Task 3.4: Flash updated XLC firmware on a rig (coordinated with that rig's `pgs-scan` migration if needed), run the hardware tests, and record findings in the hardware docs.
+- [x] Task 3.1: Write `docs/hardware/xcarve-grbl.md`.
+- [x] Task 3.2: Add `el-devices xlc` and `el-devices xcarve` subcommands.
+- [x] Task 3.3: Write `@pytest.mark.hardware` tests for lights and gantry.
+- [x] Task 3.4: Flash updated XLC firmware on a rig (coordinated with that rig's `pgs-scan` migration if needed), run the hardware tests, and record findings in the hardware docs.
 
 ### Verification
 
-- [ ] Maintainer confirms lights and gantry on a rig.
+- [x] Maintainer confirms lights and gantry on a rig (2026-10-29).
 
 ## Final Verification
 
-- [ ] All acceptance criteria met
-- [ ] Tests passing
-- [ ] Documentation updated
-- [ ] Ready for review
+- [x] All acceptance criteria met
+- [x] Tests passing
+- [x] Documentation updated
+- [x] Ready for review
 
 ---
 

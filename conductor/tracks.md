@@ -6,7 +6,7 @@
 | [x] | [misha-lights_20261012](./tracks/_archive/misha-lights_20261012/index.md) | MISHA Lights | 2026-10-12 | 2026-10-21 |
 | [x] | [foldio360_20261012](./tracks/_archive/foldio360_20261012/index.md) | Foldio360 Turntable | 2026-10-12 | 2026-10-21 |
 | [x] | [gphoto2-camera_20261012](./tracks/_archive/gphoto2-camera_20261012/index.md) | gphoto2 Camera | 2026-10-12 | 2026-10-21 |
-| [ ] | [xlc-xcarve_20261012](./tracks/xlc-xcarve_20261012/index.md) | XLC Lights and X-Carve Stage | 2026-10-12 | 2026-10-12 |
+| [x] | [xlc-xcarve_20261012](./tracks/xlc-xcarve_20261012/index.md) | XLC Lights and X-Carve Stage | 2026-10-12 | 2026-10-29 |
 | [x] | [spinnaker-camera_20261012](./tracks/_archive/spinnaker-camera_20261012/index.md) | Spinnaker Camera | 2026-10-12 | 2026-10-21 |
 | [x] | [acroname-hub_20261012](./tracks/_archive/acroname-hub_20261012/index.md) | Acroname USB Hub | 2026-10-12 | 2026-10-21 |
 | [ ] | [docs-site_20261012](./tracks/docs-site_20261012/index.md) | Documentation Site and Machine Setup | 2026-10-12 | 2026-10-23 |

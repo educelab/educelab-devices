@@ -36,7 +36,7 @@ class StubStage(Stage):
     def _close(self) -> None:
         pass
 
-    def _move_to(self, targets: Mapping[str, float], timeout: float) -> None:
+    def _move_to(self, targets: Mapping[str, float], timeout: float | None) -> None:
         self.calls.append(("move_to", dict(targets), timeout))
         self.pos.update(targets)
 
@@ -49,7 +49,7 @@ class StubStage(Stage):
     def _position(self) -> Mapping[str, float]:
         return self.pos
 
-    def _home(self, timeout: float) -> None:
+    def _home(self, timeout: float | None) -> None:
         self.calls.append(("home", timeout))
 
     def _speed(self) -> Setting:
@@ -87,6 +87,14 @@ def test_invalid_axis_raises(kwargs):
 def test_move_to_passes_default_timeout(stage):
     stage.move_to({"x": 50})
     assert stage.calls == [("move_to", {"x": 50.0}, Stage.move_timeout)]
+
+
+def test_move_timeout_none_lets_the_driver_choose(stage):
+    # Each hook gets None, including every leg of a split turn.
+    stage.move_timeout = None
+    stage.move_to({"x": 50})
+    stage.move_by({"theta": 300.0})
+    assert [call[2] for call in stage.calls] == [None, None, None, None]
 
 
 def test_move_to_passes_explicit_timeout(stage):

@@ -1,5 +1,6 @@
 import pytest
 
+from educelab.devices import _serial
 from educelab.devices._serial import PortInfo, SerialTransport
 from educelab.devices.app.cli import main
 from educelab.devices.lights import misha
@@ -19,7 +20,7 @@ def panel(monkeypatch):
     firmware = MishaFirmware()
     fake = ScriptedSerial(respond=firmware)
     monkeypatch.setattr(misha, "HANDSHAKE_TIMEOUT_S", 0.05)
-    monkeypatch.setattr(misha, "list_ports", lambda: [PANEL])
+    monkeypatch.setattr(_serial, "list_ports", lambda: [PANEL])
     monkeypatch.setattr(
         misha,
         "_default_transport",
@@ -76,7 +77,7 @@ def test_readback_mismatch_fails(panel, capsys):
 
 
 def test_missing_panel_is_reported(monkeypatch, capsys):
-    monkeypatch.setattr(misha, "list_ports", list)
+    monkeypatch.setattr(_serial, "list_ports", list)
     assert main(["misha", "--dwell", "0"]) == 1
     assert "no named MISHA" in capsys.readouterr().err
 

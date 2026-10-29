@@ -79,9 +79,10 @@ closed one. A closed device can be opened again.
 ## 3. Blocking and timeouts
 
 Long operations take a `timeout` in seconds. `None` means the device's default: for
-stages, `Stage.move_timeout`, or, on stages that can predict a move's duration (the
-Foldio360), a limit derived from that prediction; for frame cameras,
-`FrameCamera.capture_timeout`. Pass `math.inf` to wait indefinitely. A device that
+stages, `Stage.move_timeout`; for frame cameras, `FrameCamera.capture_timeout`. Stages
+that can predict a move's duration (the Foldio360 and the X-Carve) leave `move_timeout`
+at `None` and derive each limit from the prediction; set `move_timeout` to use a fixed
+limit instead. Pass `math.inf` to wait indefinitely. A device that
 doesn't finish in time raises `DeviceTimeout`, which is also a `TimeoutError`.
 
 Pass your own timeout when you know something the default doesn't, e.g. a heavy load

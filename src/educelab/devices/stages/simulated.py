@@ -95,7 +95,7 @@ class SimulatedStage(Stage):
         with self._state_lock:
             return dict(self._positions)
 
-    def _move_to(self, targets: Mapping[str, float], timeout: float) -> None:
+    def _move_to(self, targets: Mapping[str, float], timeout: float | None) -> None:
         current = self._position()
         offsets = {}
         for name, target in targets.items():
@@ -106,11 +106,14 @@ class SimulatedStage(Stage):
         self._travel(offsets, timeout)
 
     def _move_by(
-        self, offsets: Mapping[str, float], start: Mapping[str, float], timeout: float
+        self,
+        offsets: Mapping[str, float],
+        start: Mapping[str, float],
+        timeout: float | None,
     ) -> None:
         self._travel(offsets, timeout)
 
-    def _home(self, timeout: float) -> None:
+    def _home(self, timeout: float | None) -> None:
         current = self._position()
         reference = {axis.name: _reference(axis) for axis in self._axes}
         offsets = {name: reference[name] - current[name] for name in reference}
@@ -136,7 +139,7 @@ class SimulatedStage(Stage):
             jog.join()
         self._jog_thread = None
 
-    def _travel(self, offsets: Mapping[str, float], timeout: float) -> None:
+    def _travel(self, offsets: Mapping[str, float], timeout: float | None) -> None:
         self._check_not_jogging()
         if self._stop_event.is_set():
             raise PositionError(f"{self!r} move was interrupted by stop()")
@@ -154,7 +157,7 @@ class SimulatedStage(Stage):
             )
             if fraction >= 1.0:
                 return
-            if elapsed > timeout:
+            if timeout is not None and elapsed > timeout:
                 raise DeviceTimeout(
                     f"{self!r} move did not finish within {timeout:g} s"
                 )

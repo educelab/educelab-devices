@@ -103,12 +103,17 @@ class Stage(Device):
 
     Drivers declare `axes` and implement `_move_to()`, `_jog()`, `_stop()`,
     `_position()`, `_speed()`, and `_set_speed()`, plus `_home()` if they can
-    home. Drivers that track `stop()` requests clear them in
+    home. The hooks get ``timeout=None`` only when `move_timeout` is ``None``,
+    meaning the driver chooses the limit. Drivers that track `stop()` requests clear them in
     `_motion_starting()`.
     """
 
-    move_timeout: float = 60.0
-    """Default limit, in seconds, for a move or homing to finish."""
+    move_timeout: float | None = 60.0
+    """Default limit, in seconds, for a move or homing to finish.
+
+    ``None`` on stages that predict how long each move takes: each limit then
+    comes from the prediction. Set a number to use that instead.
+    """
 
     can_home: bool = False
     """Whether the stage has a hardware reference that `home()` can find."""
@@ -280,7 +285,7 @@ class Stage(Device):
         if self.requires_homing and not self._homed:
             raise PositionError(f"{self!r} must be homed first; call home()")
 
-    def _timeout(self, timeout: float | None) -> float:
+    def _timeout(self, timeout: float | None) -> float | None:
         if timeout is None:
             return self.move_timeout
         if timeout <= 0:
@@ -288,11 +293,14 @@ class Stage(Device):
         return timeout
 
     @abstractmethod
-    def _move_to(self, targets: Mapping[str, float], timeout: float) -> None:
+    def _move_to(self, targets: Mapping[str, float], timeout: float | None) -> None:
         """Move to checked absolute targets, blocking until arrival."""
 
     def _move_by(
-        self, offsets: Mapping[str, float], start: Mapping[str, float], timeout: float
+        self,
+        offsets: Mapping[str, float],
+        start: Mapping[str, float],
+        timeout: float | None,
     ) -> None:
         """Move by checked offsets from ``start``, the position they were
         checked against. Override when the hardware moves relatively.
@@ -304,10 +312,10 @@ class Stage(Device):
             abs(offset) for name, offset in offsets.items() if self._axis(name).wraps
         ]
         legs = max([1, *(math.ceil(turn / _MAX_WRAPPING_LEG) for turn in turns)])
-        deadline = time.monotonic() + timeout
+        deadline = None if timeout is None else time.monotonic() + timeout
         for leg in range(1, legs + 1):
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            remaining = None if deadline is None else deadline - time.monotonic()
+            if remaining is not None and remaining <= 0:
                 raise DeviceTimeout(
                     f"{self!r} move did not finish within {timeout:g} s"
                 )
@@ -346,6 +354,6 @@ class Stage(Device):
     def _set_speed(self, speed: float) -> None:
         """Set the speed for later moves and jogs."""
 
-    def _home(self, timeout: float) -> None:
+    def _home(self, timeout: float | None) -> None:
         """Home the stage, blocking until done."""
         raise NotImplementedError

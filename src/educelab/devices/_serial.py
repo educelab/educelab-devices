@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from typing import Any, TypeVar
 
 from educelab.devices.errors import (
+    CommandRejected,
+    DeviceError,
     DeviceNotFound,
     DeviceTimeout,
     NotConnected,
@@ -21,9 +23,14 @@ __all__ = [
     "PortInfo",
     "PortMatch",
     "SerialTransport",
+    "command",
     "find_ports",
     "handshake",
     "list_ports",
+    "only_port",
+    "parse_version",
+    "port_with_serial_number",
+    "wait_for",
 ]
 
 logger = logging.getLogger(__name__)
@@ -122,6 +129,44 @@ def find_ports(match: PortMatch) -> list[PortInfo]:
         ImportError: pyserial isn't installed.
     """
     return match.matching(list_ports())
+
+
+def port_with_serial_number(serial_number: str) -> PortInfo:
+    """The port whose USB serial number is ``serial_number``, ignoring case.
+
+    Raises:
+        DeviceNotFound: No port has it.
+        ImportError: pyserial isn't installed.
+    """
+    wanted = serial_number.casefold()
+    for port in list_ports():
+        if port.serial_number and port.serial_number.casefold() == wanted:
+            return port
+    raise DeviceNotFound(f"no serial port has USB serial number {serial_number!r}")
+
+
+def only_port(match: PortMatch, *, name: str, plural: str, hint: str) -> PortInfo:
+    """The one port that meets ``match``.
+
+    Args:
+        name: What a matching device is called, for errors, e.g. "X-Controller".
+        plural: The same, for several.
+        hint: What to do when none is attached.
+
+    Raises:
+        DeviceNotFound: None matches.
+        DeviceError: Several match.
+        ImportError: pyserial isn't installed.
+    """
+    found = find_ports(match)
+    if not found:
+        raise DeviceNotFound(f"no {name} is attached. {hint}")
+    if len(found) > 1:
+        choices = ", ".join(f"{p.serial_number} at {p.device}" for p in found)
+        raise DeviceError(
+            f"several {plural} are attached ({choices}); choose one with serial_number="
+        )
+    return found[0]
 
 
 # Each returns None when the criterion wasn't given.
@@ -233,6 +278,23 @@ class SerialTransport:
         except OSError as exc:
             raise self._lost(exc) from exc
 
+    def write_bytes(self, data: bytes) -> None:
+        """Send ``data`` as it is, with no line ending.
+
+        For commands a device acts on byte by byte, such as GRBL's real-time
+        commands. Safe to call while another thread is in `read_line()`.
+
+        Raises:
+            NotConnected: The port isn't open or the connection was lost.
+        """
+        conn = self._require_open()
+        logger.debug("%s > %r", self.port, data)
+        try:
+            conn.write(data)
+            conn.flush()
+        except OSError as exc:
+            raise self._lost(exc) from exc
+
     def read_line(self, timeout: float | None = None) -> str:
         """Wait for the next non-blank line.
 
@@ -244,22 +306,29 @@ class SerialTransport:
             NotConnected: The port isn't open or the connection was lost.
         """
         conn = self._require_open()
-        deadline = time.monotonic() + (self.timeout if timeout is None else timeout)
-        while (remaining := deadline - time.monotonic()) > 0:
-            conn.timeout = remaining
+        limit = max(0.0, self.timeout if timeout is None else timeout)
+        deadline = time.monotonic() + limit
+        while limit > 0:
+            # pyserial reconfigures the port whenever its timeout changes, so
+            # it changes only when a partial line leaves less time to wait.
+            if conn.timeout != limit:
+                conn.timeout = limit
             try:
                 chunk = conn.readline()
             except OSError as exc:
                 raise self._lost(exc) from exc
-            # readline() returns what it has so far when it times out.
+            # readline() returns what it has so far when it times out. With
+            # nothing at all, the wait is over, even if the clock disagrees.
+            if not chunk:
+                break
             self._partial += chunk
-            if not self._partial.endswith(b"\n"):
-                continue
-            line = self._partial.decode("ascii", errors="replace").strip()
-            self._partial = b""
-            if line:
-                logger.debug("%s < %s", self.port, line)
-                return line
+            if self._partial.endswith(b"\n"):
+                line = self._partial.decode("ascii", errors="replace").strip()
+                self._partial = b""
+                if line:
+                    logger.debug("%s < %s", self.port, line)
+                    return line
+            limit = deadline - time.monotonic()
         raise DeviceTimeout(f"no reply from serial port {self.port!r}")
 
     def _require_open(self) -> Any:
@@ -294,6 +363,19 @@ def handshake(
     """
     transport.reset_input()
     transport.write_line(command)
+    return wait_for(transport, parse, timeout)
+
+
+def wait_for(
+    transport: SerialTransport,
+    parse: Callable[[str], T | None],
+    timeout: float | None = None,
+) -> T | None:
+    """Wait for a line that ``parse`` accepts, skipping any others.
+
+    Returns:
+        The first parsed line, or ``None`` if none arrived in time.
+    """
     deadline = time.monotonic() + (transport.timeout if timeout is None else timeout)
     while (remaining := deadline - time.monotonic()) > 0:
         try:
@@ -303,6 +385,39 @@ def handshake(
         if (reply := parse(line)) is not None:
             return reply
     return None
+
+
+def command(transport: SerialTransport, line: str, device: object) -> str:
+    """Send a command to lab firmware and wait for its ``OK`` (ADR 0004).
+
+    Args:
+        device: The device, for error messages.
+
+    Returns:
+        Anything after ``OK`` in the reply, e.g. a queried value.
+
+    Raises:
+        CommandRejected: The firmware answered ``ERR``.
+        DeviceError: The reply was neither.
+        DeviceTimeout: No reply in time.
+    """
+    transport.reset_input()
+    transport.write_line(line)
+    reply = transport.read_line()
+    if reply == "OK" or reply.startswith("OK "):
+        return reply[3:].strip()
+    if reply.startswith("ERR"):
+        reason = reply[3:].strip() or "no reason given"
+        raise CommandRejected(f"{device!r} rejected {line!r}: {reason}")
+    raise DeviceError(f"{device!r} answered {line!r} with {reply!r}")
+
+
+def parse_version(text: str) -> tuple[int, ...]:
+    """Parse ``"2.0.0"``; anything unparseable sorts below every release."""
+    try:
+        return tuple(int(part) for part in text.split("."))
+    except ValueError:
+        return ()
 
 
 def _open_pyserial(port: str, baudrate: int, timeout: float) -> Any:

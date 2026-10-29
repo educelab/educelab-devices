@@ -21,7 +21,7 @@ backend is used:
 
 | Extra | Backend | Added by |
 |-------|---------|----------|
-| `serial` | MISHA, XLC lights, X-Carve (pyserial) | MISHA lights track |
+| `serial` | MISHA, XLC2 lights, X-Carve (pyserial) | MISHA lights track |
 | `foldio360` | Foldio360 turntable (bleak) | Foldio360 track |
 | `gphoto2` | DSLRs over gphoto2 (not on Windows) | gphoto2 camera track |
 | `acroname` | Acroname USB hubs (brainstem) | Acroname hub track |

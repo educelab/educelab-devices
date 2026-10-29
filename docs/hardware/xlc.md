@@ -8,7 +8,8 @@ It was copied from `pgs-scan` `dev` at `aed0b5e` (2022-11-01) and updated to 2.0
 (see [Version history](#version-history)).
 
 The two boards are separate devices, not revisions of one board, so each reports
-hardware version `1.0`.
+hardware version `1.0`. **XLC1 units have been retired** (maintainer, 2026-10-29); the
+rigs in use have XLC2s.
 
 Driver: `educelab.devices.lights.xlc` (`XLC1`, `XLC2`). Manual check: planned,
 `el-devices xlc`.
@@ -17,7 +18,9 @@ Driver: `educelab.devices.lights.xlc` (`XLC1`, `XLC2`). Manual check: planned,
 `serial_number=`. Nothing in the USB descriptors identifies an XLC (see
 [Identity](#identity)), and opening a port to send the handshake resets the board
 behind it, which could be the X-Carve's homed GRBL controller. Revisit this once the
-units' USB descriptors are recorded.
+units' USB descriptors are recorded. The one XLC2 checked has serial number `0000`,
+a placeholder, so `serial_number=` can't tell XLC2s apart (see
+[How an XLC2 shows up on the host](#how-an-xlc2-shows-up-on-the-host)).
 
 Unless marked otherwise, everything below is **assumed**: it is read from the firmware
 sources and from `pgs-scan`'s `XLC1`/`XLC2` classes (`pgs_scan/components/lights.py`,
@@ -33,10 +36,28 @@ sketches on a host against stubbed Arduino libraries, not on a board.
 | Light | PLT Solutions 5050-60-IP65-RGB2450 Nano RGB strip (`XLSα` in `pgs-scan`) | Adafruit DotStar 60 LED/m, white 6000–6500 K (`XLSγ`), and EduceLab XL4 IR940 (`XL4`) |
 | USB VID searched by `pgs-scan` | `0x04D9` | `0x1A86` or `0x04D9` |
 
-The light descriptions are `pgs-scan`'s labels, not checked against the hardware. Nobody
-has recorded which Arduino board or USB-serial bridge each unit has. `0x1A86` is the
-generic WCH CH340 vendor ID, and `0x04D9` belongs to Holtek, so neither identifies an XLC.
-The handshake is the only reliable way to identify one.
+The light descriptions are `pgs-scan`'s labels, not checked against the hardware.
+`0x1A86` is the generic WCH CH340 vendor ID, and `0x04D9` belongs to Holtek, so neither
+identifies an XLC. The handshake is the only reliable way to identify one.
+
+### How an XLC2 shows up on the host
+
+**Verified** on one XLC2 on macOS, 2026-10-29, with `pyserial-ports -v`:
+
+| | |
+|---|---|
+| Port | `/dev/cu.usbmodem00001` |
+| USB VID:PID | `04D9:B534` |
+| USB serial number | `0000` |
+| USB description | `USB TO UART BRIDGE` |
+
+`04D9:B534` is a Holtek HT42B534 USB-to-UART bridge (**assumed**, from the VID:PID).
+Its serial number `0000` is a placeholder rather than a unique one, so it can't be told
+apart from another XLC2, or from any other HT42B534, by its descriptors. Whether the
+HT42B534's descriptors can be rewritten, as MISHA's CP2102N's were, is **unknown**;
+Holtek's datasheet or configuration tool would settle it. The `usbmodem` name suggests
+the bridge is a USB CDC device, which macOS names from the serial number (**assumed**).
+Other XLC2 units may have other bridges: `pgs-scan` also searches for the CH340's VID.
 
 ### What the firmware drives
 
@@ -181,9 +202,11 @@ arduino-cli upload -b <fqbn> -p <port> firmware/xlc2/XLC2_firmware
 
 ## Unknowns
 
-- The Arduino board and USB-serial bridge in each unit, and whether any unit has a
-  unique USB serial number. Settle by plugging in each unit and recording its
-  `list_ports` entry. The board type also decides the FQBN for flashing.
+- The Arduino board in each XLC2, which decides the FQBN for flashing, and the
+  USB-serial bridge in the units not yet checked. Settle by plugging in each unit and
+  recording its `list_ports` entry.
+- Whether the HT42B534's serial number and description can be rewritten, which
+  would let `serial_number=` pick out one XLC2.
 - The XL4's current and thermal limits at full duty.
 - Whether any deployed unit runs firmware other than these two versions.
 

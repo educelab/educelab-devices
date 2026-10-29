@@ -2,9 +2,11 @@
  * ----------------------
  * EduceLab XLC2 Firmware
  * ----------------------
- * Available commands:
+ * Commands are framed by < and >. Every command is answered with exactly one
+ * line: OK if it was carried out, or ERR <reason> if it wasn't. A rejected
+ * command changes nothing.
  *
- *   <?> - Report controller name and firmware version.
+ *   <?> or <ID> - Report "name,hardware version,firmware version".
  *
  *   <B, #> - Set brightness for all LEDs on the pixel strip, where # is a value from 0 to 255.
  *
@@ -21,10 +23,10 @@
 #include <Adafruit_DotStar.h>
 #include <SPI.h>
 
-// Firmware Version
-#define VERSION_MAJOR "1"
-#define VERSION_MINOR "2"
-#define VERSION_PATCH "0"
+// Device identification, reported in response to the <?> handshake command
+#define DEVICE_NAME "EduceLab XLC2"
+#define HW_VERSION  "1.0"
+#define SW_VERSION  "2.0.0"
 
 // The PWM pin for the XMount LED array
 // Hardware SPI is a little faster, but must be wired to specific pins
@@ -38,17 +40,7 @@ Adafruit_DotStar strip(NUMPIXELS, DOTSTAR_BRG);
 // Serial IO
 const byte numChars = 32;
 char receivedChars[numChars];
-char tempChars[numChars];
-
-char command[numChars] = {0}; // ?,B,S,X,L
-int seg1 = 0; // 0 - 255
-int seg2 = 0; // 0 - 255
-int seg3 = 0; // 0 - 255
-int seg4 = 0; // 0 - 255
-int brightVal = 0; // 0 - 255
-int xmountVal = 0; // 0 - 255
-int index = 0;
-
+boolean overflow = false;
 boolean newData = false;
 
 void setup() {
@@ -59,7 +51,7 @@ void setup() {
   // Init strip
   strip.begin();
   // Setup lights
-  strip.fill(strip.Color(0,0,0), 0, 240);
+  strip.fill(strip.Color(0,0,0), 0, NUMPIXELS);
   strip.show();
 
   // Start serial
@@ -69,26 +61,7 @@ void setup() {
 void loop() {
   receive();
   if(newData == true){
-    strcpy(tempChars, receivedChars);
-    parseData();
-    if (command[0] == '?') {
-      Serial.println("EduceLab XLC2 (FW "VERSION_MAJOR"."VERSION_MINOR"."VERSION_PATCH")");
-    }
-    else if(command[0] == 'B') {
-      setBrightness(brightVal);
-    }
-    else if (command[0] == 'L') {
-      setIndex(index, brightVal);
-    }
-    else if (command[0] == 'S') {
-      setSegments(seg1, seg2, seg3, seg4);
-    }
-    else if (command[0] == 'X') {
-      setXBrightness(xmountVal);
-    }
-    else{
-      Serial.println("Unknown Command");
-    }
+    handleCommand();
     newData = false;
   }
 }
@@ -102,12 +75,20 @@ void receive() {
 
   while (Serial.available() > 0 && newData == false) {
     rc = Serial.read();
-    if(recvInProgress == true) {
+    if(rc == startMarker) {
+      // A new frame replaces one left unfinished
+      recvInProgress = true;
+      overflow = false;
+      i = 0;
+    }
+    else if(recvInProgress == true) {
       if(rc != endMarker) {
-        receivedChars[i] = rc;
-        i++;
-        if(i >= numChars) {
-          i = numChars -1;
+        if(i < numChars - 1) {
+          receivedChars[i] = rc;
+          i++;
+        }
+        else {
+          overflow = true;
         }
       }
       else {
@@ -117,66 +98,116 @@ void receive() {
         newData = true;
       }
     }
-    else if(rc == startMarker) {
-      recvInProgress = true;
-    }
-  } 
+  }
 }
 
-void parseData() {
-    char * strtokIndx;
+void handleCommand() {
+  if(overflow) {
+    Serial.println("ERR invalid command");
+    return;
+  }
 
-    strtokIndx = strtok(tempChars,",");      // get the first part - the string
-    strcpy(command, strtokIndx); // copy it to messageFromPC
-    if (command[0] == '?') {
-      // nothing to parse
+  // Handshake: the one command answered with something other than OK/ERR
+  if(strcmp(receivedChars, "?") == 0 || strcasecmp(receivedChars, "ID") == 0) {
+    Serial.println(DEVICE_NAME "," HW_VERSION "," SW_VERSION);
+    return;
+  }
+
+  char * fields[6];
+  int count = splitFields(receivedChars, fields, 6);
+  int values[4];
+  if(strcmp(fields[0], "B") == 0) {
+    if(count != 2 || !parseLevels(fields + 1, values, 1)) {
+      Serial.println("ERR invalid command");
+      return;
     }
-    else if(command[0] == 'B') {
-      Serial.println("Got a brightness command");
-      strtokIndx = strtok(NULL, ","); 
-      brightVal = atoi(strtokIndx);
+    setBrightness(values[0]);
+  }
+  else if(strcmp(fields[0], "X") == 0) {
+    if(count != 2 || !parseLevels(fields + 1, values, 1)) {
+      Serial.println("ERR invalid command");
+      return;
     }
-    else if(command[0] == 'S') {
-      Serial.println("Got a segment command");
-      strtokIndx = strtok(NULL, ",");
-      seg1 = atoi(strtokIndx);
-      strtokIndx = strtok(NULL, ",");
-      seg2 = atoi(strtokIndx);
-      strtokIndx = strtok(NULL, ",");
-      seg3 = atoi(strtokIndx);
-      strtokIndx = strtok(NULL, ",");
-      seg4 = atoi(strtokIndx);
+    setXBrightness(values[0]);
+  }
+  else if(strcmp(fields[0], "S") == 0) {
+    if(count != 5 || !parseLevels(fields + 1, values, 4)) {
+      Serial.println("ERR invalid command");
+      return;
     }
-    else if(command[0] == 'X') {
-      Serial.println("Got a xmount command");
-      strtokIndx = strtok(NULL, ",");
-      xmountVal = atoi(strtokIndx);
+    setSegments(values[0], values[1], values[2], values[3]);
+  }
+  else if(strcmp(fields[0], "L") == 0) {
+    if(count != 3 || !parseLevels(fields + 1, values, 2)) {
+      Serial.println("ERR invalid command");
+      return;
     }
-    else if(command[0] == 'L') {
-      Serial.println("Got an index command");
-      strtokIndx = strtok(NULL, ",");
-      index = atoi(strtokIndx);
-      strtokIndx = strtok(NULL, ",");
-      brightVal = atoi(strtokIndx);
-    }    
-    else {
-      Serial.println("Unknown Command");
+    if(values[0] >= NUMPIXELS) {
+      Serial.println("ERR index out of range");
+      return;
     }
+    setIndex(values[0], values[1]);
+  }
+  else {
+    Serial.println("ERR unknown command");
+    return;
+  }
+  Serial.println("OK");
+}
+
+// Splits text on commas in place. Returns the number of fields, or max + 1 if
+// there are more than max.
+int splitFields(char * text, char ** fields, int max) {
+  int count = 0;
+  char * start = text;
+  while(true) {
+    if(count == max) {
+      return max + 1;
+    }
+    fields[count++] = start;
+    char * comma = strchr(start, ',');
+    if(comma == NULL) {
+      return count;
+    }
+    *comma = '\0';
+    start = comma + 1;
+  }
+}
+
+// Parses each field as a whole number from 0 to 255, allowing spaces around it.
+boolean parseLevels(char ** fields, int * values, int count) {
+  for(int f = 0; f < count; f++) {
+    char * text = fields[f];
+    while(*text == ' ') {
+      text++;
+    }
+    int length = strlen(text);
+    while(length > 0 && text[length - 1] == ' ') {
+      length--;
+    }
+    text[length] = '\0';
+    if(length == 0 || length > 3) {
+      return false;
+    }
+    for(int c = 0; c < length; c++) {
+      if(!isDigit(text[c])) {
+        return false;
+      }
+    }
+    values[f] = atoi(text);
+    if(values[f] > 255) {
+      return false;
+    }
+  }
+  return true;
 }
 
 void setBrightness(int brightness) {
-  brightness = constrain(brightness, 0, 255);
-  Serial.print("Setting brightness to ");
-  Serial.println(brightness);
-  strip.fill(strip.Color(brightness,brightness,brightness), 0, 240);
+  strip.fill(strip.Color(brightness,brightness,brightness), 0, NUMPIXELS);
   strip.show();
 }
 
 void setSegments(int seg1, int seg2, int seg3, int seg4) {
-  seg1 = constrain(seg1, 0, 255);
-  seg2 = constrain(seg2, 0, 255);
-  seg3 = constrain(seg3, 0, 255);
-  seg4 = constrain(seg4, 0, 255);
   strip.clear();
   strip.fill(strip.Color(seg1,seg1,seg1), 0, 55);
   strip.fill(strip.Color(seg2,seg2,seg2), 55, 56);
@@ -186,12 +217,10 @@ void setSegments(int seg1, int seg2, int seg3, int seg4) {
 }
 
 void setIndex(int index, int brightness) {
-  brightness = constrain(brightness, 0, 255);
   strip.setPixelColor(index, brightness, brightness, brightness);
   strip.show();
 }
 
 void setXBrightness(int brightness) {
-  brightness = constrain(brightness, 0, 255);
   analogWrite(xMountLEDs, brightness);
 }

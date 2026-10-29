@@ -101,14 +101,14 @@ The camera has **no timestamp latch**, so the driver can't read the device clock
 
 ## State and recovery
 
-- **A wedged camera needs a power cycle.** After `TLParamsLocked = 1`, or a session closed in Aravis's async USB mode, the camera streams nothing (or only `missing-packets` frames) until it is power-cycled. Clearing the flag doesn't help. On the lab rig it is on Acroname port 6: `el-devices hub cycle 6`. Verified.
+- **A wedged camera needs a power cycle.** After `TLParamsLocked = 1`, or (before the driver waited for an async stream to go quiet) a session closed in Aravis's async USB mode on macOS, the camera streams nothing (or only `missing-packets` frames) until it is power-cycled. Clearing the flag doesn't help. On the lab rig it is on Acroname port 6: `el-devices hub cycle 6`. Verified.
 - **Busy detection works.** A second process's open fails with `LIBUSB_ERROR_ACCESS`, which the driver reports as `DeviceBusy`. Verified.
 - **Reopening after a failed session** failed with `LIBUSB_ERROR_ACCESS` in the first session. The cause was a buffer left in a failed test's traceback, which kept the stream and the USB interface (found on the CM3-U3-50S5M; fixed in the driver). Verified.
 
 ## Hazards
 
 - **Never set `TLParamsLocked`.** With it set to 1, the camera streams nothing through Aravis, and stays that way after the flag is cleared, until power-cycled. The driver leaves it alone, as Aravis's own tools do. Verified.
-- **Aravis's USB mode matters on both OSes.** In async mode on macOS, closing the camera can hang forever (in `arv_uv_stream_finalize`), and the next session then gets only `missing-packets` frames until a power cycle. In sync mode on Linux, frames arrive incomplete. The driver uses sync on macOS and async elsewhere. Verified; see [usb3-vision.md](usb3-vision.md#hazards).
+- **Aravis's USB mode.** In sync mode on Linux, frames arrive incomplete. In async mode on macOS, closing the camera once hung forever (in `arv_uv_stream_finalize`), and the next session got only `missing-packets` frames until a power cycle; since the driver waits for an async stream to go quiet before dropping it, 10 open/capture/close cycles and the hardware tests (23 passed, 2 skipped, 2026-10-29) closed cleanly. The driver uses async everywhere. Verified; see [usb3-vision.md](usb3-vision.md#hazards).
 - **Bandwidth.** Streaming this camera with five uncapped CM3-U3-50S5M cameras through one hub gave it only `size-mismatch` frames: about 5 × 181 MB/s plus 162 MB/s on one USB 3 upstream link. Cap the FLIR cameras' throughput when they share a link. Verified.
 - **Occasional `size-mismatch` frames** (2 of 22 and 4 of 25 frames, in two runs) with only this camera streaming. The cause is **unknown**. The driver drops them as incomplete and takes the next frame.
 - **Exposure writes clamp silently.** An out-of-range `ExposureTime` write is accepted and clamped by the camera. The driver checks ranges itself, so callers get `ValueError`. Verified.

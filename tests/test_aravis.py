@@ -25,7 +25,7 @@ from educelab.devices.errors import (
     DeviceNotFound,
     DeviceTimeout,
 )
-from fakes.aravis import DEVICE_DOMAIN, FakeRepository, GLibError
+from fakes.aravis import DEVICE_DOMAIN, FakeArvCamera, FakeRepository, GLibError
 from fakes.aravis import DeviceError as ArvDeviceError
 from fakes.genicam import FakeCamera, FrameSpec
 
@@ -156,17 +156,11 @@ def test_a_flir_opened_by_usb_serial_reports_its_own_serial():
         assert camera.info.serial_number == "20298452"
 
 
-@pytest.mark.parametrize(
-    ("platform", "mode"),
-    # On macOS, async mode can hang closing a stream in arv_uv_stream_finalize;
-    # on Linux, sync mode drops frames from the IDS camera (usb3-vision.md).
-    [("darwin", "SYNC"), ("linux", "ASYNC"), ("win32", "ASYNC")],
-)
-def test_usb_transfers_suit_the_platform(repository, monkeypatch, platform, mode):
-    monkeypatch.setattr(aravis.sys, "platform", platform)
-    with AravisCamera(MONO, repository=repository) as camera:
-        usb_mode = connection_of(camera)._camera.usb_mode
-    assert usb_mode == getattr(repository.Aravis.UvUsbMode, mode)
+def test_usb_transfers_are_async(camera, repository):
+    # Sync mode drops the IDS camera's frames on Linux, and on any OS halts a
+    # camera's stream for good after one malformed trailer (usb3-vision.md).
+    usb_mode = connection_of(camera)._camera.usb_mode
+    assert usb_mode == repository.Aravis.UvUsbMode.ASYNC
 
 
 def test_open_turns_on_access_checks_but_not_range_checks(camera, repository):
@@ -381,12 +375,7 @@ def test_stopping_drops_the_stream_and_its_waiting_frames(camera, sim):
     conn._device.set_string_feature_value("PixelFormat", "Mono16")
 
 
-@pytest.fixture
-def linux(monkeypatch):
-    monkeypatch.setattr(aravis.sys, "platform", "linux")
-
-
-def test_a_restart_waits_for_the_frame_still_arriving(repository, linux):
+def test_a_restart_waits_for_the_frame_still_arriving(repository):
     # The CM3-U3-50S5M still sends its last frame after AcquisitionStop, and
     # dropping an async stream then wedged its endpoint (usb3-vision.md).
     with AravisCamera(MONO, repository=repository) as camera:
@@ -398,9 +387,7 @@ def test_a_restart_waits_for_the_frame_still_arriving(repository, linux):
     assert frame.pixel_format == "Mono16"
 
 
-def test_draining_gives_up_on_a_camera_that_keeps_sending(
-    repository, linux, monkeypatch
-):
+def test_draining_gives_up_on_a_camera_that_keeps_sending(repository, monkeypatch):
     monkeypatch.setattr(aravis, "_DRAIN_LIMIT_S", 0.05)
     with AravisCamera(MONO, repository=repository) as camera:
         conn = connection_of(camera)
@@ -410,9 +397,9 @@ def test_draining_gives_up_on_a_camera_that_keeps_sending(
     assert time.perf_counter() - started < 0.5
 
 
-def test_sync_streams_are_dropped_without_waiting(repository, monkeypatch):
-    # Sync mode reads one transfer at a time and finds the next leader itself.
-    monkeypatch.setattr(aravis.sys, "platform", "darwin")
+def test_non_usb_streams_are_dropped_without_waiting(repository, monkeypatch):
+    # Only async USB streams need the drain; the USB mode is never set on others.
+    monkeypatch.setattr(FakeArvCamera, "is_uv_device", lambda self: False)
     with AravisCamera(MONO, repository=repository) as camera:
         conn = connection_of(camera)
         conn._camera.sends_after_stop = 10**9

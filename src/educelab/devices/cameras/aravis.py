@@ -10,7 +10,6 @@ without it. Neither is on PyPI in a form pip can install alone; see
 import importlib
 import logging
 import math
-import sys
 import threading
 import time
 import weakref
@@ -216,14 +215,12 @@ class _AravisConnection:
         # checks stay off: the core checks ranges itself, and Aravis's check
         # refuses Mono16 on the CM3-U3-50S5M (usb3-vision.md, Hardware runs).
         self._device.set_access_check_policy(arv.AccessCheckPolicy.ENABLE)
-        # Sync transfers on macOS, where finalizing an async stream can deadlock
-        # and wedge the camera; async elsewhere, since on Linux sync mode drops
-        # the IDS camera's frames (usb3-vision.md, Hazards).
+        # Async transfers everywhere: sync mode drops the IDS camera's frames on
+        # Linux, and halts a CM3-U3-50S5M's stream for good after one malformed
+        # trailer, which a shared link causes (usb3-vision.md, Hazards).
         if self._do(camera.is_uv_device):
-            modes = arv.UvUsbMode
-            mode = modes.SYNC if sys.platform == "darwin" else modes.ASYNC
-            self._do(lambda: camera.uv_set_usb_mode(mode))
-            self._async = mode == modes.ASYNC
+            self._do(lambda: camera.uv_set_usb_mode(arv.UvUsbMode.ASYNC))
+            self._async = True
 
     def _do(self, fn: Callable[[], T]) -> T:
         try:
@@ -353,7 +350,7 @@ class _AravisConnection:
 
         Dropping an async stream mid-frame cancels its transfers part-way, which
         wedged a CM3-U3-50S5M's stream endpoint on Linux until a power cycle
-        (usb3-vision.md, Hazards). Sync streams find the next leader themselves.
+        (usb3-vision.md, Hazards). Only USB streams are async.
         """
         stream = self._stream
         if not self._async or stream is None:

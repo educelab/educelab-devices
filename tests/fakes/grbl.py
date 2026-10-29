@@ -121,6 +121,7 @@ class GrblMachine:
         with self._cond:
             self._advance()
             self._halt()
+            self._homing_until = None
             self.state = "Alarm"
             self._say(f"ALARM:{code}")
 

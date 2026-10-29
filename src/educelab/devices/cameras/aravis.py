@@ -7,6 +7,7 @@ without it. Neither is on PyPI in a form pip can install alone; see
 ``docs/hardware/usb3-vision.md`` for the steps on each OS.
 """
 
+import contextlib
 import importlib
 import logging
 import math
@@ -231,8 +232,13 @@ class _AravisConnection:
             if exc.domain == _DEVICE_ERROR_DOMAIN and exc.code == timeout:
                 kind = DeviceTimeout
             error = kind(str(exc))
+        # Neither the call nor the error may outlive this frame: through the
+        # traceback they would keep the stream, and the USB interface, until gc.
         del fn
-        raise error
+        try:
+            raise error
+        finally:
+            del error
 
     def _allocate(self) -> None:
         """Give the camera a new stream with buffers sized to its payload.
@@ -327,8 +333,11 @@ class _AravisConnection:
         try:
             self._do(self._camera.start_acquisition)
         except DeviceError:
-            # A stream left behind keeps its channel on (see stop_acquisition).
-            self._stream = None
+            # The start may have reached the camera anyway, so stop it and let any
+            # frame finish. A stream left behind keeps its channel on.
+            with contextlib.suppress(DeviceError):
+                self._do(self._camera.stop_acquisition)
+            self._drop_stream()
             raise
         self._acquiring = True
 
@@ -338,35 +347,61 @@ class _AravisConnection:
         self._acquiring = False
         try:
             self._do(self._camera.stop_acquisition)
+        finally:
+            # Even after a failed stop, since the camera may still be sending.
+            self._drop_stream()
+
+    def _drop_stream(self) -> None:
+        """Drop the stream once the camera has finished sending.
+
+        Dropping it disables its channel (the U3-36PxXCP-M refuses PixelFormat
+        writes until then) and discards pre-stop frames. Nothing else may hold it
+        (ids-u3-36p0xcp.md, Pixel formats).
+        """
+        try:
             self._drain()
         finally:
-            # Dropping the stream disables its channel (the U3-36PxXCP-M refuses
-            # PixelFormat writes until then) and discards pre-stop frames. Nothing
-            # else may hold it (ids-u3-36p0xcp.md, Pixel formats).
             self._stream = None
 
     def _drain(self) -> None:
         """Wait until the camera has finished sending, after AcquisitionStop.
 
         Dropping an async stream mid-frame cancels its transfers part-way, which
-        wedged a CM3-U3-50S5M's stream endpoint on Linux until a power cycle
-        (usb3-vision.md, Hazards). Only USB streams are async.
+        wedged a CM3-U3-50S5M's stream endpoint on Linux until a power cycle, and
+        once hung a close on macOS (usb3-vision.md, Hazards). Only USB streams are
+        async. Best effort: it gives up, with a warning, rather than raise.
         """
         stream = self._stream
         if not self._async or stream is None:
             return
         exposure = self._exposure_s()
         quiet_s = _DRAIN_QUIET_S + exposure
-        now = time.perf_counter()
+        now = started = time.perf_counter()
         deadline = now + _DRAIN_LIMIT_S + exposure
-        received = stream.get_info_uint64_by_name("n_transferred_bytes")
-        quiet_since = now
-        while now < deadline and now - quiet_since < quiet_s:
-            time.sleep(_DRAIN_POLL_S)
-            now = time.perf_counter()
-            latest = stream.get_info_uint64_by_name("n_transferred_bytes")
-            if latest != received:
-                received, quiet_since = latest, now
+        try:
+            received = self._transferred(stream)
+            quiet_since = now
+            while now < deadline and now - quiet_since < quiet_s:
+                time.sleep(_DRAIN_POLL_S)
+                now = time.perf_counter()
+                latest = self._transferred(stream)
+                if latest != received:
+                    received, quiet_since = latest, now
+        except DeviceError as exc:
+            # The text only: a logged error keeps its traceback, and so the stream.
+            logger.warning("dropping the stream undrained: %s", str(exc))
+            return
+        if now - quiet_since < quiet_s:
+            logger.warning(
+                "camera still sending %.1f s after AcquisitionStop; dropping the "
+                "stream anyway",
+                now - started,
+            )
+
+    def _transferred(self, stream: Any) -> int:
+        return int(
+            self._do(lambda: stream.get_info_uint64_by_name("n_transferred_bytes"))
+        )
 
     def _exposure_s(self) -> float:
         # A frame being exposed at the stop is sent once its exposure ends.

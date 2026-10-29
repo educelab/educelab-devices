@@ -30,7 +30,7 @@ Fedora on an Apple Silicon Mac (Asahi Linux, arm64), IDS peak 26.06.2's `ids_u3v
 
 ### Aravis on Linux
 
-The same machine and link, Aravis 0.8 built from source. With the driver in sync USB mode, as it then was everywhere, only discovery passed: opening timed out, because every frame arrived incomplete while the driver waited for one complete frame to time the camera's arrivals. `arv-camera-test-0.8` then showed the cause: in sync mode it reported six or more errors, while in async mode the camera streamed cleanly. The driver now uses async mode off macOS. [V, 2026-10-22]
+The same machine and link, Aravis 0.8 built from source. With the driver in sync USB mode, as it then was everywhere, only discovery passed: opening timed out, because every frame arrived incomplete while the driver waited for one complete frame to time the camera's arrivals. `arv-camera-test-0.8` then showed the cause: in sync mode it reported six or more errors, while in async mode the camera streamed cleanly. The driver now uses async mode everywhere (on macOS since 2026-10-29). [V, 2026-10-22]
 
 Rerun in async mode: 22 of 23 hardware tests passed, 2 skipped (no `ExposureAuto`; the refusal test, since Aravis times this camera). [V for each point below]
 
@@ -136,6 +136,8 @@ ARAVIS_SERIAL=4110091493 pytest -m hardware tests/test_aravis_hardware.py -s
 
 ### Last run
 
+2026-10-29, macOS 27 (arm64), Python 3.14.8, Aravis 0.8.36 (Homebrew), firmware `3.90.27889`, async USB mode (the driver's first macOS run in it): `tests/test_aravis_hardware.py` 23 passed, 2 skipped. Ten open/capture/close cycles, alternating Mono10g40IDS and Mono8, each closed in 0.22–0.28 s, with no hang and no incomplete frame in the next session. The five CM3-U3-50S5M on the same hub were idle.
+
 2026-10-23, Fedora (the second lab machine), Python 3.14.8, Aravis from source, async USB mode with the wait before a stream is dropped: `tests/test_aravis_hardware.py` 22 passed, 2 skipped. The arrival-timed offset spread was 0.92 ms. 300 `not_before` captures met 300 stale frames, at 2.5 captures per second. Switching to software trigger took 0.30 s, with a 139 ms turnaround, and the 20 triggered exposures began 2–10 ms after the request, none needing a second trigger.
 
 2026-10-23, Windows, Python 3.12.10, IDS peak's `ids_u3vgentlk.cti`, firmware `3.90.27889`: `tests/test_gentl_hardware.py` 17 passed, 7 skipped, the same as on Linux. Mono10g40IDS decoded to 10 bits. The IDS GigE Vision producer and Spinnaker's producer loaded beside it without trouble.
@@ -149,4 +151,4 @@ ARAVIS_SERIAL=4110091493 pytest -m hardware tests/test_aravis_hardware.py -s
 
 - `tests/test_aravis_hardware.py`: 20 passed, 1 skipped, 2 deselected (multi-camera), with all 20 triggered captures needing no second trigger.
 - `el-devices genicam`: free-running Mono10g40IDS 10/10 at 6.7 frames/s; software trigger 20/20, median 132 ms, one trigger fired again, two `size-mismatch` frames dropped.
-- History: the first session passed 8 of 23 hardware tests. The fixes that followed (stream only while acquiring, `TLParamsLocked` left alone, sync USB mode, arrival timing, Mono10g40IDS, dating triggered frames by their trigger, the trigger settle time) are recorded above and in [usb3-vision.md](usb3-vision.md#hardware-runs).
+- History: the first session passed 8 of 23 hardware tests. The fixes that followed (stream only while acquiring, `TLParamsLocked` left alone, sync USB mode (async since 2026-10-29), arrival timing, Mono10g40IDS, dating triggered frames by their trigger, the trigger settle time) are recorded above and in [usb3-vision.md](usb3-vision.md#hardware-runs).

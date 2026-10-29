@@ -275,8 +275,8 @@ streamed out by the device", in Spinnaker's `Camera.h`.
 - **The camera keeps it:** a limit set in one session is still set when the camera is
   next opened (verified on the CM3-U3-50S5M, 2026-10-20: runs without
   `--throughput-limit` after one with it reported 80.384 MB/s); that a power cycle
-  clears it is assumed. `open()` doesn't reset it, so set the limit explicitly whenever
-  it matters.
+  clears it is assumed. `open()` doesn't reset it, unless it has to change the pixel
+  format (see the next point), so set the limit explicitly whenever it matters.
 - **A pixel format change resets it** to the new format's maximum (verified on the
   CM3-U3-50S5M through Aravis, 2026-10-29: 80.384 became 180.864 on Mono16 → Mono8).
   Writing the current format, exposure, or gain leaves it. Set the limit after

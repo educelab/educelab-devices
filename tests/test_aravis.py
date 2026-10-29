@@ -25,9 +25,15 @@ from educelab.devices.errors import (
     DeviceNotFound,
     DeviceTimeout,
 )
-from fakes.aravis import DEVICE_DOMAIN, FakeArvCamera, FakeRepository, GLibError
+from fakes.aravis import (
+    DEVICE_DOMAIN,
+    FakeArvCamera,
+    FakeArvStream,
+    FakeRepository,
+    GLibError,
+)
 from fakes.aravis import DeviceError as ArvDeviceError
-from fakes.genicam import FakeCamera, FrameSpec
+from fakes.genicam import FakeCamera, FakeCameraError, FrameSpec
 
 MONO = "4108000001"
 COLOR = "4108000002"
@@ -387,7 +393,9 @@ def test_a_restart_waits_for_the_frame_still_arriving(repository):
     assert frame.pixel_format == "Mono16"
 
 
-def test_draining_gives_up_on_a_camera_that_keeps_sending(repository, monkeypatch):
+def test_draining_gives_up_on_a_camera_that_keeps_sending(
+    repository, monkeypatch, caplog
+):
     monkeypatch.setattr(aravis, "_DRAIN_LIMIT_S", 0.05)
     with AravisCamera(MONO, repository=repository) as camera:
         conn = connection_of(camera)
@@ -395,6 +403,49 @@ def test_draining_gives_up_on_a_camera_that_keeps_sending(repository, monkeypatc
         started = time.perf_counter()
         conn.stop_acquisition()
     assert time.perf_counter() - started < 0.5
+    assert "still sending" in caplog.text
+
+
+def test_a_failed_stop_still_drains(repository, sim):
+    with AravisCamera(MONO, repository=repository) as camera:
+        conn = connection_of(camera)
+        arv_camera = conn._camera
+        arv_camera.sends_after_stop = 3
+        sim.failures["stop"] = FakeCameraError("timeout", "no answer")
+        with pytest.raises(DeviceTimeout):
+            conn.stop_acquisition()
+        assert conn._stream is None
+        assert not arv_camera.wedged
+        del sim.failures["stop"]
+        sim.stop()
+
+
+def test_a_failed_start_stops_and_drains(repository, sim):
+    with AravisCamera(MONO, repository=repository) as camera:
+        conn = connection_of(camera)
+        arv_camera = conn._camera
+        conn.stop_acquisition()
+        arv_camera.sends_after_stop = 3
+        sim.failures["start"] = FakeCameraError("timeout", "no answer")
+        with pytest.raises(DeviceTimeout):
+            conn.start_acquisition()
+        del sim.failures["start"]
+        assert conn._stream is None
+        assert not arv_camera.wedged
+
+
+def test_a_drain_that_errors_still_closes(repository, monkeypatch, caplog):
+    def fail(self, name):
+        raise GLibError("lost", DEVICE_DOMAIN, int(ArvDeviceError.TRANSFER_ERROR))
+
+    camera = AravisCamera(MONO, repository=repository)
+    camera.open()
+    monkeypatch.setattr(FakeArvStream, "get_info_uint64_by_name", fail)
+    camera.close()
+    assert "undrained" in caplog.text
+    # The camera was let go, so this process can open it again.
+    with AravisCamera(MONO, repository=repository):
+        pass
 
 
 def test_non_usb_streams_are_dropped_without_waiting(repository, monkeypatch):

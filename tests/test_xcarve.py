@@ -1,13 +1,16 @@
+import _thread
 import threading
 import time
 
 import pytest
 
 from contracts import StageContract
+from educelab.devices import _serial
 from educelab.devices._serial import PortInfo, SerialTransport
 from educelab.devices.device import DeviceInfo, Disconnected
 from educelab.devices.errors import (
     CommandRejected,
+    DeviceBusy,
     DeviceError,
     DeviceNotFound,
     DeviceTimeout,
@@ -15,6 +18,7 @@ from educelab.devices.errors import (
     PositionError,
 )
 from educelab.devices.stages import xcarve
+from educelab.devices.stages.base import Stage
 from educelab.devices.stages.xcarve import GrblAlarm, XCarve
 from fakes.grbl import SOFT_RESET, GrblMachine
 from fakes.serial_port import ScriptedSerial
@@ -46,7 +50,7 @@ def machine():
 class TestXCarveContract(StageContract):
     @pytest.fixture(autouse=True)
     def no_ports(self, monkeypatch):
-        monkeypatch.setattr(xcarve, "list_ports", list)
+        monkeypatch.setattr(_serial, "list_ports", list)
 
     @pytest.fixture
     def make_device(self):
@@ -137,8 +141,9 @@ def test_limits_must_give_each_axis_a_range(limits):
         XCarve("COM4", limits=limits, speed=50.0)
 
 
-@pytest.mark.parametrize("speed", [0.0, -5.0, float("nan")])
-def test_speed_must_be_positive(speed):
+@pytest.mark.parametrize("speed", [0.0, -5.0, float("nan"), 0.005])
+def test_speed_must_be_at_least_the_minimum(speed):
+    # Below 1/120 mm/s the feed rounds to F0, which GRBL rejects.
     with pytest.raises(ValueError):
         XCarve("COM4", limits=LIMITS, speed=speed)
 
@@ -259,7 +264,7 @@ XLC2 = PortInfo("/dev/cu.usbmodem00001", vid=0x04D9, pid=0xB534, serial_number="
 def attach(monkeypatch, boards):
     """Attach ``boards``, a mapping of PortInfo to the fake port behind it."""
     by_device = {port.device: fake for port, fake in boards.items()}
-    monkeypatch.setattr(xcarve, "list_ports", lambda: list(boards))
+    monkeypatch.setattr(_serial, "list_ports", lambda: list(boards))
     monkeypatch.setattr(
         xcarve,
         "_default_transport",
@@ -424,7 +429,7 @@ def test_default_move_limit_follows_distance_and_speed(homed):
     )
     # A long slow move gets longer than Stage.move_timeout's 60 s.
     homed.set_speed(1.0)
-    assert homed._move_limit(start, {**start, "x": -101.0}) > homed.move_timeout
+    assert homed._move_limit(start, {**start, "x": -101.0}) > Stage.move_timeout
 
 
 # Jogging, stopping, and live position
@@ -574,3 +579,218 @@ def test_unplugging_reaches_listeners_and_later_calls_raise(homed, machine):
         homed.move_to({"x": -5.0})
     homed.close()
     assert not homed.is_open
+
+
+def wait_until(predicate, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, "timed out waiting"
+        time.sleep(0.001)
+
+
+def test_reopening_after_losing_the_connection_mid_command():
+    # The reply homing still owed must not swallow the next connection's.
+    machine = GrblMachine(homing_s=30.0)
+    stage = make_stage(machine)
+    stage.open()
+    threading.Timer(0.1, machine.unplug).start()
+    with pytest.raises(NotConnected):
+        stage.home(timeout=5.0)
+    stage.close()
+    machine.present = True
+    stage.open()
+    assert stage.max_rates()["z"] == pytest.approx(12.5)
+    stage.close()
+
+
+def test_a_listener_can_close_the_stage_when_the_connection_is_lost(homed, machine):
+    closed = threading.Event()
+
+    def on_event(event):
+        if isinstance(event, Disconnected):
+            homed.close()
+            closed.set()
+
+    homed.add_listener(on_event)
+    machine.unplug()
+    assert closed.wait(2.0)
+    assert not homed.is_open
+
+
+# Stopping at awkward moments
+
+
+def test_ctrl_c_during_homing_resets_the_controller():
+    # Homing ignores jog-cancel, and by the time a caller's stop() runs, the
+    # stage no longer knows it was homing.
+    machine = GrblMachine(homing_s=30.0)
+    with make_stage(machine) as stage:
+        threading.Timer(0.2, _thread.interrupt_main).start()
+        with pytest.raises(KeyboardInterrupt):
+            stage.home()
+        assert SOFT_RESET in machine.realtime
+        assert machine.state != "Home"
+
+
+def stop_while_sending(stage, monkeypatch):
+    """Make stop() reach GRBL as a motion line does, before GRBL reads the line."""
+    transport = stage._transport
+    write_line = transport.write_line
+
+    def stop_then_write(line):
+        if line.startswith(("$J", "$H")):
+            stage.stop()
+        write_line(line)
+
+    monkeypatch.setattr(transport, "write_line", stop_then_write)
+
+
+@pytest.mark.parametrize(
+    "motion",
+    [lambda stage: stage.move_to({"x": -300.0}), lambda stage: stage.jog("x", -1)],
+    ids=["move_to", "jog"],
+)
+def test_a_stop_grbl_reads_before_the_jog_still_stops_it(
+    real_time, monkeypatch, motion
+):
+    stage, machine = real_time
+    stop_while_sending(stage, monkeypatch)
+    with pytest.raises(PositionError, match="stop"):
+        motion(stage)
+    assert not machine.moving
+
+
+@pytest.mark.parametrize(
+    "motion",
+    [lambda stage: stage.move_to({"x": -300.0}), lambda stage: stage.home()],
+    ids=["move_to", "home"],
+)
+def test_a_stop_before_a_line_is_sent_keeps_it_unsent(real_time, monkeypatch, motion):
+    stage, machine = real_time
+    idle_status = stage._idle_status
+
+    def stopped_first():
+        stage.stop()
+        return idle_status()
+
+    monkeypatch.setattr(stage, "_idle_status", stopped_first)
+    with pytest.raises(PositionError, match="stop"):
+        motion(stage)
+    assert jogs(machine) == []
+    assert machine.lines.count("$H") == 1
+    assert not machine.moving
+
+
+def test_a_move_after_stopping_a_jog_waits_for_the_cancel_to_finish():
+    # GRBL accepts a jog sent while a cancelled one decelerates, then drops it.
+    machine = GrblMachine(speedup=1.0, cancel_s=0.3)
+    with make_stage(machine) as stage:
+        stage.home()
+        stage.jog("x", -1)
+        time.sleep(0.1)
+        stage.stop()
+        stage.move_to({"x": -20.0})
+        assert stage.position()["x"] == pytest.approx(-20.0, abs=0.05)
+    assert machine.dropped == []
+
+
+def test_a_move_during_a_jog_raises_device_busy(real_time):
+    stage, machine = real_time
+    stage.jog("x", -1)
+    with pytest.raises(DeviceBusy, match="stop()"):
+        stage.move_to({"x": -20.0})
+    with pytest.raises(DeviceBusy):
+        stage.home()
+    assert jogs(machine) == ["$J=G53 G21 X-699.000 F3000"]
+    stage.stop()
+
+
+def test_a_move_after_a_jog_reaches_its_limit_runs(homed):
+    homed.jog("x", 1)
+    wait_until(lambda: homed.position()["x"] == 0.0)
+    homed.move_to({"x": -5.0})
+    assert homed.position()["x"] == pytest.approx(-5.0)
+
+
+# Alarms at awkward moments
+
+
+def alarm_after(stage, machine, monkeypatch, hook, matching=""):
+    """Raise ALARM:1 once ``hook`` returns, and wait until the stage sees it."""
+    real = getattr(stage, hook)
+
+    def then_alarm(*args, **kwargs):
+        result = real(*args, **kwargs)
+        if str(args[0] if args else "").startswith(matching):
+            alarms = stage._alarms
+            machine.alarm(1)
+            wait_until(lambda: stage._alarms > alarms)
+        return result
+
+    monkeypatch.setattr(stage, hook, then_alarm)
+
+
+def test_an_alarm_just_after_grbl_accepts_a_jog_fails_the_move(real_time, monkeypatch):
+    stage, machine = real_time
+    alarm_after(stage, machine, monkeypatch, "_command", matching="$J")
+    with pytest.raises(DeviceError, match="hard limit"):
+        stage.move_to({"x": -300.0}, timeout=2.0)
+
+
+@pytest.mark.parametrize("hook", ["_command", "_home"])
+def test_an_alarm_as_homing_finishes_leaves_the_stage_unhomed(
+    stage, machine, monkeypatch, hook
+):
+    alarm_after(stage, machine, monkeypatch, hook)
+    try:
+        stage.home()
+    except DeviceError as exc:
+        assert "lost homing" in str(exc)
+    assert not stage.is_homed
+
+
+# Odds and ends
+
+
+def test_a_given_transport_is_used_even_with_a_serial_number(monkeypatch):
+    def no_listing():
+        raise AssertionError("listed ports")
+
+    monkeypatch.setattr(_serial, "list_ports", no_listing)
+    machine = GrblMachine()
+    stage = XCarve(
+        serial_number="XCONTROLLERAB",
+        limits=LIMITS,
+        speed=50.0,
+        transport=make_transport(machine),
+    )
+    with stage:
+        assert machine.is_open
+
+
+def test_move_by_asks_for_status_at_most_once_before_moving(homed, monkeypatch):
+    calls = []
+    query, command = homed._query_status, homed._command
+
+    def counted_query(*args, **kwargs):
+        calls.append("?")
+        return query(*args, **kwargs)
+
+    def counted_command(line, *args, **kwargs):
+        calls.append(line)
+        return command(line, *args, **kwargs)
+
+    monkeypatch.setattr(homed, "_query_status", counted_query)
+    monkeypatch.setattr(homed, "_command", counted_command)
+    time.sleep(xcarve.STATUS_INTERVAL_S)  # so nothing is fresh to start with
+    homed.move_by({"x": -5.0})
+    assert calls.index(next(c for c in calls if c.startswith("$J"))) == 1
+    assert homed.position()["x"] == pytest.approx(-6.0)
+
+
+def test_move_timeout_replaces_the_predicted_limit(real_time):
+    stage, machine = real_time
+    stage.move_timeout = 0.3
+    with pytest.raises(DeviceTimeout, match="0.3 s"):
+        stage.move_to({"x": -600.0})
+    assert not machine.moving

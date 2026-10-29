@@ -16,7 +16,10 @@ from educelab.devices._serial import (
     PortInfo,
     PortMatch,
     SerialTransport,
-    list_ports,
+    find_ports,
+    only_port,
+    port_with_serial_number,
+    wait_for,
 )
 from educelab.devices.device import (
     DeviceEvent,
@@ -26,6 +29,7 @@ from educelab.devices.device import (
 )
 from educelab.devices.errors import (
     CommandRejected,
+    DeviceBusy,
     DeviceError,
     DeviceNotFound,
     DeviceTimeout,
@@ -57,12 +61,9 @@ ARRIVAL_TOLERANCE_MM = 0.05
 START_GRACE_S = 0.5
 # A default move limit is twice the predicted time plus this, for acceleration.
 MOVE_MARGIN_S = 5.0
-# Slowest speed set_speed() takes, in mm/s. GRBL itself only needs it positive.
+# Slowest speed the stage takes, in mm/s. GRBL rounds feeds to whole mm/min,
+# and rejects F0.
 MIN_SPEED_MM_S = 0.1
-
-# What Stage passes the hooks for timeout=None. The base rejects timeouts <= 0,
-# so no caller's value can collide with it.
-_DEFAULT_TIMEOUT = -1.0
 
 # Real-time commands, which GRBL acts on as soon as it reads them.
 STATUS_QUERY = b"?"
@@ -134,14 +135,21 @@ class XCarve(Stage):
 
     An alarm stops the machine and loses homing: listeners get a `GrblAlarm`,
     a move in progress raises `DeviceError`, and later moves raise
-    `PositionError` until `home()` runs again.
+    `PositionError` until `home()` runs again. Listeners are called on the
+    stage's reader thread.
+
+    With ``timeout=None``, a move's limit is twice its predicted time plus
+    `MOVE_MARGIN_S`, and homing's is `HOMING_TIMEOUT_S`, unless
+    `move_timeout` is set. A move or homing during a `jog()` raises
+    `DeviceBusy`; call `stop()` first.
 
     Args:
         port: Serial port, e.g. ``"COM3"`` or ``"/dev/cu.usbserial-21320"``.
         limits: ``(minimum, maximum)`` in mm for each of ``"x"``, ``"y"`` and
             ``"z"``, in machine coordinates.
-        speed: Starting speed for moves and jogs, in mm/s. Each axis is also
-            held to its own maximum rate in GRBL (``$110``–``$112``).
+        speed: Starting speed for moves and jogs, in mm/s, at least
+            `MIN_SPEED_MM_S`. Each axis is also held to its own maximum rate
+            in GRBL (``$110``–``$112``).
         serial_number: USB serial number of the controller's port, matched
             exactly but ignoring case. Found again on each `open()`.
         transport: Connection to use instead of opening ``port`` with
@@ -152,11 +160,13 @@ class XCarve(Stage):
 
     Raises:
         ValueError: ``limits`` doesn't give each axis a valid range, ``speed``
-            isn't positive, or both ``port`` and ``serial_number`` were given.
+            is below `MIN_SPEED_MM_S`, or both ``port`` and ``serial_number``
+            were given.
     """
 
     can_home = True
     requires_homing = True
+    move_timeout = None
 
     def __init__(
         self,
@@ -171,8 +181,10 @@ class XCarve(Stage):
             raise ValueError("give an XCarve a port or a serial number, not both")
         if set(limits) != set(AXIS_NAMES):
             raise ValueError(f"limits must give x, y and z, not {sorted(limits)}")
-        if not speed > 0:
-            raise ValueError(f"speed must be positive, not {speed}")
+        if not speed >= MIN_SPEED_MM_S:
+            raise ValueError(
+                f"speed must be at least {MIN_SPEED_MM_S} mm/s, not {speed}"
+            )
         super().__init__()
         self._axes = tuple(
             Axis(name, AxisKind.LINEAR, float(limits[name][0]), float(limits[name][1]))
@@ -194,16 +206,24 @@ class XCarve(Stage):
         self._reply_lock = threading.Lock()
         self._orphans = 0
         self._resets = 0
-        self._write_lock = threading.Lock()
+        # Reentrant so stop() can check and abort in one step.
+        self._write_lock = threading.RLock()
         self._status_cond = threading.Condition()
         self._status: _Status | None = None
         self._status_seq = 0
+        # Reports up to this one may predate the machine's latest change.
+        self._status_floor = 0
         self._settings: dict[int, float] = {}
         self._alarms = 0
         self._last_alarm = ""
+        # Counts alarms, resets and lost connections, each of which loses
+        # homing; homing holds only while this is what it was when it began.
+        self._epoch = 0
+        self._homing_epoch = 0
+        self._homed_epoch: int | None = None
         self._lost: str | None = None
         self._homing = False
-        self._polling = False
+        self._jogging = False
         self._expect_reset = False
         self._stop_requested = threading.Event()
         self._reader: threading.Thread | None = None
@@ -233,7 +253,7 @@ class XCarve(Stage):
                 address=port.device,
                 serial_number=port.serial_number,
             )
-            for port in XCONTROLLERS.matching(list_ports())
+            for port in find_ports(XCONTROLLERS)
         ]
 
     @property
@@ -247,7 +267,8 @@ class XCarve(Stage):
     # Connection
 
     def _open(self) -> None:
-        if self._find or self._serial_number is not None:
+        self._forget_link()
+        if self._find:
             port = self._find_port()
             self._transport = _default_transport(port.device)
             self._port = port.device
@@ -255,11 +276,11 @@ class XCarve(Stage):
         transport = self._require_transport()
         transport.open()
         try:
-            version = _await_banner(transport, BANNER_TIMEOUT_S)
+            version = wait_for(transport, _parse_banner, BANNER_TIMEOUT_S)
             if version is None:
                 # The board didn't reset when the port opened; make it.
                 transport.write_bytes(SOFT_RESET)
-                version = _await_banner(transport, BANNER_TIMEOUT_S)
+                version = wait_for(transport, _parse_banner, BANNER_TIMEOUT_S)
             if version is None:
                 raise DeviceNotFound(
                     f"no GRBL controller answered on {self._port!r}; check the "
@@ -289,72 +310,81 @@ class XCarve(Stage):
 
     def _shutdown(self) -> None:
         self._reader_stop.set()
-        if self._reader is not None:
-            self._reader.join(timeout=2 * READ_POLL_S + 1.0)
-            self._reader = None
+        reader, self._reader = self._reader, None
+        # A listener may close the stage from the reader thread itself.
+        if reader is not None and reader is not threading.current_thread():
+            reader.join(timeout=2 * READ_POLL_S + 1.0)
         self._require_transport().close()
 
     def _reset_state(self) -> None:
         super()._reset_state()
+        self._forget_link()
+
+    def _forget_link(self) -> None:
+        """Forget what the last connection left behind, e.g. owed replies."""
         self._lost = None
         self._status = None
         self._homing = False
+        self._jogging = False
+        self._expect_reset = False
+        self._settings = {}
+        self._stop_requested.clear()
+        with self._reply_lock:
+            self._orphans = 0
+            _drain(self._replies)
 
     def _find_port(self) -> PortInfo:
-        ports = list_ports()
         if self._serial_number is not None:
-            wanted = self._serial_number.casefold()
-            for port in ports:
-                if port.serial_number and port.serial_number.casefold() == wanted:
-                    return port
-            raise DeviceNotFound(
-                f"no serial port has USB serial number {self._serial_number!r}"
-            )
-        found = XCONTROLLERS.matching(ports)
-        if not found:
-            raise DeviceNotFound(
-                "no X-Controller is attached. Pass port= or serial_number= "
-                "for a controller that doesn't identify itself as one."
-            )
-        if len(found) > 1:
-            choices = ", ".join(f"{p.serial_number} at {p.device}" for p in found)
-            raise DeviceError(
-                f"several X-Controllers are attached ({choices}); "
-                "choose one with serial_number="
-            )
-        return found[0]
+            return port_with_serial_number(self._serial_number)
+        return only_port(
+            XCONTROLLERS,
+            name="X-Controller",
+            plural="X-Controllers",
+            hint="Pass port= or serial_number= for a controller that doesn't "
+            "identify itself as one.",
+        )
 
     # Homing
 
-    def _home(self, timeout: float) -> None:
-        if timeout == _DEFAULT_TIMEOUT:
-            timeout = HOMING_TIMEOUT_S
+    @property  # type: ignore[override]
+    def _homed(self) -> bool:
+        return self._homed_epoch is not None and self._homed_epoch == self._epoch
+
+    @_homed.setter
+    def _homed(self, homed: bool) -> None:
+        # Stage sets this after _home() returns, by when an alarm may have
+        # come; the epoch homing began in makes that alarm count.
+        self._homed_epoch = self._homing_epoch if homed else None
+
+    def _home(self, timeout: float | None) -> None:
+        self._idle_status()
+        self._homing_epoch = self._epoch
         self._homing = True
         try:
-            self._command("$H", timeout, aborting=SOFT_RESET)
+            self._command("$H", timeout or HOMING_TIMEOUT_S, aborting=SOFT_RESET)
         finally:
             self._homing = False
         self._query_status()
-
-    def _timeout(self, timeout: float | None) -> float:
-        return _DEFAULT_TIMEOUT if timeout is None else super()._timeout(timeout)
+        if self._epoch != self._homing_epoch:
+            raise DeviceError(
+                f"{self!r} lost homing as it finished: "
+                f"{self._last_alarm or 'the controller reset'}"
+            )
 
     # Motion
 
-    def _move_to(self, targets: Mapping[str, float], timeout: float) -> None:
-        start = self._query_status().position
+    def _move_to(self, targets: Mapping[str, float], timeout: float | None) -> None:
+        start = self._idle_status().position
         goal = {**start, **targets}
-        if timeout == _DEFAULT_TIMEOUT:
+        if timeout is None:
             timeout = self._move_limit(start, goal)
-        words = " ".join(f"{name.upper()}{targets[name]:.3f}" for name in targets)
-        self._command(f"$J=G53 G21 {words} F{self._speed_mm_s * 60:.0f}")
-        self._await_arrival(goal, timeout)
+        alarms = self._alarms
+        self._command(self._jog_line(targets), aborting=JOG_CANCEL)
+        self._await_arrival(goal, timeout, alarms)
 
-    def _move_by(
-        self, offsets: Mapping[str, float], start: Mapping[str, float], timeout: float
-    ) -> None:
-        # No axis wraps, so one absolute move does it.
-        self._move_to({name: start[name] + offsets[name] for name in offsets}, timeout)
+    def _jog_line(self, targets: Mapping[str, float]) -> str:
+        words = " ".join(f"{name.upper()}{targets[name]:.3f}" for name in targets)
+        return f"$J=G53 G21 {words} F{self._speed_mm_s * 60:.0f}"
 
     def _move_limit(
         self, start: Mapping[str, float], goal: Mapping[str, float]
@@ -363,27 +393,31 @@ class XCarve(Stage):
         predicted = _predicted_s(start, goal, self._speed_mm_s, self._max_rates)
         return 2 * predicted + MOVE_MARGIN_S
 
-    def _await_arrival(self, goal: Mapping[str, float], timeout: float) -> None:
+    def _await_arrival(
+        self, goal: Mapping[str, float], timeout: float, alarms: int
+    ) -> None:
         """Poll status until GRBL is Idle at ``goal``.
+
+        Args:
+            alarms: The alarm count from before the jog was sent.
 
         Raises:
             PositionError: The stage stopped short, or `stop()` was called.
             DeviceError: GRBL raised an alarm.
-            DeviceTimeout: It didn't arrive in time; the jog is cancelled.
+            DeviceTimeout: It didn't arrive in time.
+
+        The jog is cancelled however this fails.
         """
-        alarms = self._alarms
         started = time.monotonic()
         deadline = started + timeout
-        self._polling = True
         try:
             while True:
                 if self._stop_requested.is_set():
-                    self._settle()
                     raise PositionError(f"stop() interrupted the move of {self!r}")
                 status = self._query_status()
-                if self._alarms != alarms:
+                if self._alarms != alarms or status.state == "Alarm":
                     raise DeviceError(
-                        f"{self!r} raised {self._last_alarm} while moving"
+                        f"{self!r} raised {self._last_alarm or 'an alarm'} while moving"
                     )
                 if status.state == "Idle":
                     if _arrived(status.position, goal):
@@ -394,54 +428,69 @@ class XCarve(Stage):
                             f"moving to {_format(goal)}"
                         )
                 if time.monotonic() >= deadline:
-                    self._abort(JOG_CANCEL)
                     raise DeviceTimeout(
                         f"{self!r} didn't reach {_format(goal)} in {timeout:g} s; "
                         "the move was cancelled"
                     )
                 self._stop_requested.wait(STATUS_INTERVAL_S)
-        finally:
-            self._polling = False
+        except BaseException:
+            self._abort(JOG_CANCEL)
+            raise
 
     def _jog(self, axis: str, direction: int) -> None:
         # GRBL jogs are finite, so a continuous jog is one to the axis's limit.
+        self._idle_status()
         limits = self._axis(axis)
         target = limits.maximum if direction > 0 else limits.minimum
         assert target is not None
-        self._command(
-            f"$J=G53 G21 {axis.upper()}{target:.3f} F{self._speed_mm_s * 60:.0f}"
-        )
+        self._command(self._jog_line({axis: target}), aborting=JOG_CANCEL)
+        self._jogging = True
 
     def _stop(self) -> None:
-        self._stop_requested.set()
-        if self._lost is not None:
-            return
-        # Homing ignores jog-cancel; only a reset stops it, and loses homing.
-        self._abort(SOFT_RESET if self._homing else JOG_CANCEL)
+        # Under the write lock, so a line is either sent before the abort or
+        # not at all (see _command).
+        with self._write_lock:
+            self._stop_requested.set()
+            self._jogging = False
+            if self._lost is not None:
+                return
+            # Homing ignores jog-cancel; only a reset stops it, and loses homing.
+            self._abort(SOFT_RESET if self._homing else JOG_CANCEL)
 
     def _motion_starting(self) -> None:
         self._stop_requested.clear()
         self._check_link()
 
-    def _settle(self, timeout: float = REPLY_TIMEOUT_S) -> None:
-        """Wait for a cancelled jog to finish decelerating, best effort."""
+    def _idle_status(self) -> _Status:
+        """The status once any cancelled jog has finished decelerating.
+
+        GRBL accepts a jog sent while a cancelled one decelerates, then drops
+        it when the cancel completes.
+
+        Raises:
+            DeviceBusy: A `jog()` is still running, or the stage won't stop.
+        """
+        status = self._fresh_status()
+        if status.state == "Jog":
+            if self._jogging:
+                raise DeviceBusy(f"{self!r} is jogging; call stop() first")
+            status = self._settle()
+        if status.state == "Jog":
+            raise DeviceBusy(f"{self!r} is still moving after a cancel")
+        self._jogging = False
+        return status
+
+    def _settle(self, timeout: float = REPLY_TIMEOUT_S) -> _Status:
+        """Wait for a cancelled jog to stop, returning the last status."""
         deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline:
-            try:
-                if self._query_status().state != "Jog":
-                    return
-            except DeviceError:
-                return
+        while True:
+            status = self._query_status()
+            if status.state != "Jog" or time.monotonic() >= deadline:
+                return status
             time.sleep(STATUS_INTERVAL_S / 2)
 
     def _position(self) -> Mapping[str, float]:
-        # While a move polls, its latest report is fresh enough; otherwise ask.
-        status = self._status
-        stale = status is None or time.monotonic() - status.at > STATUS_INTERVAL_S
-        if not self._polling or stale:
-            status = self._query_status()
-        assert status is not None
-        return dict(status.position)
+        return dict(self._fresh_status().position)
 
     @synchronized
     def max_rates(self) -> dict[str, float]:
@@ -478,38 +527,44 @@ class XCarve(Stage):
         """Send a line and wait for its ``ok``.
 
         Args:
-            aborting: Real-time command that stops what the line started, sent
-                if the reply doesn't come in time, an alarm interrupts it, or
-                `stop()` is called.
+            aborting: Real-time command that stops what the line starts. It's
+                sent if `stop()` is called, the reply doesn't come in time, or
+                anything else (e.g. Ctrl-C) interrupts the wait; a line that
+                comes after `stop()` isn't sent at all.
 
         Raises:
             CommandRejected: GRBL answered ``error:N``.
-            DeviceError: GRBL raised an alarm while waiting.
+            DeviceError: GRBL raised an alarm or reset while waiting.
             PositionError: `stop()` interrupted it.
             DeviceTimeout: No reply in time.
         """
         alarms = self._alarms
         resets = self._resets
-        self._write_line(line)
+        with self._write_lock:
+            if aborting is not None and self._stop_requested.is_set():
+                raise PositionError(f"stop() interrupted {line!r} on {self!r}")
+            self._require_transport().write_line(line)
         deadline = time.monotonic() + timeout
         answered = False
+        abort = aborting is not None
         try:
             while True:
                 self._check_link()
-                # Checked first: stopping homing resets GRBL, which may also alarm.
-                if self._stop_requested.is_set():
+                # Stopping homing resets GRBL, which forgets the line, so no
+                # reply will come.
+                if aborting == SOFT_RESET and self._stop_requested.is_set():
+                    abort = False
                     raise PositionError(f"stop() interrupted {line!r} on {self!r}")
                 if self._alarms != alarms:
+                    abort = False
                     raise DeviceError(
                         f"{self!r} raised {self._last_alarm} during {line!r}"
                     )
+                if self._resets != resets:
+                    abort = False
+                    raise DeviceError(f"{self!r} reset during {line!r}")
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    # Before any reset, which would make GRBL forget the line.
-                    self._abandon(resets)
-                    answered = True
-                    if aborting is not None:
-                        self._abort(aborting)
                     raise DeviceTimeout(
                         f"{self!r} didn't finish {line!r} in {timeout:g} s"
                     )
@@ -518,21 +573,33 @@ class XCarve(Stage):
                 except queue.Empty:
                     continue
                 answered = True
+                self._invalidate_status()
                 # GRBL answers $H "ok" even when homing ends in an alarm.
                 if self._alarms != alarms:
+                    abort = False
                     raise DeviceError(
                         f"{self!r} raised {self._last_alarm} during {line!r}"
                     )
-                if reply == "ok":
-                    return
-                code = int(reply.partition(":")[2] or 0)
-                meaning = ERRORS.get(code, "see GRBL's error codes")
-                raise CommandRejected(
-                    f"{self!r} rejected {line!r}: error:{code} ({meaning})"
-                )
-        finally:
+                if reply != "ok":
+                    abort = False
+                    code = int(reply.partition(":")[2] or 0)
+                    meaning = ERRORS.get(code, "see GRBL's error codes")
+                    raise CommandRejected(
+                        f"{self!r} rejected {line!r}: error:{code} ({meaning})"
+                    )
+                # GRBL ignores a jog-cancel that comes before it has read the
+                # jog, so a stop() since sending is repeated now that it has.
+                if abort and self._stop_requested.is_set():
+                    raise PositionError(f"stop() interrupted {line!r} on {self!r}")
+                return
+        except BaseException:
             if not answered:
+                # Before any abort, since a reset makes GRBL forget the line.
                 self._abandon(resets)
+            if abort:
+                assert aborting is not None
+                self._abort(aborting)
+            raise
 
     def _abandon(self, resets: int) -> None:
         """Account for the reply to a line no one is waiting for any more.
@@ -557,6 +624,7 @@ class XCarve(Stage):
             self._write(realtime)
         except NotConnected:
             pass
+        self._invalidate_status()
 
     def _read_settings(self) -> None:
         self._command("$$")
@@ -585,9 +653,21 @@ class XCarve(Stage):
             assert self._status is not None
             return self._status
 
-    def _write_line(self, line: str) -> None:
-        with self._write_lock:
-            self._require_transport().write_line(line)
+    def _fresh_status(self) -> _Status:
+        """The latest status if it's recent and current, or else a new one."""
+        with self._status_cond:
+            status = self._status
+            fresh = (
+                status is not None
+                and self._status_seq > self._status_floor
+                and time.monotonic() - status.at <= STATUS_INTERVAL_S
+            )
+        return status if fresh and status is not None else self._query_status()
+
+    def _invalidate_status(self) -> None:
+        """Mark reports so far as possibly out of date, e.g. after a reply."""
+        with self._status_cond:
+            self._status_floor = self._status_seq
 
     def _write(self, realtime: bytes) -> None:
         with self._write_lock:
@@ -674,7 +754,8 @@ class XCarve(Stage):
         meaning = ALARMS.get(code, "see GRBL's alarm codes")
         self._last_alarm = f"{line} ({meaning})"
         self._alarms += 1
-        self._homed = False
+        self._epoch += 1
+        self._invalidate_status()
         logger.error("%r raised %s", self, self._last_alarm)
         self._emit(GrblAlarm(self, code, meaning))
 
@@ -683,9 +764,9 @@ class XCarve(Stage):
         with self._reply_lock:
             self._resets += 1
             self._orphans = 0
-            while not self._replies.empty():
-                self._replies.get_nowait()
-        self._homed = False
+            _drain(self._replies)
+        self._epoch += 1
+        self._invalidate_status()
         if self._expect_reset:
             self._expect_reset = False
             return
@@ -693,7 +774,7 @@ class XCarve(Stage):
 
     def _on_lost(self, reason: str) -> None:
         self._lost = reason
-        self._homed = False
+        self._epoch += 1
         with self._status_cond:
             self._status_cond.notify_all()
         logger.error("%r lost its connection: %s", self, reason)
@@ -704,17 +785,15 @@ def _default_transport(port: str) -> SerialTransport:
     return SerialTransport(port, baudrate=BAUD_RATE, timeout=REPLY_TIMEOUT_S)
 
 
-def _await_banner(transport: SerialTransport, timeout: float) -> str | None:
-    """Wait for GRBL's banner and return its version, skipping anything else."""
-    deadline = time.monotonic() + timeout
-    while (remaining := deadline - time.monotonic()) > 0:
-        try:
-            line = transport.read_line(remaining)
-        except DeviceTimeout:
-            return None
-        if banner := _BANNER.match(line):
-            return banner[1]
-    return None
+def _parse_banner(line: str) -> str | None:
+    """GRBL's version, if ``line`` is its banner."""
+    banner = _BANNER.match(line)
+    return banner[1] if banner else None
+
+
+def _drain(replies: "queue.Queue[str]") -> None:
+    while not replies.empty():
+        replies.get_nowait()
 
 
 def _arrived(position: Mapping[str, float], goal: Mapping[str, float]) -> bool:

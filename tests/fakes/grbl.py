@@ -72,6 +72,10 @@ class GrblMachine:
             soft reset makes it send the banner.
         boot_s: How long the board takes to boot after the port opens. It
             ignores writes until then.
+        cancel_s: How long a jog-cancel takes to decelerate, in seconds. The
+            state stays Jog until then, and jogs sent meanwhile are answered
+            ``ok`` and then dropped, as GRBL flushes its planner. With 0 the
+            machine stops at once.
         present: Whether the port exists.
     """
 
@@ -85,6 +89,7 @@ class GrblMachine:
         settings: dict[int, float] | None = None,
         banner_on_open: bool = True,
         boot_s: float = 0.01,
+        cancel_s: float = 0.0,
         present: bool = True,
     ) -> None:
         self.settings = {**SETTINGS, **(settings or {})}
@@ -95,6 +100,8 @@ class GrblMachine:
         self.banner_on_open = banner_on_open
         self.boot_s = boot_s
         self._booting_until: float | None = None
+        self.cancel_s = cancel_s
+        self._cancelling_until: float | None = None
         self.present = present
         self.state = "Idle"
         self.lines: list[str] = []
@@ -106,6 +113,8 @@ class GrblMachine:
         self.reject_next: int | None = None
         # Ignores "?", like a controller too busy to answer.
         self.mute_status = False
+        # Jogs accepted during a cancel's deceleration, then dropped.
+        self.dropped: list[str] = []
         self._queue: list[_Segment] = []
         self._homing_until: float | None = None
         self._output: list[str] = []
@@ -236,6 +245,7 @@ class GrblMachine:
         """Stop where the machine is and drop queued jogs."""
         self.position = self._now_position()
         self._queue.clear()
+        self._cancelling_until = None
         if self.state == "Jog":
             self.state = "Idle"
 
@@ -247,7 +257,12 @@ class GrblMachine:
             self._reset()
         elif byte in (JOG_CANCEL, FEED_HOLD) and self.state == "Jog":
             # A feed hold during a jog cancels it (GRBL 1.1 jogging docs).
+            if self._cancelling_until is not None:
+                return
             self._halt()
+            if self.cancel_s:
+                self.state = "Jog"
+                self._cancelling_until = time.monotonic() + self.cancel_s
 
     def _line(self, line: str) -> None:
         if self.reject_next is not None:
@@ -278,6 +293,10 @@ class GrblMachine:
     def _jog(self, words: str) -> None:
         if self.state in ("Alarm", "Home"):
             self._say(f"error:{ERR_LOCKED}")
+            return
+        if self._cancelling_until is not None:
+            self.dropped.append(words)
+            self._say("ok")
             return
         parsed = re.findall(r"([A-Z])(-?\d+(?:\.\d*)?)", words.replace(" ", ""))
         values = dict(parsed)
@@ -327,6 +346,9 @@ class GrblMachine:
         if self._booting_until is not None and now >= self._booting_until:
             self._booting_until = None
             self._reset()
+        if self._cancelling_until is not None and now >= self._cancelling_until:
+            self._cancelling_until = None
+            self.state = "Idle"
         if self._homing_until is not None and now >= self._homing_until:
             self._homing_until = None
             self.position = self.home_position
@@ -351,6 +373,8 @@ class GrblMachine:
             ends.append(self._booting_until)
         if self._homing_until is not None:
             ends.append(self._homing_until)
+        if self._cancelling_until is not None:
+            ends.append(self._cancelling_until)
         if self._queue and self._queue[0].start is not None:
             ends.append(self._queue[0].started_at + self._queue[0].duration)
         if not ends:

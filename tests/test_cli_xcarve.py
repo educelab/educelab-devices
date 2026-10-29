@@ -1,9 +1,13 @@
+import _thread
+import threading
+
 import pytest
 
+from educelab.devices import _serial
 from educelab.devices._serial import PortInfo, SerialTransport
 from educelab.devices.app.cli import main
 from educelab.devices.stages import xcarve
-from fakes.grbl import GrblMachine
+from fakes.grbl import SOFT_RESET, GrblMachine
 
 XCONTROLLER = PortInfo(
     "/dev/cu.usbserial-21320",
@@ -17,7 +21,7 @@ XCONTROLLER = PortInfo(
 def machine(monkeypatch):
     machine = GrblMachine()
     monkeypatch.setattr(xcarve, "BANNER_TIMEOUT_S", 0.2)
-    monkeypatch.setattr(xcarve, "list_ports", lambda: [XCONTROLLER])
+    monkeypatch.setattr(_serial, "list_ports", lambda: [XCONTROLLER])
     monkeypatch.setattr(
         xcarve,
         "_default_transport",
@@ -87,8 +91,25 @@ def test_check_moves_each_axis_toward_the_middle_and_back(machine, capsys):
     assert capsys.readouterr().out.count(": ok") == 6
 
 
+def test_ctrl_c_during_homing_stops_homing(machine, capsys):
+    machine.homing_s = 30.0
+    threading.Timer(0.3, _thread.interrupt_main).start()
+    assert main(["xcarve", "home"]) == 130
+    assert "stopped" in capsys.readouterr().out
+    assert SOFT_RESET in machine.realtime
+    assert machine.state != "Home"
+
+
+@pytest.mark.parametrize(
+    ("speed", "message"), [("200", "above the controller's fastest"), ("0", "at least")]
+)
+def test_a_bad_speed_is_reported_without_a_traceback(machine, speed, message):
+    with pytest.raises(SystemExit, match=message):
+        main(["xcarve", "--speed", speed, "status"])
+
+
 def test_missing_controller_is_reported(monkeypatch, capsys):
-    monkeypatch.setattr(xcarve, "list_ports", list)
+    monkeypatch.setattr(_serial, "list_ports", list)
     assert main(["xcarve", "status"]) == 1
     assert "no X-Controller" in capsys.readouterr().err
 

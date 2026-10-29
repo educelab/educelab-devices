@@ -100,14 +100,19 @@ def _stopping_on_interrupt(stage: "XCarve") -> Iterator[None]:
 
 
 def _run(args: argparse.Namespace, action: Callable[["XCarve"], int]) -> int:
-    stage = _stage(args)
-    with stage, _stopping_on_interrupt(stage):
-        info = stage.info
-        print(
-            f"X-Carve at {info.address}, serial {info.serial_number or 'unknown'}, "
-            f"GRBL {info.firmware_version}"
-        )
-        return action(stage)
+    try:
+        stage = _stage(args)
+        with stage, _stopping_on_interrupt(stage):
+            info = stage.info
+            print(
+                f"X-Carve at {info.address}, "
+                f"serial {info.serial_number or 'unknown'}, "
+                f"GRBL {info.firmware_version}"
+            )
+            return action(stage)
+    except ValueError as exc:
+        # e.g. a speed the controller can't do.
+        raise SystemExit(f"el-devices xcarve: {exc}") from exc
 
 
 def _status(args: argparse.Namespace) -> int:

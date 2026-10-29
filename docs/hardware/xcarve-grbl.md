@@ -112,8 +112,10 @@ forever for the stage to reach the unclamped target).
   every axis. Steps are coarser than GRBL's 0.001 mm reports: 0.025 mm on X and Y
   (`$100`, `$101`), about 0.005 mm on Z.
 - **Move timeout**: twice the predicted time (at the stage's speed, each axis held to
-  its own maximum rate, ignoring acceleration), plus 5 s. On timeout the driver sends
-  jog-cancel (`pgs-scan` #67 had no timeout).
+  its own maximum rate, ignoring acceleration), plus 5 s, unless `move_timeout` is set.
+  On timeout, or anything else that ends the wait early, the driver sends jog-cancel
+  (`pgs-scan` #67 had no timeout).
+- **Speed**: at least 0.1 mm/s. GRBL takes feeds in whole mm/min and rejects `F0`.
 - **Homing timeout**: 120 s by default. Homing seeks at `$25` (750 mm/min), so crossing
   the full 700 mm of X or Y takes about 56 s; a slower `$25` needs a longer timeout.
 
@@ -132,8 +134,18 @@ forever for the stage to reach the unclamped target).
 - **Replies are matched by counting.** GRBL answers each line once, in order. When the
   driver gives up waiting for a line (a timeout, an alarm, `stop()`), it drops that
   line's reply when it comes, so it isn't taken for the next line's. A reset cancels
-  replies still owed. Before this, the late `ok` to a failed `$H` made the next `home()`
-  return at once as if homed.
+  replies still owed, and so does reopening. Before this, the late `ok` to a failed `$H`
+  made the next `home()` return at once as if homed.
+- **Jog-cancel only cancels a jog GRBL has already read.** GRBL acts on real-time bytes
+  as they arrive but reads lines later, so a cancel right behind a `$J=` line can come
+  first and do nothing. The driver doesn't send a motion line once `stop()` has been
+  called, and repeats the cancel after the jog's `ok` if `stop()` came while waiting
+  for it. A soft reset has no such gap: GRBL discards unread lines when it resets.
+- **A cancelled jog decelerates, and GRBL drops jogs sent meanwhile.** It answers them
+  `ok`, then flushes its planner when the cancel completes. Before a move, jog or
+  homing, the driver waits for the state to leave `Jog`; during a `jog()` it raises
+  `DeviceBusy` instead, until `stop()`. From GRBL's jogging docs and planner code; not
+  yet seen on the rig.
 - **A stuck limit switch** shows as its letter in the status report's `Pn:` field while
   nothing is moving (e.g. `Pn:Z`). With hard limits on, every jog then raises `ALARM:1`
   as soon as it starts, and homing fails with `ALARM:8`. To move the axis off the
@@ -151,6 +163,8 @@ forever for the stage to reach the unclamped target).
   wider than the travel would run the gantry into a hard limit switch, which alarms.
 - **Z is slow**: 750 mm/min, against 10000 for X and Y. A combined move takes as long
   as its Z part needs.
+- **Listeners run on the driver's reader thread.** While one runs, no replies or status
+  reports are read, so keep listeners short. Closing the stage from one is safe.
 - **Never home with a limit switch unplugged.** Homing seeks each axis until its switch
   triggers, so an axis without one drives into its end stop before GRBL gives up with
   `ALARM:9`. Z homes first, upward.

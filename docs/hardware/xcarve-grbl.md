@@ -144,8 +144,9 @@ forever for the stage to reach the unclamped target).
 - **A cancelled jog decelerates, and GRBL drops jogs sent meanwhile.** It answers them
   `ok`, then flushes its planner when the cancel completes. Before a move, jog or
   homing, the driver waits for the state to leave `Jog`; during a `jog()` it raises
-  `DeviceBusy` instead, until `stop()`. From GRBL's jogging docs and planner code; not
-  yet seen on the rig.
+  `DeviceBusy` instead, until `stop()`. **Verified** that the state stays `Jog` after
+  a cancel (2026-10-29); the dropped jog itself comes from GRBL's jogging docs and
+  planner code.
 - **A stuck limit switch** shows as its letter in the status report's `Pn:` field while
   nothing is moving (e.g. `Pn:Z`). With hard limits on, every jog then raises `ALARM:1`
   as soon as it starts, and homing fails with `ALARM:8`. To move the axis off the
@@ -204,3 +205,11 @@ forever for the stage to reach the unclamped target).
   - A 0.5 s Y jog then `stop()`: moved 5.48 mm, deceleration included.
   - A 40 mm X move with a 1 s timeout: cancelled 11.8 mm in, at −687.225.
   - A target past the limit (X +1): refused, nothing moved.
+- After the PR #21 review fixes, the same day:
+  - `pytest -m hardware` with motion allowed: 11 passed in 22 s.
+  - A 0.5 s X jog at 10 mm/s, then `stop()`: stopped 5.0 mm in, and the state right
+    after was still `Jog`. A move to home + 20 mm sent at once waited for the cancel,
+    then arrived at −679 in 1.7 s.
+  - A move during a running jog: refused with `DeviceBusy`, nothing queued.
+  - Ctrl-C 2 s into `el-devices xcarve home`: the driver sent a soft reset, GRBL
+    answered `ALARM:6` (reset during homing), and the axis stopped at once.

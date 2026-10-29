@@ -233,6 +233,23 @@ class SerialTransport:
         except OSError as exc:
             raise self._lost(exc) from exc
 
+    def write_bytes(self, data: bytes) -> None:
+        """Send ``data`` as it is, with no line ending.
+
+        For commands a device acts on byte by byte, such as GRBL's real-time
+        commands. Safe to call while another thread is in `read_line()`.
+
+        Raises:
+            NotConnected: The port isn't open or the connection was lost.
+        """
+        conn = self._require_open()
+        logger.debug("%s > %r", self.port, data)
+        try:
+            conn.write(data)
+            conn.flush()
+        except OSError as exc:
+            raise self._lost(exc) from exc
+
     def read_line(self, timeout: float | None = None) -> str:
         """Wait for the next non-blank line.
 

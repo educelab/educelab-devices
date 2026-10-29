@@ -144,6 +144,26 @@ def test_write_line_appends_newline():
     assert stub.written == [b"365,50\n"]
 
 
+def test_write_bytes_sends_them_as_they_are():
+    # GRBL's real-time commands are single bytes with no line ending.
+    stub = StubSerial()
+    open_transport(stub).write_bytes(b"?\x85")
+    assert stub.written == [b"?\x85"]
+
+
+def test_write_bytes_after_unplugging_raises_not_connected():
+    stub = StubSerial()
+    transport = open_transport(stub)
+
+    def unplugged(data):
+        raise OSError("device disconnected")
+
+    stub.write = unplugged
+    with pytest.raises(NotConnected):
+        transport.write_bytes(b"!")
+    assert not transport.is_open
+
+
 def test_read_line_strips_and_skips_blank_lines():
     stub = StubSerial([b"\r\n", b"  OK\r\n"])
     assert open_transport(stub).read_line() == "OK"

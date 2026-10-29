@@ -24,13 +24,13 @@ Lights first (small, reuse the serial transport), then the GRBL stage, then docs
 
 ### Verification
 
-- [ ] XLC tests and contracts pass.
+- [x] XLC tests and contracts pass.
 
 ## Phase 2: X-Carve stage
 
 ### Tasks
 
-- [ ] Task 2.1: Build a scripted GRBL fake (banner, `$H`, `$J`, `?` status reports, alarms, real-time bytes).
+- [x] Task 2.1: Build a scripted GRBL fake (banner, `$H`, `$J`, `?` status reports, alarms, real-time bytes).
 - [ ] Task 2.2: Write tests for open without homing, `home()` with timeout, and moves-before-homing raising; implement.
 - [ ] Task 2.3: Write tests for limits (raise, never clamp), blocking moves with arrival tolerance and timeouts; implement.
 - [ ] Task 2.4: Write tests for `jog`, `stop()` during a move, live `position()`, alarm events; implement the internal status polling.

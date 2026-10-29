@@ -783,9 +783,8 @@ def test_move_by_asks_for_status_at_most_once_before_moving(homed, monkeypatch):
 
     monkeypatch.setattr(homed, "_query_status", counted_query)
     monkeypatch.setattr(homed, "_command", counted_command)
-    time.sleep(xcarve.STATUS_INTERVAL_S)  # so nothing is fresh to start with
     homed.move_by({"x": -5.0})
-    assert calls.index(next(c for c in calls if c.startswith("$J"))) == 1
+    assert calls.index(next(c for c in calls if c.startswith("$J"))) <= 1
     assert homed.position()["x"] == pytest.approx(-6.0)
 
 

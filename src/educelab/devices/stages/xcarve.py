@@ -328,10 +328,62 @@ class XCarve(Stage):
     def _timeout(self, timeout: float | None) -> float:
         return _DEFAULT_TIMEOUT if timeout is None else super()._timeout(timeout)
 
-    # Motion: added with blocking moves, jogs and stop.
+    # Motion
 
     def _move_to(self, targets: Mapping[str, float], timeout: float) -> None:
-        raise NotImplementedError
+        start = self._query_status().position
+        goal = {**start, **targets}
+        if timeout == _DEFAULT_TIMEOUT:
+            timeout = self._move_limit(start, goal)
+        words = " ".join(f"{name.upper()}{targets[name]:.3f}" for name in targets)
+        self._command(f"$J=G53 G21 {words} F{self._speed_mm_s * 60:.0f}")
+        self._await_arrival(goal, timeout)
+
+    def _move_by(
+        self, offsets: Mapping[str, float], start: Mapping[str, float], timeout: float
+    ) -> None:
+        # No axis wraps, so one absolute move does it.
+        self._move_to({name: start[name] + offsets[name] for name in offsets}, timeout)
+
+    def _move_limit(
+        self, start: Mapping[str, float], goal: Mapping[str, float]
+    ) -> float:
+        """Default time limit for a move: twice the prediction, plus a margin."""
+        predicted = _predicted_s(start, goal, self._speed_mm_s, self._max_rates)
+        return 2 * predicted + MOVE_MARGIN_S
+
+    def _await_arrival(self, goal: Mapping[str, float], timeout: float) -> None:
+        """Poll status until GRBL is Idle at ``goal``.
+
+        Raises:
+            PositionError: The stage stopped short, or `stop()` was called.
+            DeviceError: GRBL raised an alarm.
+            DeviceTimeout: It didn't arrive in time; the jog is cancelled.
+        """
+        alarms = self._alarms
+        started = time.monotonic()
+        deadline = started + timeout
+        while True:
+            if self._stop_requested.is_set():
+                raise PositionError(f"stop() interrupted the move of {self!r}")
+            status = self._query_status()
+            if self._alarms != alarms:
+                raise DeviceError(f"{self!r} raised {self._last_alarm} while moving")
+            if status.state == "Idle":
+                if _arrived(status.position, goal):
+                    return
+                if time.monotonic() - started > START_GRACE_S:
+                    raise PositionError(
+                        f"{self!r} stopped short at {_format(status.position)}, "
+                        f"moving to {_format(goal)}"
+                    )
+            if time.monotonic() >= deadline:
+                self._abort(JOG_CANCEL)
+                raise DeviceTimeout(
+                    f"{self!r} didn't reach {_format(goal)} in {timeout:g} s; "
+                    "the move was cancelled"
+                )
+            self._stop_requested.wait(STATUS_INTERVAL_S)
 
     def _jog(self, axis: str, direction: int) -> None:
         raise NotImplementedError
@@ -559,6 +611,16 @@ def _await_banner(transport: SerialTransport, timeout: float) -> str | None:
         if banner := _BANNER.match(line):
             return banner[1]
     return None
+
+
+def _arrived(position: Mapping[str, float], goal: Mapping[str, float]) -> bool:
+    return all(
+        abs(position[name] - goal[name]) <= ARRIVAL_TOLERANCE_MM for name in AXIS_NAMES
+    )
+
+
+def _format(position: Mapping[str, float]) -> str:
+    return ", ".join(f"{name}={position[name]:g}" for name in AXIS_NAMES)
 
 
 def _predicted_s(

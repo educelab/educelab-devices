@@ -275,3 +275,97 @@ def test_serial_number_picks_a_controller(monkeypatch):
 def test_port_and_serial_number_are_exclusive():
     with pytest.raises(ValueError):
         XCarve("COM4", limits=LIMITS, speed=50.0, serial_number="XCONTROLLERAB")
+
+
+# Moving
+
+
+@pytest.fixture
+def homed(stage):
+    stage.home()
+    return stage
+
+
+def jogs(machine):
+    return [line for line in machine.lines if line.startswith("$J")]
+
+
+@pytest.mark.parametrize(
+    "target", [{"x": 1.0}, {"y": -700.0}, {"z": 0.0}, {"z": -46.0}]
+)
+def test_targets_outside_the_limits_raise_and_are_never_clamped(machine, homed, target):
+    # pgs-scan #71: XController clamped the target, then waited forever for
+    # the stage to reach the unclamped one.
+    with pytest.raises(PositionError, match="outside"):
+        homed.move_to(target)
+    assert jogs(machine) == []
+
+
+def test_move_by_past_a_limit_raises(machine, homed):
+    with pytest.raises(PositionError):
+        homed.move_by({"x": 2.0})
+    assert jogs(machine) == []
+
+
+def test_move_to_jogs_in_machine_coordinates_and_waits_to_arrive(machine, homed):
+    homed.move_to({"x": -100.0, "z": -20.0})
+    assert jogs(machine) == ["$J=G53 G21 X-100.000 Z-20.000 F3000"]
+    assert not machine.moving
+    assert machine.current_position() == (-100.0, -1.0, -20.0)
+    assert homed.position() == {"x": -100.0, "y": -1.0, "z": -20.0}
+
+
+def test_move_by_moves_from_the_current_position(homed):
+    homed.move_by({"y": -10.5})
+    assert homed.position()["y"] == pytest.approx(-11.5)
+
+
+def test_moves_use_the_current_speed(machine, homed):
+    homed.set_speed(10.0)
+    homed.move_to({"x": -5.0})
+    assert jogs(machine)[-1].endswith(" F600")
+
+
+def test_a_jog_grbl_rejects_raises_command_rejected():
+    machine = GrblMachine(settings={20: 1.0, 130: 100.0})
+    with make_stage(machine) as stage:
+        stage.home()
+        with pytest.raises(CommandRejected, match="exceeds machine travel"):
+            stage.move_to({"x": -200.0})
+
+
+def test_a_move_that_overruns_its_timeout_is_cancelled():
+    # pgs-scan #67: XController's blocking move had no timeout at all.
+    machine = GrblMachine(speedup=1.0)
+    with make_stage(machine) as stage:
+        stage.home()
+        with pytest.raises(DeviceTimeout):
+            stage.move_to({"x": -600.0}, timeout=0.3)
+        assert machine.realtime[-1] == xcarve.JOG_CANCEL[0]
+        assert not machine.moving
+        assert -600.0 < stage.position()["x"] < -1.0
+
+
+def test_a_move_that_stops_short_raises_position_error():
+    machine = GrblMachine(speedup=1.0)
+    with make_stage(machine) as stage:
+        stage.home()
+        # Something other than this driver cancels the jog partway.
+        threading.Timer(0.6, machine.write, args=(b"\x85",)).start()
+        with pytest.raises(PositionError, match="short"):
+            stage.move_to({"x": -600.0}, timeout=10.0)
+
+
+def test_default_move_limit_follows_distance_and_speed(homed):
+    start = {"x": -1.0, "y": -1.0, "z": -1.0}
+    # 100 mm of X at 50 mm/s is 2 s: doubled, plus the margin.
+    assert homed._move_limit(start, {**start, "x": -101.0}) == pytest.approx(
+        2 * 2.0 + xcarve.MOVE_MARGIN_S
+    )
+    # Z is held to its own 750 mm/min (12.5 mm/s), whatever the speed.
+    assert homed._move_limit(start, {**start, "z": -11.0}) == pytest.approx(
+        2 * 0.8 + xcarve.MOVE_MARGIN_S
+    )
+    # A long slow move gets longer than Stage.move_timeout's 60 s.
+    homed.set_speed(1.0)
+    assert homed._move_limit(start, {**start, "x": -101.0}) > homed.move_timeout

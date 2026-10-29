@@ -49,7 +49,9 @@ _RGB_TINT = np.array([1.0, 0.85, 0.7])
 # GenICam's auto-mode switches and the setting each one locks while on.
 _AUTO_MODES = ("Off", "Continuous")
 _AUTO_LOCKS = {"ExposureAuto": EXPOSURE_TIME, "GainAuto": GAIN}
-# How far, as a fraction, an auto loop's choice wanders from frame to frame.
+# Auto modes aim at twice the reference exposure, so auto gain alone at the
+# default exposure always adds some gain. The aim wanders by _AUTO_HUNT.
+_AUTO_TARGET_S = 2 * _REFERENCE_EXPOSURE_S
 _AUTO_HUNT = 0.1
 
 
@@ -63,15 +65,20 @@ class SimulatedCamera(FrameCamera):
     ``Continuous``), as GenICam cameras do, both starting at ``Continuous``.
     While one is on, the setting it controls is read-only, and each capture
     picks a slightly different value for it, which the frame's metadata
-    records. Turning it off keeps the last value.
+    records. As on real cameras, exposure is adjusted first: with both on,
+    gain stays at its minimum unless exposure reaches its limit. Turning a
+    mode off keeps the last value.
 
     Args:
         width: Frame width in pixels.
         height: Frame height in pixels.
-        seed: Seed for the noise, for repeatable frames.
+        seed: Seed for the noise and the auto modes, for repeatable frames.
         color: Act like a colour camera, which also offers ``RGB8`` and starts
             in it, as GenICam colour cameras do.
         auto: Offer auto exposure and auto gain.
+        sensor_size: The whole sensor as ``(width, height)``, for a camera
+            whose frames are cropped from a larger sensor. Defaults to the
+            frame size.
     """
 
     def __init__(
@@ -82,12 +89,20 @@ class SimulatedCamera(FrameCamera):
         *,
         color: bool = False,
         auto: bool = False,
+        sensor_size: tuple[int, int] | None = None,
     ) -> None:
         super().__init__()
+        sensor_width, sensor_height = sensor_size or (width, height)
+        if sensor_width < width or sensor_height < height:
+            raise ValueError(
+                f"sensor_size {sensor_size} is smaller than the frame {width}x{height}"
+            )
         self._width = width
         self._height = height
         self._color = color
         self._rng = np.random.default_rng(seed)
+        # Separate, so turning auto on doesn't change the noise.
+        self._auto_rng = np.random.default_rng([seed, 1])
         self._frame_count = 0
         formats = ("Mono8", "Mono16", "RGB8") if color else ("Mono8", "Mono16")
         settings = [
@@ -102,8 +117,8 @@ class SimulatedCamera(FrameCamera):
         for name, size in (
             (WIDTH, width),
             (HEIGHT, height),
-            (SENSOR_WIDTH, width),
-            (SENSOR_HEIGHT, height),
+            (SENSOR_WIDTH, sensor_width),
+            (SENSOR_HEIGHT, sensor_height),
         ):
             settings.append(Setting(name, size, unit="px", read_only=True))
         self._store = {s.name: s for s in settings}
@@ -161,13 +176,13 @@ class SimulatedCamera(FrameCamera):
 
     def _run_auto(self) -> None:
         """Pick this frame's exposure and gain for the auto modes that are on,
-        aiming at half brightness, with exposure tried before gain."""
+        with exposure tried before gain."""
         exposure_auto = self._auto_on("ExposureAuto")
         gain_auto = self._auto_on("GainAuto")
         if not (exposure_auto or gain_auto):
             return
-        hunt = self._rng.uniform(1 - _AUTO_HUNT, 1 + _AUTO_HUNT)
-        target = _REFERENCE_EXPOSURE_S * hunt
+        hunt = self._auto_rng.uniform(1 - _AUTO_HUNT, 1 + _AUTO_HUNT)
+        target = _AUTO_TARGET_S * hunt
         gain = 0.0 if gain_auto else _number(self._store[GAIN])
         if exposure_auto:
             self._set_auto_value(EXPOSURE_TIME, target / 10 ** (gain / 20))

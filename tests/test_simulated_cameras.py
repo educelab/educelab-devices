@@ -130,17 +130,45 @@ def test_auto_exposure_locks_exposure_time_and_varies_it_per_frame():
         assert camera.capture_frame().metadata[EXPOSURE_TIME] == 0.002
 
 
-def test_auto_gain_makes_up_for_a_short_manual_exposure():
+def test_auto_gain_varies_per_frame_when_exposure_is_manual():
     with SimulatedCamera(auto=True) as camera:
         camera.set_setting("ExposureAuto", "Off")
-        camera.set_setting(EXPOSURE_TIME, 0.001)
-        gains = {camera.capture_frame().metadata[GAIN] for _ in range(3)}
-        assert len(gains) == 3
-        assert all(gain > 15 for gain in gains)
+        assert camera.setting(EXPOSURE_TIME).value == 0.01
+        gains = {camera.capture_frame().metadata[GAIN] for _ in range(5)}
+        assert len(gains) == 5
+        assert all(gain > 0 for gain in gains)
         assert camera.setting(GAIN).read_only
         camera.set_setting("GainAuto", "Off")
         camera.set_setting(GAIN, 0.0)
         assert camera.capture_frame().metadata[GAIN] == 0.0
+
+
+def test_with_both_auto_modes_exposure_does_the_work():
+    with SimulatedCamera(auto=True) as camera:
+        assert {camera.capture_frame().metadata[GAIN] for _ in range(3)} == {0.0}
+
+
+def test_auto_mode_leaves_the_noise_unchanged():
+    with SimulatedCamera(seed=3) as manual, SimulatedCamera(seed=3, auto=True) as auto:
+        manual.capture_frame()
+        auto.capture_frame()
+        auto.set_setting("ExposureAuto", "Off")
+        auto.set_setting("GainAuto", "Off")
+        auto.set_setting(EXPOSURE_TIME, 0.01)
+        auto.set_setting(GAIN, 0.0)
+        assert np.array_equal(
+            manual.capture_frame().pixels, auto.capture_frame().pixels
+        )
+
+
+def test_sensor_can_be_larger_than_the_frame():
+    with SimulatedCamera(width=32, height=24, sensor_size=(40, 30)) as camera:
+        assert (camera.setting(WIDTH).value, camera.setting(HEIGHT).value) == (32, 24)
+        assert camera.setting(SENSOR_WIDTH).value == 40
+        assert camera.setting(SENSOR_HEIGHT).value == 30
+        assert camera.capture_frame().pixels.shape == (24, 32)
+    with pytest.raises(ValueError, match="sensor_size"):
+        SimulatedCamera(width=32, height=24, sensor_size=(16, 24))
 
 
 def test_capture_takes_the_exposure_time():

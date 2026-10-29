@@ -421,7 +421,8 @@ class FakeArvCamera:
         _translated(sim.open)
         self.sim = sim
         self.acquiring = False
-        self.usb_mode = UvUsbMode.ASYNC
+        # Aravis's default.
+        self.usb_mode = UvUsbMode.SYNC
         channel = [False]
         self._channel = channel
         self.device = FakeArvDevice(sim, lambda: channel[0])
@@ -475,13 +476,19 @@ class FakeArvCamera:
         return FakeArvStream(self, callback, user_data)
 
     def start_acquisition(self) -> None:
-        _translated(self.sim.start)
+        try:
+            _translated(self.sim.start)
+        except GLibError:
+            # A start that errors may still have reached the camera.
+            self.sending = self.sends_after_stop
+            raise
         self.acquiring = True
 
     def stop_acquisition(self) -> None:
+        # The frame in flight is sent whether or not the stop succeeds.
+        self.sending = self.sends_after_stop
         _translated(self.sim.stop)
         self.acquiring = False
-        self.sending = self.sends_after_stop
 
 
 class _Aravis:

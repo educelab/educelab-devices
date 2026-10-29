@@ -41,7 +41,8 @@ Behaviour the drivers add or change, and why. Each point was verified on the har
 
 **Aravis** (`AravisCamera`):
 
-- **USB transfer mode by platform.** Sync (`UvUsbMode.SYNC`) on macOS, where Aravis's async mode can hang closing a camera. Async, Aravis's high-throughput mode, everywhere else: on Linux, sync mode delivered only incomplete frames from the IDS camera. See [Hazards](#hazards).
+- **Async USB transfers everywhere** (`UvUsbMode.ASYNC`). Sync mode delivered only incomplete frames from the IDS camera on Linux, and on macOS it starved cameras that share a link: one malformed trailer halts a camera's stream for the rest of the session. Until 2026-10-29 the driver used sync on macOS, for fear of a close hang that the drain (next point) turned out to prevent. See [Hazards](#hazards).
+- **Drain before drop.** After AcquisitionStop, the driver waits until the stream has received nothing for one exposure plus 50 ms, capped at 2 s plus one exposure, and only then drops it. It drains after a failed stop too, and after a failed start (which it follows with a stop), since the camera may be sending either way. A drain that runs out of time, or whose stream statistics can't be read, logs a warning and drops the stream anyway. Cost: every stop, including the pause around a `pixel_format` or `trigger` write and each close, takes at least 50 ms plus one exposure (about 70 ms at 20 ms exposure); sync mode didn't wait. See [Hazards](#hazards).
 - **A stream only while acquiring.** Creating a stream enables the camera's stream channel, and the IDS camera then refuses `PixelFormat` and `TriggerMode` writes. The old stream is dropped before a new one is made, because finalizing a stream disables the channel even after a newer stream enabled it.
 - **Newest only, by callback.** Aravis has no newest-only mode: once its buffers fill, it drops the newer frames. A stream callback recycles every finished frame but the newest. Four buffers (`BUFFER_COUNT`).
 - **Access checks on, range checks off.** Aravis's access mode ignores locks (e.g. `ExposureTime` under auto exposure), so the driver also asks `is_locked()`. Its range check refused Mono16 on the CM3-U3-50S5M, whose XML gives `PixelFormat`'s register a stale maximum; the core checks ranges itself.
@@ -65,13 +66,43 @@ Behaviour the drivers add or change, and why. Each point was verified on the har
 - GenTL enumeration waits up to 500 ms per interface and device list (`_LIST_TIMEOUT_MS`). The figure is a loose guess. [I]
 - Capture rates through each backend, for the CM3-U3-50S5M, are in the [Hardware runs](#hardware-runs); for the IDS camera, in its doc.
 
+## Sharing a USB link
+
+Cameras on one hub share its upstream link. A USB 3 (5 Gbit/s) link carried about 380–430 MB/s on the lab rigs. A free-running camera sends every frame whether or not anyone captures, so uncapped cameras together can ask far more than that: five CM3-U3-50S5M at their 190.9 MB/s maximum ask about 950 MB/s.
+
+**Cap each camera's `throughput_limit` so the caps add up to about 400 MB/s per link.** For the lab rig's five CM3-U3-50S5M on one Acroname hub, that is **80 MB/s each** (the camera keeps 80.384, its nearest step):
+
+```python
+camera.set_setting("pixel_format", "Mono16")
+camera.set_setting("throughput_limit", 80)  # after pixel_format: see below
+```
+
+- **Set it after `pixel_format`.** Changing the CM3-U3-50S5M's pixel format resets its limit to the new format's maximum (Mono16 → Mono8 read back 180.864). Writing the format it already has, exposure, or gain leaves the limit alone. So reapply the cap after every format change. [V 2026-10-29]
+- **Not much lower.** A cap well under the share slows captures again, since each frame takes longer to send: at 70 MB/s a 10 MB Mono16 frame takes about 143 ms. [V]
+- **Not much higher.** Above the share, cameras send malformed frames (missing or unparseable trailers), which come back incomplete and cost a retry. [V]
+- **Other numbers of cameras or links:** divide about 400 MB/s by the cameras on each link, round down to the camera's step, and check with the run below. Each camera's step and range are in its `setting("throughput_limit")`.
+
+Five CM3-U3-50S5M at 20 ms exposure through `AravisCamera` (async) on the lab Mac, each round capturing from all five in parallel with `not_before = now`, 30 rounds (2026-10-29, [details](#2026-10-29-macos-aravis-five-cameras-at-mono16)). [V]
+
+| Cap per camera | Mono16 round median | Mono16 incomplete frames | Mono8 round median | Mono8 incomplete frames |
+|---|---|---|---|---|
+| none (190.9 MB/s) | 419–435 ms | 142 | 139–150 ms | 0 |
+| 90.432 MB/s | 359 ms | 17 | 177 ms | 0 |
+| **80.384 MB/s** | **251 ms** | **0** | **124 ms** | **0** |
+| 70.336 MB/s | 428 ms | not counted | not run | not run |
+
+Spinnaker agrees: on the same rig, an 80 MB/s cap removed the missing trailers there too, and its all-camera Mono16 capture median was 249 ms ([spinnaker.md](spinnaker.md), USB topology). Uncapped, five cameras through Spinnaker took 286 ms a round.
+
 ## Hazards
 
-- **Aravis async USB mode on macOS** can hang forever closing a camera, in `arv_uv_stream_finalize`: the stream thread waits for cancelled transfers to complete, while it is the thread that would complete them. When a close doesn't hang, the next session may get only `missing-packets` frames until the camera is power-cycled. The driver uses sync mode on macOS; don't switch it. [V on the IDS camera]
-- **Aravis sync USB mode on Linux** can't keep up with a full-resolution USB3 Vision stream. With the IDS camera on Fedora (arm64), `arv-camera-test-0.8` in sync mode reported six or more errors, and the driver in sync mode got only incomplete frames. In async mode the same camera streamed cleanly. The driver uses async mode off macOS. Sync mode keeps a single 1 MiB transfer in flight (`arvuvstream.c`), which is the likely reason. [V for the symptoms, 2026-10-22; I for the reason]
+- **Aravis sync USB mode** is not safe on any OS; the driver uses async everywhere.
+  - On Linux it can't keep up with a full-resolution stream. With the IDS camera on Fedora (arm64), `arv-camera-test-0.8` in sync mode reported six or more errors, and the driver got only incomplete frames; async streamed cleanly. Sync mode keeps a single 1 MiB transfer in flight (`arvuvstream.c`), which is the likely reason. [V for the symptoms, 2026-10-22; I for the reason]
+  - On a shared link it loses cameras for good. When a camera sends a 32-byte packet where its trailer belongs that doesn't parse as one, the sync loop (`arv_uv_stream_thread_sync`) files it as image data and asks for a 48-byte trailer. The next frame's 52-byte leader overflows that read (`LIBUSB_ERROR_OVERFLOW`), the stream endpoint halts, and every later read fails with `LIBUSB_ERROR_PIPE`. The loop never clears the halt, so the camera completes no frame and returns no buffer, not even an incomplete one, until its stream is recreated. Async mode drops that one frame ("Unexpected packet type (was expecting trailer packet)") and goes on. See [2026-10-29](#2026-10-29-macos-aravis-five-cameras-at-mono16). [V]
+- **Aravis async USB mode on macOS, before the drain.** Closing the IDS camera once hung forever in `arv_uv_stream_finalize`, and a later session got only `missing-packets` frames until a power cycle. That was before the driver waited for an async stream to go quiet before dropping it (next point). With the wait, 20 open/capture/close cycles on the IDS camera and a CM3-U3-50S5M, and both cameras' hardware tests, ran without a hang or a bad frame afterwards. [V on the IDS camera, 2026-10-22; V for the fix, 2026-10-29]
+  - **Still possible.** The wait makes sure no frame is in flight when the stream is dropped; it doesn't change Aravis. Finalizing an async stream still cancels its pending transfers, and the deadlock came from the stream thread waiting on cancellations only it completes. If a camera is still sending when the drain gives up (the driver logs "still sending ... dropping the stream anyway"), the hang can come back, and `close()` has no timeout. Recovery is a power cycle (`el-devices hub cycle <port>`). [I]
 - **Dropping an async Aravis stream mid-frame.** After AcquisitionStop, the CM3-U3-50S5M still sends the frame it's on. When the driver dropped the stream straight away, Aravis cancelled the transfers part-way, and on Linux every later transfer failed with `LIBUSB_TRANSFER_ERROR`: only `missing-packets` frames, through reopening, until a power cycle. In async mode the driver now waits after a stop until the stream has received nothing for one exposure plus 50 ms, capped at 2 s plus one exposure. The IDS camera showed no such problem. [V 2026-10-23, below]
 - **`TLParamsLocked` through Aravis.** Setting it wedged the IDS camera until a power cycle. [V]
-- **Several cameras on one USB link.** Uncapped, five CM3-U3-50S5M cameras and the IDS camera on one Acroname hub need more than its USB 3 upstream link carries, and some cameras then get only `size-mismatch` frames. Cap each camera's `throughput_limit`. [V]
+- **Several cameras on one USB link.** Uncapped, they send malformed frames, and under the old sync mode they lost cameras outright. Cap each camera's `throughput_limit`, after setting its pixel format: see [Sharing a USB link](#sharing-a-usb-link). [V]
 - **Windows driver binding.** IDS peak's kernel driver claims IDS cameras, so nothing libusb-based (Aravis) can open them while it's installed. [I]
 - **Linux usbfs memory.** The kernel's 16 MB default is less than one 20 MP frame. Raise it (section [2](#usbfs-memory)). [I]
 
@@ -197,6 +228,29 @@ The IDS camera: see [ids-u3-36p0xcp.md](ids-u3-36p0xcp.md#gentl-on-linux). In sh
 
   The camera has no `AcquisitionAbort`. The driver now waits before dropping an async stream (see [Hazards](#hazards)).
 - **Rerun with the fix:** 23 passed, 1 skipped (the check for cameras that can't be timed), the three-camera test among the passes. Mono8 and Mono16 both captured, there were no incomplete frames, and the offset spread over 5 measurements was 10 µs. 300 `not_before` captures met 600 stale frames, at 11.9 captures per second. Switching to software trigger took 1.25 s, with a 57 ms turnaround, and the 20 triggered exposures began 9–133 ms after the request, none needing a second trigger. The IDS camera, rerun on the same machine with the fix, passed too (see [ids-u3-36p0xcp.md](ids-u3-36p0xcp.md#last-run)).
+
+### 2026-10-29, macOS, Aravis, five cameras at Mono16
+
+Reported from pgs-scan's 1.3.0 rig check: five CM3-U3-50S5M on the Acroname hub, all at USB 3, Mono16, uncapped (`throughput_limit` 190.9 MB/s), 20 ms exposure, gain 0, auto exposure and gain off. A round takes `not_before = now` and captures from all five in parallel threads, 4 s timeout; 30 rounds. Aravis 0.8.36 (Homebrew), Python 3.14.8, Spinnaker figures from PySpin 4.4.0.246 on Python 3.12. [V for each row]
+
+| Backend, USB mode | Format | Cap | Round median / max | Frames |
+|---|---|---|---|---|
+| Aravis, sync (the driver then) | Mono16 | none | 4005 / 4005 ms | 1 or 2 cameras 0/30, the rest 30/30 |
+| Aravis, async | Mono16 | none | 419–435 / 540–616 ms | 150/150, both open orders |
+| Aravis, async | Mono16 | 80.384 MB/s | 249–251 / 374–440 ms | 150/150, no incomplete frames |
+| Aravis, async | Mono16 | 90.432 MB/s | 359 / 745 ms | 150/150, 17 incomplete |
+| Aravis, async | Mono16 | 70.336 MB/s | 428 / 429 ms | 150/150 |
+| Aravis, async | Mono8 | 80.384 MB/s | 124 / 139 ms | 150/150, no incomplete frames |
+| Aravis, async | Mono8 | none | 139 / 168 ms | 150/150 |
+| Spinnaker | Mono16 | none | 286 / 373 ms | 150/150 |
+| Spinnaker | Mono8 | none | 140 / 170 ms | 150/150 |
+
+- **Which camera starved** in sync mode depended on open order, not on the camera or its cable; every camera captured cleanly alone, and four together were fine.
+- **What happened to it.** Aravis's stream statistics showed one leader and one full payload (10,027,060 bytes), 32 ignored bytes, and nothing after. Its debug log (`ARV_DEBUG=sp:3`, one `arv-camera-test-0.8 -s sync` process per camera) showed the mechanism in [Hazards](#hazards): a 32-byte non-trailer packet after the payload, `LIBUSB_ERROR_OVERFLOW` on the 48-byte trailer read, then `LIBUSB_ERROR_PIPE` in a tight loop (about 450,000 in 5 s). A good camera's trailer is also 32 bytes.
+- **Async mode, same load.** Each camera dropped 6–26 frames in 8 s as "Unexpected packet type (was expecting trailer packet)", and every camera kept delivering. All five closed cleanly.
+- **The cap was lost at first.** The handoff's script set `throughput_limit` before `pixel_format`, and a format change resets the limit (see [Sharing a USB link](#sharing-a-usb-link)). The capped rows above set it after and read it back.
+- **Close hang check.** In async mode, 10 open/capture/close cycles each on the IDS camera (Mono10g40IDS and Mono8) and on `0135BAD4` (Mono16 and Mono8): no hang, closes in 0.08–0.28 s, no incomplete frames in the next session. `tests/test_aravis_hardware.py`: IDS camera 23 passed, 2 skipped; `0135BAD4` 24 passed, 1 skipped.
+- **Why the trailer is malformed** is **unknown**. It happens in both modes and only with the link oversubscribed. Aravis can't print a packet's bytes, so what the camera sent in place of its trailer wasn't seen.
 
 ### CM3-U3-50S5M: three backends compared
 

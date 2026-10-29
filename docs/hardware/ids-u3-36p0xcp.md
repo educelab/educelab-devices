@@ -30,7 +30,7 @@ Fedora on an Apple Silicon Mac (Asahi Linux, arm64), IDS peak 26.06.2's `ids_u3v
 
 ### Aravis on Linux
 
-The same machine and link, Aravis 0.8 built from source. With the driver in sync USB mode, as it then was everywhere, only discovery passed: opening timed out, because every frame arrived incomplete while the driver waited for one complete frame to time the camera's arrivals. `arv-camera-test-0.8` then showed the cause: in sync mode it reported six or more errors, while in async mode the camera streamed cleanly. The driver now uses async mode off macOS. [V, 2026-10-22]
+The same machine and link, Aravis 0.8 built from source. With the driver in sync USB mode, as it then was everywhere, only discovery passed: opening timed out, because every frame arrived incomplete while the driver waited for one complete frame to time the camera's arrivals. `arv-camera-test-0.8` then showed the cause: in sync mode it reported six or more errors, while in async mode the camera streamed cleanly. The driver now uses async mode everywhere (on macOS since 2026-10-29). [V, 2026-10-22]
 
 Rerun in async mode: 22 of 23 hardware tests passed, 2 skipped (no `ExposureAuto`; the refusal test, since Aravis times this camera). [V for each point below]
 
@@ -103,14 +103,14 @@ The camera has **no timestamp latch**, so the driver can't read the device clock
 
 ## State and recovery
 
-- **A wedged camera needs a power cycle.** After `TLParamsLocked = 1`, or a session closed in Aravis's async USB mode, the camera streams nothing (or only `missing-packets` frames) until it is power-cycled. Clearing the flag doesn't help. On the lab rig it is on Acroname port 6: `el-devices hub cycle 6`. Verified.
+- **A wedged camera needs a power cycle.** After `TLParamsLocked = 1`, or (before the driver waited for an async stream to go quiet) a session closed in Aravis's async USB mode on macOS, the camera streams nothing (or only `missing-packets` frames) until it is power-cycled. Clearing the flag doesn't help. On the lab rig it is on Acroname port 6: `el-devices hub cycle 6`. Verified.
 - **Busy detection works.** A second process's open fails with `LIBUSB_ERROR_ACCESS`, which the driver reports as `DeviceBusy`. Verified.
 - **Reopening after a failed session** failed with `LIBUSB_ERROR_ACCESS` in the first session. The cause was a buffer left in a failed test's traceback, which kept the stream and the USB interface (found on the CM3-U3-50S5M; fixed in the driver). Verified.
 
 ## Hazards
 
 - **Never set `TLParamsLocked`.** With it set to 1, the camera streams nothing through Aravis, and stays that way after the flag is cleared, until power-cycled. The driver leaves it alone, as Aravis's own tools do. Verified.
-- **Aravis's USB mode matters on both OSes.** In async mode on macOS, closing the camera can hang forever (in `arv_uv_stream_finalize`), and the next session then gets only `missing-packets` frames until a power cycle. In sync mode on Linux, frames arrive incomplete. The driver uses sync on macOS and async elsewhere. Verified; see [usb3-vision.md](usb3-vision.md#hazards).
+- **Aravis's USB mode.** In sync mode on Linux, frames arrive incomplete. In async mode on macOS, closing the camera once hung forever (in `arv_uv_stream_finalize`), and the next session got only `missing-packets` frames until a power cycle; since the driver waits for an async stream to go quiet before dropping it, 10 open/capture/close cycles and the hardware tests (23 passed, 2 skipped, 2026-10-29) closed cleanly. The driver uses async everywhere. Verified; see [usb3-vision.md](usb3-vision.md#hazards).
 - **Bandwidth.** Streaming this camera with five uncapped CM3-U3-50S5M cameras through one hub gave it only `size-mismatch` frames: about 5 × 181 MB/s plus 162 MB/s on one USB 3 upstream link. Cap the FLIR cameras' throughput when they share a link. Verified.
 - **Occasional `size-mismatch` frames** (2 of 22 and 4 of 25 frames, in two runs) with only this camera streaming. The cause is **unknown**. The driver drops them as incomplete and takes the next frame.
 - **Exposure writes clamp silently.** An out-of-range `ExposureTime` write is accepted and clamped by the camera. The driver checks ranges itself, so callers get `ValueError`. Verified.
@@ -138,7 +138,9 @@ ARAVIS_SERIAL=4110091493 pytest -m hardware tests/test_aravis_hardware.py -s
 
 ### Last run
 
-2026-10-29, macOS 27 (arm64), Python 3.12.15, Aravis 0.8.36: `test_settings_the_camera_offers` and `test_frame_size_matches_a_frame` passed, with the sizes above. The rest of the suite wasn't rerun.
+2026-10-29, macOS 27 (arm64), Python 3.14.8, Aravis 0.8.36 (Homebrew), firmware `3.90.27889`, async USB mode (the driver's first macOS run in it): `tests/test_aravis_hardware.py` 23 passed, 2 skipped. Ten open/capture/close cycles, alternating Mono10g40IDS and Mono8, each closed in 0.22–0.28 s, with no hang and no incomplete frame in the next session. The five CM3-U3-50S5M on the same hub were idle.
+
+2026-10-29, macOS 27 (arm64), Python 3.12.15, Aravis 0.8.36, sync USB mode (before the switch to async): `test_settings_the_camera_offers` and `test_frame_size_matches_a_frame` passed, with the sizes above. The rest of the suite wasn't rerun.
 
 2026-10-23, Fedora (the second lab machine), Python 3.14.8, Aravis from source, async USB mode with the wait before a stream is dropped: `tests/test_aravis_hardware.py` 22 passed, 2 skipped. The arrival-timed offset spread was 0.92 ms. 300 `not_before` captures met 300 stale frames, at 2.5 captures per second. Switching to software trigger took 0.30 s, with a 139 ms turnaround, and the 20 triggered exposures began 2–10 ms after the request, none needing a second trigger.
 
@@ -153,4 +155,4 @@ ARAVIS_SERIAL=4110091493 pytest -m hardware tests/test_aravis_hardware.py -s
 
 - `tests/test_aravis_hardware.py`: 20 passed, 1 skipped, 2 deselected (multi-camera), with all 20 triggered captures needing no second trigger.
 - `el-devices genicam`: free-running Mono10g40IDS 10/10 at 6.7 frames/s; software trigger 20/20, median 132 ms, one trigger fired again, two `size-mismatch` frames dropped.
-- History: the first session passed 8 of 23 hardware tests. The fixes that followed (stream only while acquiring, `TLParamsLocked` left alone, sync USB mode, arrival timing, Mono10g40IDS, dating triggered frames by their trigger, the trigger settle time) are recorded above and in [usb3-vision.md](usb3-vision.md#hardware-runs).
+- History: the first session passed 8 of 23 hardware tests. The fixes that followed (stream only while acquiring, `TLParamsLocked` left alone, sync USB mode (async since 2026-10-29), arrival timing, Mono10g40IDS, dating triggered frames by their trigger, the trigger settle time) are recorded above and in [usb3-vision.md](usb3-vision.md#hardware-runs).

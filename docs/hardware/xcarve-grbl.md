@@ -178,3 +178,14 @@ forever for the stage to reach the unclamped target).
 - Recovery: with hard limits on, an unlocked jog alarmed at once (`ALARM:1`). With the
   switch unplugged, `Pn:Z` cleared, and Z was unlocked with `$X` and jogged down
   10 mm, to −9.998. The maintainer then reported the switch fixed.
+- Repaired switch: with nothing moving, the Z pin read clear and showed `Pn:Z` each time
+  the switch was pressed by hand. `el-devices xcarve home` then homed to X −699,
+  Y −699, Z −1.
+- `pytest -m hardware` with motion allowed, after the repair: 11 passed.
+  - Homing from near home: 6.6 s.
+  - 10 mm at 10 mm/s: X 1.16 s, Y 1.15 s, Z 1.37 s; the extra over 1 s is
+    acceleration, slower on Z (`$122` 50 mm/s² against 500).
+  - `stop()` 1 s into a 40 mm X move: stopped 10.3 mm in, at −688.725.
+  - A 0.5 s Y jog then `stop()`: moved 5.48 mm, deceleration included.
+  - A 40 mm X move with a 1 s timeout: cancelled 11.8 mm in, at −687.225.
+  - A target past the limit (X +1): refused, nothing moved.

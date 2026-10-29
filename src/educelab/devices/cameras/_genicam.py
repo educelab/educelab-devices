@@ -34,7 +34,11 @@ import numpy.typing as npt
 from educelab.devices.cameras.base import (
     EXPOSURE_TIME,
     GAIN,
+    HEIGHT,
     PIXEL_FORMAT,
+    SENSOR_HEIGHT,
+    SENSOR_WIDTH,
+    WIDTH,
     Frame,
     FrameCamera,
     Setting,
@@ -680,6 +684,11 @@ class GenICamCamera(FrameCamera):
             self._enum_setting(
                 "PixelFormat", _PIXEL_FORMATS, name=PIXEL_FORMAT, writable=True
             ),
+            # Read-only even where the camera could crop: the driver sets no ROI.
+            self._pixels_setting(WIDTH, "Width"),
+            self._pixels_setting(HEIGHT, "Height"),
+            self._pixels_setting(SENSOR_WIDTH, "SensorWidth"),
+            self._pixels_setting(SENSOR_HEIGHT, "SensorHeight"),
             self._throughput_limit_setting(),
             self._trigger_setting(),
             self._read_only_number(
@@ -836,6 +845,13 @@ class GenICamCamera(FrameCamera):
         read = conn.get_int if integer else conn.get_float
         value = self._call(f"read {node}", lambda: read(node))
         return Setting(name, float(value) / scale, unit=unit, read_only=True)
+
+    def _pixels_setting(self, name: str, node: str) -> Setting | None:
+        conn = self._connection
+        if not conn.is_readable(node):
+            return None
+        value = self._call(f"read {node}", lambda: conn.get_int(node))
+        return Setting(name, value, unit="px", read_only=True)
 
     def _float_setting(
         self, name: str, node: str, unit: str, scale: float = 1.0

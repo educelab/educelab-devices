@@ -404,13 +404,15 @@ once it is closed.
 | `gain` | `Gain` | dB → dB | Read-only while `GainAuto` isn't `Off` |
 | `ExposureAuto`, `GainAuto` | same | symbol → symbol | Choices are `Off` and `Continuous`; `Once` is left out |
 | `pixel_format` | `PixelFormat` | symbol → symbol | Only Mono8, Mono16, RGB8 and 8/16-bit Bayer; changing it pauses acquisition |
+| `width`, `height` | `Width`, `Height` | px → px | Read-only: the size of the frames a capture returns. The driver never sets a region of interest. 2448 × 2048 on the CM3-U3-50S5M, matching captured frames (all five, 2026-10-29) |
+| `sensor_width`, `sensor_height` | `SensorWidth`, `SensorHeight` | px → px | Read-only; left out on a camera without them. 2448 × 2048 on the CM3-U3-50S5M: as found, no crop (`OffsetX` = `OffsetY` = 0) |
 | `throughput_limit` | `DeviceLinkThroughputLimit` | MB/s → bytes/s (× 10^6) | Reads `None` while `DeviceLinkThroughputLimitMode` is Off; writing sets the mode On first ([Settings](#settings)) |
 | `current_throughput` | `DeviceLinkCurrentThroughput` | MB/s ← bytes/s (÷ 10^6) | Read-only |
 | `resulting_frame_rate` | `AcquisitionResultingFrameRate` | Hz → Hz | Read-only; not on the CM3-U3-50S5M |
 | `trigger` | `TriggerMode`, `TriggerSource`, `TriggerSelector` | `Off` → `TriggerMode=Off`; `Software` → `TriggerSelector=FrameStart`, `TriggerSource=Software`, `TriggerMode=On` | Reads `None` for any other trigger setup (e.g. a hardware line); changing it pauses acquisition ([Software trigger](#software-trigger-opt-in)) |
 
-`exposure_time` and `gain` are canonical names shared by every camera. The others
-are Spinnaker-only names, with units chosen so they read alike, not the native node
+`exposure_time`, `gain`, `pixel_format` and the four sizes are canonical names shared
+by every camera. The others are Spinnaker-only names, with units chosen so they read alike, not the native node
 names. On the CM3-U3-50S5M, `ExposureTime` is read-only under `ExposureAuto=Continuous`
 and writable again under `Off`, and every listed pixel format captures (hardware test,
 2026-10-19 and 2026-10-20).
@@ -468,7 +470,7 @@ and writable again under `Off`, and every listed pixel format captures (hardware
 - Triggering other than software triggering of single frames: hardware lines,
   `TriggerActivation`, `TriggerOverlap`, `TriggerDelay`, and other selectors. `open()`
   sets `TriggerMode=Off`.
-- Image geometry and processing: `Width`, `Height`, offsets, binning, black level, gamma,
+- Image geometry and processing: setting `Width` and `Height`, offsets, binning, black level, gamma,
   white balance, PySpin's `ImageProcessor` conversions, and other pixel formats such as
   packed 12-bit.
 - Buffer handling other than newest-only, single-frame or multi-frame acquisition,

@@ -9,7 +9,7 @@ Everything here was observed on one unit (serial `4110091493`, firmware `3.90.27
 - **Model.** IDS sells it as the U3-36P0XCP-M-GL (monochrome, glass lid). The camera reports its model as `U3-36PxXCP-M` and its vendor as `IDS Imaging Development Systems GmbH`. Verified.
 - **Firmware.** `3.90.27889` on this unit, read from `DeviceFirmwareVersion` (the driver's `info.firmware_version`). IDS lists uEye+ firmware 3.94 with IDS peak 26.06; no changelog was found, and the lab has chosen not to update. Updating needs IDS peak's tools, which run on Linux and Windows only. Verified (version on the unit); assumed (3.94, from IDS's manual pages).
 - **On the host.** USB vendor ID `1409`. Aravis's device ID is `IDS Imaging Development Systems GmbH-1409f4fb04e5-4110091493`, and both Aravis and the driver report serial number `4110091493`, the same serial the camera's `DeviceSerialNumber` gives. Verified.
-- **Sensor.** 5112 × 3840 pixels, rolling shutter (`SensorShutterMode = Rolling`, the only entry), `SensorOperationMode = Default`. The sensor model is readable from the `SensorInformation` node; not yet recorded. Verified (size and shutter).
+- **Sensor.** 5136 × 3856 pixels (`SensorWidth`, `SensorHeight`, equal to `WidthMax`, `HeightMax`). Frames come out at 5112 × 3840: as found, `Width` and `Height` crop the sensor at `OffsetX` = `OffsetY` = 8. Rolling shutter (`SensorShutterMode = Rolling`, the only entry), `SensorOperationMode = Default`. The sensor model is readable from the `SensorInformation` node; not yet recorded. Verified (size and shutter).
 
 ## Transport
 
@@ -49,6 +49,8 @@ What the driver reaches, and what's missing. Verified with `arv-tool-0.8 -n <id>
 | `ExposureAuto` | none | **Missing.** The driver leaves the setting out. |
 | `gain` | `Gain` (dB) | 1.0 to 8.04 dB. No `GainAuto`. |
 | `pixel_format` | `PixelFormat` | Mono8 and `Mono10g40IDS` only; other entries are listed as "Not available". See [Pixel formats](#pixel-formats). |
+| `width`, `height` | `Width`, `Height` | 5112 × 3840, matching captured frames. The nodes are writable (`Width` 648 to 5124 in steps of 12, `Height` 2 to 3848 in steps of 2), but the driver reports them read-only and leaves the ROI as found. |
+| `sensor_width`, `sensor_height` | `SensorWidth`, `SensorHeight` | 5136 × 3856. |
 | `throughput_limit` | `DeviceLinkThroughputLimit` | 108 to 300 MB/s in 2 MB/s steps; 162 MB/s as found. |
 | `trigger` | `TriggerSelector`, `TriggerMode`, `TriggerSource`, `TriggerSoftware` | `FrameStart` (used) and `ExposureStart`; sources `Software` and `Line0`. |
 | timestamps | `Timestamp`, `TimestampLatch` | **Missing.** See [Timestamps](#timestamps). |
@@ -137,6 +139,8 @@ ARAVIS_SERIAL=4110091493 pytest -m hardware tests/test_aravis_hardware.py -s
 ### Last run
 
 2026-10-29, macOS 27 (arm64), Python 3.14.8, Aravis 0.8.36 (Homebrew), firmware `3.90.27889`, async USB mode (the driver's first macOS run in it): `tests/test_aravis_hardware.py` 23 passed, 2 skipped. Ten open/capture/close cycles, alternating Mono10g40IDS and Mono8, each closed in 0.22–0.28 s, with no hang and no incomplete frame in the next session. The five CM3-U3-50S5M on the same hub were idle.
+
+2026-10-29, macOS 27 (arm64), Python 3.12.15, Aravis 0.8.36, sync USB mode (before the switch to async): `test_settings_the_camera_offers` and `test_frame_size_matches_a_frame` passed, with the sizes above. The rest of the suite wasn't rerun.
 
 2026-10-23, Fedora (the second lab machine), Python 3.14.8, Aravis from source, async USB mode with the wait before a stream is dropped: `tests/test_aravis_hardware.py` 22 passed, 2 skipped. The arrival-timed offset spread was 0.92 ms. 300 `not_before` captures met 300 stale frames, at 2.5 captures per second. Switching to software trigger took 0.30 s, with a 139 ms turnaround, and the 20 triggered exposures began 2–10 ms after the request, none needing a second trigger.
 

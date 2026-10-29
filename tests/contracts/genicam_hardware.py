@@ -18,7 +18,7 @@ from typing import ClassVar
 import numpy as np
 import pytest
 
-from educelab.devices.cameras import EXPOSURE_TIME, PIXEL_FORMAT
+from educelab.devices.cameras import EXPOSURE_TIME, HEIGHT, PIXEL_FORMAT, WIDTH
 from educelab.devices.cameras._genicam import (
     RETRIES_BEFORE_REMEASURE,
     THROUGHPUT_LIMIT,
@@ -130,6 +130,10 @@ class GenICamHardwareTests:
         for name, setting in camera.settings().items():
             print(f"{name}: {setting}")
         assert EXPOSURE_TIME in camera.settings()
+
+    def test_frame_size_matches_a_frame(self, camera):
+        size = (camera.setting(HEIGHT).value, camera.setting(WIDTH).value)
+        assert camera.capture_frame().pixels.shape[:2] == size
 
     def test_camera_has_a_timestamp_offset(self, camera):
         # Records which node or source this model uses (usb3-vision.md).

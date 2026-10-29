@@ -9,8 +9,12 @@ from contracts import FileCameraContract, FrameCameraContract
 from educelab.devices.cameras import (
     EXPOSURE_TIME,
     GAIN,
+    HEIGHT,
     ISO,
     PIXEL_FORMAT,
+    SENSOR_HEIGHT,
+    SENSOR_WIDTH,
+    WIDTH,
     SimulatedCamera,
     SimulatedFileCamera,
 )
@@ -27,6 +31,12 @@ class TestSimulatedColorCamera(FrameCameraContract):
     @pytest.fixture
     def make_device(self):
         return functools.partial(SimulatedCamera, color=True)
+
+
+class TestSimulatedAutoCamera(FrameCameraContract):
+    @pytest.fixture
+    def make_device(self):
+        return functools.partial(SimulatedCamera, auto=True)
 
 
 class TestSimulatedFileCamera(FileCameraContract):
@@ -88,10 +98,77 @@ def test_color_camera_starts_in_rgb8_with_distinct_channels():
         assert camera.capture_frame().pixels.shape == (24, 32)
 
 
-def test_sensor_size_is_reported():
+def test_frame_and_sensor_size_are_reported():
     with SimulatedCamera(width=32, height=24) as camera:
-        assert camera.setting("sensor_width").value == 32
-        assert camera.setting("sensor_height").value == 24
+        for name, size in (
+            (WIDTH, 32),
+            (HEIGHT, 24),
+            (SENSOR_WIDTH, 32),
+            (SENSOR_HEIGHT, 24),
+        ):
+            assert camera.setting(name).value == size
+            assert camera.setting(name).read_only
+
+
+def test_auto_modes_are_offered_only_on_request():
+    with SimulatedCamera() as camera:
+        assert "ExposureAuto" not in camera.settings()
+    with SimulatedCamera(auto=True) as camera:
+        assert camera.setting("ExposureAuto").choices == ("Off", "Continuous")
+        assert camera.setting("GainAuto").value == "Continuous"
+
+
+def test_auto_exposure_locks_exposure_time_and_varies_it_per_frame():
+    with SimulatedCamera(auto=True) as camera:
+        assert camera.setting(EXPOSURE_TIME).read_only
+        exposures = {camera.capture_frame().metadata[EXPOSURE_TIME] for _ in range(3)}
+        assert len(exposures) == 3
+        last = camera.setting(EXPOSURE_TIME).value
+        camera.set_setting("ExposureAuto", "Off")
+        assert camera.setting(EXPOSURE_TIME).value == last
+        camera.set_setting(EXPOSURE_TIME, 0.002)
+        assert camera.capture_frame().metadata[EXPOSURE_TIME] == 0.002
+
+
+def test_auto_gain_varies_per_frame_when_exposure_is_manual():
+    with SimulatedCamera(auto=True) as camera:
+        camera.set_setting("ExposureAuto", "Off")
+        assert camera.setting(EXPOSURE_TIME).value == 0.01
+        gains = {camera.capture_frame().metadata[GAIN] for _ in range(5)}
+        assert len(gains) == 5
+        assert all(gain > 0 for gain in gains)
+        assert camera.setting(GAIN).read_only
+        camera.set_setting("GainAuto", "Off")
+        camera.set_setting(GAIN, 0.0)
+        assert camera.capture_frame().metadata[GAIN] == 0.0
+
+
+def test_with_both_auto_modes_exposure_does_the_work():
+    with SimulatedCamera(auto=True) as camera:
+        assert {camera.capture_frame().metadata[GAIN] for _ in range(3)} == {0.0}
+
+
+def test_auto_mode_leaves_the_noise_unchanged():
+    with SimulatedCamera(seed=3) as manual, SimulatedCamera(seed=3, auto=True) as auto:
+        manual.capture_frame()
+        auto.capture_frame()
+        auto.set_setting("ExposureAuto", "Off")
+        auto.set_setting("GainAuto", "Off")
+        auto.set_setting(EXPOSURE_TIME, 0.01)
+        auto.set_setting(GAIN, 0.0)
+        assert np.array_equal(
+            manual.capture_frame().pixels, auto.capture_frame().pixels
+        )
+
+
+def test_sensor_can_be_larger_than_the_frame():
+    with SimulatedCamera(width=32, height=24, sensor_size=(40, 30)) as camera:
+        assert (camera.setting(WIDTH).value, camera.setting(HEIGHT).value) == (32, 24)
+        assert camera.setting(SENSOR_WIDTH).value == 40
+        assert camera.setting(SENSOR_HEIGHT).value == 30
+        assert camera.capture_frame().pixels.shape == (24, 32)
+    with pytest.raises(ValueError, match="sensor_size"):
+        SimulatedCamera(width=32, height=24, sensor_size=(16, 24))
 
 
 def test_capture_takes_the_exposure_time():

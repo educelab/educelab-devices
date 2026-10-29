@@ -2,15 +2,20 @@
   "id": "xlc-xcarve_20261012",
   "title": "XLC Lights and X-Carve Stage",
   "type": "feature",
-  "status": "pending",
+  "status": "in_progress",
   "created": "2026-10-12T00:00:00Z",
-  "updated": "2026-10-12T00:00:00Z",
+  "updated": "2026-10-29T00:00:00Z",
   "phases": {
     "total": 3,
     "completed": 0
   },
   "tasks": {
     "total": 14,
-    "completed": 0
-  }
+    "completed": 1
+  },
+  "current_phase": 1,
+  "current_task": "1.2",
+  "commits": [
+    "3f85a42: Copy the XLC1 and XLC2 firmware from pgs-scan unchanged"
+  ]
 }

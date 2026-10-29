@@ -3,7 +3,7 @@
 **Track ID:** xlc-xcarve_20261012
 **Spec:** [spec.md](./spec.md)
 **Created:** 2026-10-12
-**Status:** [ ] Not Started
+**Status:** [~] In Progress
 
 ## Overview
 
@@ -13,7 +13,7 @@ Lights first (small, reuse the serial transport), then the GRBL stage, then docs
 
 ### Tasks
 
-- [ ] Task 1.1: Copy both firmwares into `firmware/xlc1/` and `firmware/xlc2/` unchanged (provenance commit); record the current protocol and ranges in `docs/hardware/xlc.md`.
+- [x] Task 1.1: Copy both firmwares into `firmware/xlc1/` and `firmware/xlc2/` unchanged (provenance commit); record the current protocol and ranges in `docs/hardware/xlc.md`.
 - [ ] Task 1.2: Update both firmwares to reply `OK`/`ERR <reason>` to every command, remove debug prints, and bump versions; check `pgs-scan` `dev`'s XLC classes against the new replies.
 - [ ] Task 1.3: Write handshake and command tests for `XLC1` on a scripted fake; implement.
 - [ ] Task 1.4: Write handshake and command tests for `XLC2`; implement.

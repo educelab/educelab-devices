@@ -25,7 +25,13 @@ from educelab.devices.errors import (
     DeviceTimeout,
 )
 from fakes.genicam import FakeCamera, FrameSpec
-from fakes.gentl import PRODUCER, FakeGenicam, TimeoutException
+from fakes.gentl import (
+    PRODUCER,
+    FakeDeviceInfo,
+    FakeGenicam,
+    GenericException,
+    TimeoutException,
+)
 
 MONO = "4108000001"
 COLOR = "4108000002"
@@ -198,6 +204,21 @@ def test_discover_lists_attached_cameras(genicam, monkeypatch):
     assert found[0].backend == "gentl"
     assert found[0].model == "U3-36P0XCP-M"
     assert found[0].address == f"IDS-{MONO}"
+    assert genicam.open_modules == []
+
+
+def test_discover_lists_a_camera_whose_vendor_cant_be_read(genicam, monkeypatch):
+    def fail(info):
+        raise GenericException("vendor not available")
+
+    monkeypatch.setattr(gentl, "load_genicam", lambda: genicam)
+    monkeypatch.setattr(gentl, "find_producers", lambda: [PRODUCER])
+    # FakeDeviceInfo sets vendor on creation, so the property needs a setter.
+    vendor = property(fail, lambda info, value: None)
+    monkeypatch.setattr(FakeDeviceInfo, "vendor", vendor, raising=False)
+    found = GenTLCamera.discover()
+    assert [i.serial_number for i in found] == [MONO, COLOR]
+    assert all(i.vendor is None for i in found)
     assert genicam.open_modules == []
 
 

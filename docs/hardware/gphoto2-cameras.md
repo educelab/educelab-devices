@@ -23,7 +23,14 @@ drives over PTP.
   is too slow for `open()` (see [Settings](#settings)). A camera without them, or a
   failed read, leaves them `None`. The Z7 II pads its serial with zeros to 32 digits
   (`00000000000000000000000003057001`) and reports firmware `V1.62`. `open()` takes
-  0.13 s including both reads. **verified** (`gphoto2-hw-open-linux-1.log`).
+  0.13 s including both reads. **verified** (`gphoto2-hw-open-linux-1.log`), before the
+  vendor read below was added.
+- `vendor` comes from the `manufacturer` widget, read the same way at `open()`, so
+  `open()` now makes three reads. libgphoto2's PTP driver fills it from the camera's
+  device info. `discover()` can't report it: libgphoto2's camera list has no vendor.
+  The Z7 II reports `Nikon Corporation`. Each identity read took about 1 ms, and `open()`
+  with all three took 0.24 s. **verified** (body `…03057001`, macOS 27, python-gphoto2
+  2.6.4, 2026-10-29, after `killall -9 ptpcamerad`).
 
 ## Transport
 

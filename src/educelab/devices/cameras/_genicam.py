@@ -405,6 +405,7 @@ class GenICamCamera(FrameCamera):
         self._backend = backend
         self._conn: Connection | None = None
         self._model = f"{self.label} camera"
+        self._vendor: str | None = None
         self._firmware: str | None = None
         self._own_serial: str | None = None
         self._timestamp_node: str | None = None
@@ -429,6 +430,7 @@ class GenICamCamera(FrameCamera):
             self._model,
             serial_number=self._own_serial or self._serial,
             firmware_version=self._firmware,
+            vendor=self._vendor,
         )
 
     @property
@@ -496,6 +498,7 @@ class GenICamCamera(FrameCamera):
             raise DeviceNotFound(self._not_found_message())
         try:
             self._model = self._read_string("DeviceModelName") or self._model
+            self._vendor = self._read_optional_string("DeviceVendorName")
             self._firmware = self._read_string("DeviceFirmwareVersion")
             self._own_serial = self._read_string("DeviceSerialNumber")
             self._configure()
@@ -1125,6 +1128,14 @@ class GenICamCamera(FrameCamera):
         if not conn.is_readable(name):
             return None
         return self._call(f"read {name}", lambda: conn.get_string(name))
+
+    def _read_optional_string(self, name: str) -> str | None:
+        """Like `_read_string`, but a failed read is logged and gives ``None``."""
+        try:
+            return self._read_string(name)
+        except DeviceError as exc:
+            logger.warning("%s", exc)
+            return None
 
     def _read_enum(self, name: str) -> str:
         conn = self._connection

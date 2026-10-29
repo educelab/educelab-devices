@@ -310,8 +310,19 @@ def test_info_before_open_names_the_serial(backend):
 
 def test_info_after_open_has_model_and_firmware(camera):
     assert camera.info == DeviceInfo(
-        "fake", "U3-36P0XCP-M", serial_number=MONO, firmware_version="1.0.0"
+        "fake",
+        "U3-36P0XCP-M",
+        serial_number=MONO,
+        firmware_version="1.0.0",
+        vendor="IDS Imaging",
     )
+
+
+def test_a_vendor_that_cant_be_read_doesnt_stop_open(backend, fake):
+    fake.failures["read DeviceVendorName"] = FakeCameraError("access", "nope")
+    with GenICamCamera(MONO, backend) as camera:
+        assert camera.info.vendor is None
+        assert camera.info.model == "U3-36P0XCP-M"
 
 
 def test_info_after_open_reports_the_cameras_own_serial(backend, fake):

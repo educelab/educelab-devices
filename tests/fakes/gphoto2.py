@@ -55,6 +55,14 @@ NIKON_WIDGETS = (
     ),
     Widget("artist", "Artist", "text", "", section="settings"),
     Widget("serialnumber", "Serial Number", "text", "6001234", True, section="status"),
+    Widget(
+        "manufacturer",
+        "Camera Manufacturer",
+        "text",
+        "Nikon Corporation",
+        True,
+        section="status",
+    ),
     Widget("viewfinder", "Nikon Viewfinder", "toggle", 0, section="actions"),
     Widget(
         "autofocusdrive", "Drive Nikon DSLR Autofocus", "toggle", 0, section="actions"

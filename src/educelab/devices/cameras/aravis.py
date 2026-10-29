@@ -155,6 +155,7 @@ class _AravisBackend:
                     arv.get_device_model(i) or "Aravis camera",
                     address=arv.get_device_physical_id(i),
                     serial_number=arv.get_device_serial_nbr(i),
+                    vendor=arv.get_device_vendor(i) or None,
                 )
                 for i in range(arv.get_n_devices())
             ]

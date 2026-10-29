@@ -183,7 +183,7 @@ def _describe(camera: "GenICamCamera") -> None:
     if camera.timestamp_source:
         offset_text += f" {_TIMESTAMP_SOURCES[camera.timestamp_source]}"
     print(
-        f"{info.serial_number}: {info.model}, firmware {info.firmware_version}, "
+        f"{info.serial_number}: {info.vendor or 'unknown vendor'} {info.model}, firmware {info.firmware_version}, "
         f"{pixel_format}, exposure {exposure_text}, gain {gain} dB, "
         f"{_throughput_text(settings)}, "
         f"trigger {settings['trigger'].value if 'trigger' in settings else 'none'}, "

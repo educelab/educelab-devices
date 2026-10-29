@@ -183,9 +183,24 @@ def test_discover_lists_every_camera(pyspin):
     # #90: every camera is visited, not just the first.
     infos = SpinnakerSystem(pyspin=pyspin).discover()
     assert infos == [
-        DeviceInfo("spinnaker", "Blackfly S BFS-U3-51S5M", serial_number="20000001"),
-        DeviceInfo("spinnaker", "Blackfly S BFS-U3-200S6C", serial_number="20000002"),
-        DeviceInfo("spinnaker", "Blackfly S BFS-U3-51S5M", serial_number="20000003"),
+        DeviceInfo(
+            "spinnaker",
+            "Blackfly S BFS-U3-51S5M",
+            serial_number="20000001",
+            vendor="FLIR",
+        ),
+        DeviceInfo(
+            "spinnaker",
+            "Blackfly S BFS-U3-200S6C",
+            serial_number="20000002",
+            vendor="FLIR",
+        ),
+        DeviceInfo(
+            "spinnaker",
+            "Blackfly S BFS-U3-51S5M",
+            serial_number="20000003",
+            vendor="FLIR",
+        ),
     ]
 
 
@@ -228,6 +243,18 @@ def test_discover_reports_a_camera_without_a_readable_serial(pyspin):
     infos = SpinnakerSystem(pyspin=pyspin).discover()
     assert infos[0].serial_number is None
     assert infos[0].model == "Blackfly S BFS-U3-51S5M"
+    assert infos[0].vendor == "FLIR"
+
+
+def test_discover_lists_a_camera_whose_vendor_cant_be_read(pyspin, monkeypatch):
+    def fail():
+        raise SpinnakerException("node not available")
+
+    node = pyspin.system.cameras[0].tl_device_nodes["DeviceVendorName"]
+    monkeypatch.setattr(node, "ToString", fail)
+    infos = SpinnakerSystem(pyspin=pyspin).discover()
+    assert infos[0].serial_number == "20000001"
+    assert infos[0].vendor is None
 
 
 def test_discover_raises_device_error_when_enumeration_fails(pyspin, monkeypatch):

@@ -68,10 +68,11 @@ def quick_exposure(camera):
 def test_identifies_the_camera(camera):
     info = camera.info
     print(
-        f"\nmodel {info.model!r} at {info.address!r}, serial "
+        f"\n{info.vendor!r} model {info.model!r} at {info.address!r}, serial "
         f"{info.serial_number!r}, firmware {info.firmware_version!r}"
     )
     assert info.model != "unknown"
+    assert info.vendor
 
 
 def test_reports_its_settings(camera):

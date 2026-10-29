@@ -73,6 +73,7 @@ def test_benchmarks_every_camera_at_once(backend, capsys, request):
     assert main(["genicam", "--backend", backend, "--frames", "3"]) == 0
     out = capsys.readouterr().out
     assert "Capturing 3 frame(s) from 2 camera(s) at once" in out
+    assert f"{MONO}: IDS Imaging U3-36P0XCP-M, firmware" in out
     assert f"{MONO}: 3/3 captured" in out
     assert f"{COLOR}: 3/3 captured" in out
     assert "timestamp offset" in out

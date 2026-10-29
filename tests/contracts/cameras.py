@@ -11,6 +11,9 @@ from educelab.devices.errors import DeviceTimeout, NotConnected
 class CameraContract(DeviceContract):
     """Rules every `Camera` follows."""
 
+    def test_open_camera_reports_its_vendor(self, device):
+        assert device.info.vendor
+
     def test_settings_are_keyed_by_name(self, device):
         settings = device.settings()
         assert settings

@@ -274,9 +274,18 @@ def _describe(pyspin: Any, cam: Any) -> DeviceInfo | None:
         # traceback, and with it ``cam``, which blocks releasing the system.
         logger.warning("skipping a Spinnaker camera that can't be read: %s", str(exc))
         return None
+    try:
+        vendor = read("DeviceVendorName")
+    except pyspin.SpinnakerException as exc:
+        logger.warning(
+            "Spinnaker camera %s has no readable vendor: %s", serial, str(exc)
+        )
+        vendor = None
     if serial is None:
         logger.warning("Spinnaker camera %r has no readable serial number", model)
-    return DeviceInfo(BACKEND, model or "Spinnaker camera", serial_number=serial)
+    return DeviceInfo(
+        BACKEND, model or "Spinnaker camera", serial_number=serial, vendor=vendor
+    )
 
 
 def _get_by_serial(pyspin: Any, cameras: Any, serial: str) -> Any | None:

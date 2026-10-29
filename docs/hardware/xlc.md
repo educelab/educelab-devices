@@ -62,6 +62,11 @@ Other units may have other bridges, since `pgs-scan` also searches for the CH340
   (`r = g = b`).
 - The XL4 array, one PWM output on pin 6.
 - Both start off at power-up.
+- **Flashes on reset**: the strip flashes briefly at some point when the port opens
+  (**verified**, observed by the maintainer, 2026-10-29). The likely cause is the Nano's
+  bootloader blinking its LED on D13, which is also the SPI clock to the strip, so stray
+  bits reach the strip until `setup()` clears it (**assumed**). Harmless, but a camera
+  exposing while the port opens could catch it.
 
 ## Transport
 
@@ -171,21 +176,22 @@ Checked by reading `pgs_scan/components/lights.py` on `dev` against the 2.0.0 re
 
 Open `firmware/xlc2/XLC2_firmware/` in the Arduino IDE, or use
 [`arduino-cli`](https://arduino.github.io/arduino-cli/). The sketch needs the
-**Adafruit DotStar** library. It hasn't been compiled for a board yet, and the board
-type is **unknown** (see [Unknowns](#unknowns)), so pick it in the IDE or pass its
-FQBN:
+**Adafruit DotStar** library. The board is an **Arduino Nano** (maintainer, 2026-10-29),
+and 2.0.0 was flashed to it from the Arduino IDE. With `arduino-cli` (untried):
 
 ```shell
 arduino-cli lib install "Adafruit DotStar"
-arduino-cli compile -b <fqbn> firmware/xlc2/XLC2_firmware
-arduino-cli upload -b <fqbn> -p <port> firmware/xlc2/XLC2_firmware
+arduino-cli compile -b arduino:avr:nano firmware/xlc2/XLC2_firmware
+arduino-cli upload -b arduino:avr:nano -p <port> firmware/xlc2/XLC2_firmware
 ```
+
+Nanos with the old bootloader need `arduino:avr:nano:cpu=atmega328old` instead. Which
+bootloader this one has is **unknown**.
 
 ## Unknowns
 
-- The Arduino board in each XLC2, which decides the FQBN for flashing, and the
-  USB-serial bridge in the units not yet checked. Settle by plugging in each unit and
-  recording its `list_ports` entry.
+- The USB-serial bridge in the units not yet checked, and whether they're all Nanos.
+  Settle by plugging in each unit and recording its `list_ports` entry.
 - Whether the HT42B534's serial number and description can be rewritten, which
   would let `serial_number=` pick out one XLC2.
 - The XL4's current and thermal limits at full duty.

@@ -96,8 +96,9 @@ X −699 to 0, Y −699 to 0 and Z −45 to −1. GRBL 1.1 (`limits.c`, without
 `HOMING_FORCE_SET_ORIGIN`) sets an axis that homes toward positive to minus the
 pull-off, and one that homes toward negative to minus its travel plus the pull-off. With
 `$23=3`, `$27=1` and `$130`–`$132` as above, homing should leave the gantry at
-X −699, Y −699, Z −1, the corner of `pgs-scan`'s bounds (**assumed**, from the
-source; the rig check records it).
+X −699, Y −699, Z −1, the corner of `pgs-scan`'s bounds. **Verified**: homing left it
+there, 2026-10-29. So home is the minimum of X and Y and the top of Z, and every
+reachable X and Y position is above home.
 
 The driver takes its limits from the consumer and raises `PositionError` for any target
 outside them, before sending anything (`pgs-scan` #71 clamped instead, then waited
@@ -140,7 +141,6 @@ forever for the stage to reach the unclamped target).
 ## Unknowns
 
 - Whether opening the port resets the controller on Linux and Windows too.
-- The position after homing (predicted X −699, Y −699, Z −1).
 - Whether other X-Controllers have the same settings.
 
 ## Manual check
@@ -151,3 +151,5 @@ forever for the stage to reach the unclamped target).
 
 - `el-devices xcarve status`: banner and alarm lock on open, settings as above, position
   0, 0, 0 in `Alarm`. No motion.
+- `el-devices xcarve home`: homed Z, then X and Y, ending at X −699, Y −699, Z −1, as
+  predicted. No alarms.

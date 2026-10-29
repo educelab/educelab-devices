@@ -44,7 +44,7 @@ Lights first (small, reuse the serial transport), then the GRBL stage, then docs
 
 ### Tasks
 
-- [ ] Task 3.1: Write `docs/hardware/xcarve-grbl.md`.
+- [x] Task 3.1: Write `docs/hardware/xcarve-grbl.md`.
 - [ ] Task 3.2: Add `el-devices xlc` and `el-devices xcarve` subcommands.
 - [ ] Task 3.3: Write `@pytest.mark.hardware` tests for lights and gantry.
 - [ ] Task 3.4: Flash updated XLC firmware on a rig (coordinated with that rig's `pgs-scan` migration if needed), run the hardware tests, and record findings in the hardware docs.

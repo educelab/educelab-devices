@@ -15,7 +15,7 @@ hardware doc reflects what the change taught us (workflow.md).
 | Foldio360 turntable and halo | Stage, Light | `Foldio360` (`educelab.devices.stages.foldio360`) | [foldio360.md](foldio360.md) |
 | Nikon Z7 II (gphoto2) | File camera, Focus drive | `cameras.gphoto2.GPhoto2Camera` | [gphoto2-cameras.md](gphoto2-cameras.md) |
 | XLC2 | Light | `lights.xlc.XLC2` | [xlc.md](xlc.md) |
-| X-Carve (GRBL) | Stage | `stages.xcarve.XCarve` | not yet written |
+| X-Carve (GRBL) | Stage | `stages.xcarve.XCarve` | [xcarve-grbl.md](xcarve-grbl.md) |
 | Spinnaker cameras | Frame camera | `SpinnakerCamera` (`educelab.devices.cameras.spinnaker`) | [spinnaker.md](spinnaker.md) |
 | Acroname USBHub3p | Hub | `hubs.acroname.AcronameHub` | [acroname-usbhub3p.md](acroname-usbhub3p.md) |
 | USB3 Vision cameras through Aravis or GenTL | Frame camera | `cameras.aravis.AravisCamera`, `cameras.gentl.GenTLCamera` | [usb3-vision.md](usb3-vision.md) |

@@ -34,11 +34,11 @@ Lights first (small, reuse the serial transport), then the GRBL stage, then docs
 - [x] Task 2.2: Write tests for open without homing, `home()` with timeout, and moves-before-homing raising; implement.
 - [x] Task 2.3: Write tests for limits (raise, never clamp), blocking moves with arrival tolerance and timeouts; implement.
 - [x] Task 2.4: Write tests for `jog`, `stop()` during a move, live `position()`, alarm events; implement the internal status polling.
-- [ ] Task 2.5: Run the `Stage` contract suite.
+- [x] Task 2.5: Run the `Stage` contract suite.
 
 ### Verification
 
-- [ ] GRBL tests and contracts pass; #67, #71, #84 covered by regression tests.
+- [x] GRBL tests and contracts pass; #67, #71, #84 covered by regression tests.
 
 ## Phase 3: Docs, CLI, hardware verification
 

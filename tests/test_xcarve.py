@@ -3,6 +3,7 @@ import time
 
 import pytest
 
+from contracts import StageContract
 from educelab.devices._serial import PortInfo, SerialTransport
 from educelab.devices.device import DeviceInfo, Disconnected
 from educelab.devices.errors import (
@@ -40,6 +41,20 @@ def make_stage(machine, port="/dev/ttyGRBL", speed=50.0, limits=LIMITS):
 @pytest.fixture
 def machine():
     return GrblMachine()
+
+
+class TestXCarveContract(StageContract):
+    @pytest.fixture(autouse=True)
+    def no_ports(self, monkeypatch):
+        monkeypatch.setattr(xcarve, "list_ports", list)
+
+    @pytest.fixture
+    def make_device(self):
+        return lambda: make_stage(GrblMachine())
+
+    @pytest.fixture
+    def position_tolerance(self):
+        return xcarve.ARRIVAL_TOLERANCE_MM
 
 
 @pytest.fixture

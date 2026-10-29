@@ -7,14 +7,14 @@
   "updated": "2026-10-29T00:00:00Z",
   "phases": {
     "total": 3,
-    "completed": 1
+    "completed": 2
   },
   "tasks": {
     "total": 14,
-    "completed": 9
+    "completed": 10
   },
-  "current_phase": 2,
-  "current_task": "2.5",
+  "current_phase": 3,
+  "current_task": "3.1",
   "commits": [
     "3f85a42: Copy the XLC1 and XLC2 firmware from pgs-scan unchanged",
     "d81e832: Record the XLC1 and XLC2 protocol as copied",
@@ -26,6 +26,7 @@
     "2e24441: Drop XLC1, whose units are retired",
     "6c9ffb1: Emulate GRBL 1.1 for the X-Carve driver's tests",
     "ea254af: Open and home the X-Carve without moving on open",
-    "e70701f: Make X-Carve moves block until they arrive, with a timeout"
+    "e70701f: Make X-Carve moves block until they arrive, with a timeout",
+    "113babe: Jog and stop the X-Carve, and report alarms and lost links"
   ]
 }

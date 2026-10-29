@@ -117,13 +117,20 @@ class GrblMachine:
     # Test controls
 
     def alarm(self, code: int) -> None:
-        """Raise ``ALARM:code`` now, e.g. 1 for a hard limit."""
+        """Raise ``ALARM:code`` now, e.g. 1 for a hard limit.
+
+        During homing, ``$H`` still gets its ``ok`` after the alarm, as the
+        rig's GRBL 1.1g did (docs/hardware/xcarve-grbl.md#state-and-recovery).
+        """
         with self._cond:
             self._advance()
             self._halt()
+            homing = self._homing_until is not None
             self._homing_until = None
             self.state = "Alarm"
             self._say(f"ALARM:{code}")
+            if homing:
+                self._say("ok")
 
     def unplug(self) -> None:
         """Make every later read or write fail as if the cable were pulled."""

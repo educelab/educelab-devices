@@ -188,6 +188,31 @@ def test_homing_alarm_raises_and_leaves_the_stage_unhomed():
         assert not stage.is_homed
 
 
+def test_a_reply_to_an_abandoned_command_is_not_taken_for_the_next():
+    # On the rig, $H alarmed (ALARM:8), and its late "ok" then made a second
+    # home() return at once as if homed.
+    machine = GrblMachine(homing_s=30.0)
+    with make_stage(machine) as stage:
+        threading.Timer(0.05, machine.alarm, args=(8,)).start()
+        with pytest.raises(DeviceError, match="pull-off"):
+            stage.home(timeout=5.0)
+        with pytest.raises(DeviceTimeout):
+            stage.home(timeout=0.5)
+        assert not stage.is_homed
+
+
+def test_replies_stay_matched_after_an_abandoned_command():
+    machine = GrblMachine(homing_s=30.0)
+    with make_stage(machine) as stage:
+        threading.Timer(0.05, machine.alarm, args=(8,)).start()
+        with pytest.raises(DeviceError):
+            stage.home(timeout=5.0)
+        machine.reject_next = 3
+        with pytest.raises(CommandRejected, match="error:3"):
+            stage._command("$$")
+        stage._command("$$")
+
+
 def test_homing_rejected_by_grbl_raises_command_rejected():
     machine = GrblMachine(settings={22: 0.0})
     with make_stage(machine) as stage:

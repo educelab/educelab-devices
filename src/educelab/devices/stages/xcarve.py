@@ -184,6 +184,11 @@ class XCarve(Stage):
         self._max_rates: dict[str, float] = {}
 
         self._replies: queue.Queue[str] = queue.Queue()
+        # Guards matching replies to lines: _orphans counts replies still owed
+        # to abandoned lines, and _resets counts resets, which cancel them.
+        self._reply_lock = threading.Lock()
+        self._orphans = 0
+        self._resets = 0
         self._write_lock = threading.Lock()
         self._status_cond = threading.Condition()
         self._status: _Status | None = None
@@ -466,35 +471,67 @@ class XCarve(Stage):
             PositionError: `stop()` interrupted it.
             DeviceTimeout: No reply in time.
         """
-        # A reply that arrived after an earlier command gave up waiting.
-        while not self._replies.empty():
-            logger.debug("%r discarding late reply %r", self, self._replies.get())
         alarms = self._alarms
+        resets = self._resets
         self._write_line(line)
         deadline = time.monotonic() + timeout
-        while True:
-            self._check_link()
-            # Checked first: stopping homing resets GRBL, which may also alarm.
-            if self._stop_requested.is_set():
-                raise PositionError(f"stop() interrupted {line!r} on {self!r}")
-            if self._alarms != alarms:
-                raise DeviceError(f"{self!r} raised {self._last_alarm} during {line!r}")
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                if aborting is not None:
-                    self._abort(aborting)
-                raise DeviceTimeout(f"{self!r} didn't finish {line!r} in {timeout:g} s")
-            try:
-                reply = self._replies.get(timeout=min(remaining, READ_POLL_S))
-            except queue.Empty:
-                continue
-            if reply == "ok":
+        answered = False
+        try:
+            while True:
+                self._check_link()
+                # Checked first: stopping homing resets GRBL, which may also alarm.
+                if self._stop_requested.is_set():
+                    raise PositionError(f"stop() interrupted {line!r} on {self!r}")
+                if self._alarms != alarms:
+                    raise DeviceError(
+                        f"{self!r} raised {self._last_alarm} during {line!r}"
+                    )
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    # Before any reset, which would make GRBL forget the line.
+                    self._abandon(resets)
+                    answered = True
+                    if aborting is not None:
+                        self._abort(aborting)
+                    raise DeviceTimeout(
+                        f"{self!r} didn't finish {line!r} in {timeout:g} s"
+                    )
+                try:
+                    reply = self._replies.get(timeout=min(remaining, READ_POLL_S))
+                except queue.Empty:
+                    continue
+                answered = True
+                # GRBL answers $H "ok" even when homing ends in an alarm.
+                if self._alarms != alarms:
+                    raise DeviceError(
+                        f"{self!r} raised {self._last_alarm} during {line!r}"
+                    )
+                if reply == "ok":
+                    return
+                code = int(reply.partition(":")[2] or 0)
+                meaning = ERRORS.get(code, "see GRBL's error codes")
+                raise CommandRejected(
+                    f"{self!r} rejected {line!r}: error:{code} ({meaning})"
+                )
+        finally:
+            if not answered:
+                self._abandon(resets)
+
+    def _abandon(self, resets: int) -> None:
+        """Account for the reply to a line no one is waiting for any more.
+
+        GRBL answers every line once, in order, so the reply either came
+        already or the next one to come is it. A reset since the line was sent
+        means GRBL forgot it and no reply is owed.
+        """
+        with self._reply_lock:
+            if self._resets != resets:
                 return
-            code = int(reply.partition(":")[2] or 0)
-            meaning = ERRORS.get(code, "see GRBL's error codes")
-            raise CommandRejected(
-                f"{self!r} rejected {line!r}: error:{code} ({meaning})"
-            )
+            try:
+                late = self._replies.get_nowait()
+                logger.debug("%r dropping reply %r to an abandoned line", self, late)
+            except queue.Empty:
+                self._orphans += 1
 
     def _abort(self, realtime: bytes) -> None:
         if realtime == SOFT_RESET:
@@ -577,7 +614,14 @@ class XCarve(Stage):
 
     def _dispatch(self, line: str) -> None:
         if line == "ok" or line.startswith("error:"):
-            self._replies.put(line)
+            with self._reply_lock:
+                if self._orphans:
+                    self._orphans -= 1
+                    logger.debug(
+                        "%r dropping reply %r to an abandoned line", self, line
+                    )
+                else:
+                    self._replies.put(line)
         elif line.startswith("<") and line.endswith(">"):
             self._on_status(line[1:-1])
         elif line.startswith("ALARM:"):
@@ -618,6 +662,12 @@ class XCarve(Stage):
         self._emit(GrblAlarm(self, code, meaning))
 
     def _on_reset(self, line: str) -> None:
+        # A reset discards every line GRBL hadn't answered.
+        with self._reply_lock:
+            self._resets += 1
+            self._orphans = 0
+            while not self._replies.empty():
+                self._replies.get_nowait()
         self._homed = False
         if self._expect_reset:
             self._expect_reset = False

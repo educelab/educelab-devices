@@ -125,6 +125,19 @@ forever for the stage to reach the unclamped target).
   and raises in any move in progress; `home()` recovers.
 - **A lost connection** reaches listeners as `Disconnected`; later calls raise
   `NotConnected` until the stage is closed and reopened.
+- **`$H` is answered `ok` even when homing ends in an alarm** (**verified**: after
+  `ALARM:8`, 2026-10-29). The driver treats an alarm during a line as that line
+  failing, whatever the reply.
+- **Replies are matched by counting.** GRBL answers each line once, in order. When the
+  driver gives up waiting for a line (a timeout, an alarm, `stop()`), it drops that
+  line's reply when it comes, so it isn't taken for the next line's. A reset cancels
+  replies still owed. Before this, the late `ok` to a failed `$H` made the next `home()`
+  return at once as if homed.
+- **A stuck limit switch** shows as its letter in the status report's `Pn:` field while
+  nothing is moving (e.g. `Pn:Z`). With hard limits on, every jog then raises `ALARM:1`
+  as soon as it starts, and homing fails with `ALARM:8`. To move the axis off the
+  switch without changing settings: unplug the switch (ours are wired normally open,
+  so the pin reads clear unplugged), reset, unlock with `$X`, and jog.
 
 ## Hazards
 
@@ -137,6 +150,9 @@ forever for the stage to reach the unclamped target).
   wider than the travel would run the gantry into a hard limit switch, which alarms.
 - **Z is slow**: 750 mm/min, against 10000 for X and Y. A combined move takes as long
   as its Z part needs.
+- **Never home with a limit switch unplugged.** Homing seeks each axis until its switch
+  triggers, so an axis without one drives into its end stop before GRBL gives up with
+  `ALARM:9`. Z homes first, upward.
 
 ## Unknowns
 
@@ -153,3 +169,12 @@ forever for the stage to reach the unclamped target).
   0, 0, 0 in `Alarm`. No motion.
 - `el-devices xcarve home`: homed Z, then X and Y, ending at X −699, Y −699, Z −1, as
   predicted. No alarms.
+- `el-devices xcarve check`: all six 10 mm moves at 10 mm/s arrived within 0.05 mm.
+- `pytest -m hardware` with motion allowed: the first `$H` ended in `ALARM:8` (pull-off
+  failed to clear the limit switch): the **Z limit switch had broken** and read as
+  triggered (`Pn:Z`) from then on. The test fixture homed again for each test, and the
+  late `ok` to the failed `$H` was taken as the next one's reply; both are fixed. The
+  other motion tests failed with `error:8` (not idle) and moved nothing.
+- Recovery: with hard limits on, an unlocked jog alarmed at once (`ALARM:1`). With the
+  switch unplugged, `Pn:Z` cleared, and Z was unlocked with `$X` and jogged down
+  10 mm, to −9.998. The maintainer then reported the switch fixed.

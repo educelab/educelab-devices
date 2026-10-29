@@ -14,7 +14,12 @@ import time
 
 import pytest
 
-from educelab.devices.errors import DeviceNotFound, DeviceTimeout, PositionError
+from educelab.devices.errors import (
+    DeviceError,
+    DeviceNotFound,
+    DeviceTimeout,
+    PositionError,
+)
 from educelab.devices.stages.xcarve import ARRIVAL_TOLERANCE_MM, XCarve
 
 pytestmark = pytest.mark.hardware
@@ -47,12 +52,28 @@ def gantry():
     stage.close()
 
 
+@pytest.fixture(scope="module")
+def homing_failure():
+    """Why homing failed, once it has; later tests skip rather than retry."""
+    return []
+
+
 @pytest.fixture
-def homed(gantry):
-    """The gantry, homed, at the slow test speed; stopped afterwards."""
+def homed(gantry, homing_failure):
+    """The gantry, homed, at the slow test speed; stopped afterwards.
+
+    Homing is tried once per run. Retrying after a homing alarm drives the
+    axes at their switches again, which on the rig hit a broken Z switch.
+    """
+    if homing_failure:
+        pytest.skip(f"homing failed earlier: {homing_failure[0]}")
     if not gantry.is_homed:
         started = time.monotonic()
-        gantry.home()
+        try:
+            gantry.home()
+        except DeviceError as exc:
+            homing_failure.append(exc)
+            raise
         print(f"\nhomed in {time.monotonic() - started:.1f} s")
     gantry.set_speed(SPEED)
     yield gantry

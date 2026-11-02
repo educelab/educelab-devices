@@ -30,8 +30,14 @@ Test-first on the fakes: count whole-tree reads, then add a single-widget read t
 ### Tasks
 
 - [ ] Task 2.1: On the Z7 II, time `setting("exposure_time")`, `set_setting()` for shutter and ISO, and `settings()`. Book the rig first.
-- [ ] Task 2.2: Update `docs/hardware/gphoto2-cameras.md#settings` with the measured single-widget read time, and correct the **Writes** bullet to state what `set_setting` and `setting` cost.
+- [~] Task 2.2: Update `docs/hardware/gphoto2-cameras.md#settings` with the measured single-widget read time, and correct the **Writes** bullet to state what `set_setting` and `setting` cost.
 - [ ] Task 2.3: Run `tests/test_gphoto2_hardware.py` on the Z7 II, and record the result.
+
+Prepared before the rig was available: `time_settings.py` in this track times
+everything in Task 2.1. The hardware suite gained
+`test_one_setting_is_read_without_the_whole_tree`. The hardware doc describes
+single-setting reads and corrects **Writes**, but the Z7 II read time is still
+marked **unknown**.
 
 ### Verification
 

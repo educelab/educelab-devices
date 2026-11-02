@@ -152,11 +152,22 @@ Settings come from the camera's config tree, which libgphoto2 builds from PTP de
 properties. Every `settings()` call reads the whole tree, so it is a snapshot (see the
 guide). On the Z7 II a full read takes 2.6–2.8 s for 102 settings. **verified**.
 
-- **Writes.** A write of one widget (a setting, a focus move) reads and writes just
-  that widget through `gp_camera_get_single_config()`/`set_single_config()`, falling
-  back to the whole tree if the camera driver doesn't support it (`-6`). Writes of
-  several widgets at once (turning live view on) use one whole-tree round trip, which
-  costs a full read first. The Z7 II supports single-widget access. **verified**.
+- **Reading one setting.** `setting(name)` reads just the widget the setting comes from,
+  through `gp_camera_get_single_config()`. The driver learns which widget that is from
+  a full read, so the first `setting()` after `open()` (unless `settings()` came first)
+  reads the whole tree. A setting whose widget has gone, or a name the driver hasn't
+  seen, also takes a full read. Each call still reads the camera, so the result is as
+  fresh as `settings()`. Single-widget read time on the Z7 II: **unknown**, to be
+  measured.
+- **Writes.** `set_setting()` first reads the setting to check the value against its
+  current choices, then writes it. Both the read and the write touch only that one
+  widget, through `gp_camera_get_single_config()`/`set_single_config()`. If the camera
+  driver doesn't support single-widget access (`-6`), each falls back to a whole-tree
+  read or round trip. Writes of several widgets at once (turning live view on) use
+  one whole-tree round trip, which costs a full read first. The Z7 II supports
+  single-widget access. **verified**. Before this, each `set_setting()` validated
+  against a full read, so it cost at least 2.6 s on the Z7 II. That figure comes from
+  the code, not from timing a write.
 - **Canonical settings** are read from these widgets, taking the first one the camera
   has, and replace them in the list:
 

@@ -23,7 +23,7 @@ Test-first on the fakes: count whole-tree reads, then add a single-widget read t
 
 ### Verification
 
-- [ ] The full suite and Ruff pass, and the camera contract still passes on the fake.
+- [x] The full suite and Ruff pass, and the camera contract still passes on the fake.
 
 ## Phase 2: Hardware and docs
 

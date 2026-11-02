@@ -361,6 +361,47 @@ def test_a_missing_widget_value_is_none():
     assert lib_session(camera).value("serialnumber") is None
 
 
+def widget_session(camera):
+    gp = SimpleNamespace(GPhoto2Error=StubGPhoto2Error, **vars(WIDGET_TYPES))
+    return _gphoto2._LibSession(gp, camera)
+
+
+def iso_tree():
+    t = WIDGET_TYPES
+    iso = StubWidget(t.GP_WIDGET_RADIO, "iso", "100", choices=["100", "200"])
+    return StubWidget(
+        t.GP_WIDGET_WINDOW,
+        "main",
+        children=[StubWidget(t.GP_WIDGET_SECTION, "imgsettings", children=[iso])],
+    )
+
+
+def test_one_widget_is_read_without_reading_the_tree():
+    camera = ConfigCamera()
+    camera.get_single_config = lambda name: iso_tree().children[0].children[0]
+    widget = widget_session(camera).widget("iso")
+    assert widget == Widget("iso", "Iso", "radio", "100", choices=("100", "200"))
+    assert camera.calls == []
+
+
+def test_one_widget_is_read_from_the_tree_when_unsupported():
+    camera = ConfigCamera(single=False)
+    camera.tree = iso_tree()
+    widget = widget_session(camera).widget("iso")
+    assert widget is not None and widget.choices == ("100", "200")
+    assert camera.calls == [("get tree",)]
+
+
+def test_a_missing_widget_is_none():
+    camera = ConfigCamera()
+
+    def missing(name):
+        raise StubGPhoto2Error(_gphoto2.GP_ERROR_BAD_PARAMETERS)
+
+    camera.get_single_config = missing
+    assert widget_session(camera).widget("iso") is None
+
+
 def test_fakes_fill_the_seam() -> None:
     # Checked by mypy: the fakes must stay interchangeable with the real layer.
     camera: _gphoto2.Session = FakeCamera()
@@ -834,6 +875,117 @@ def test_camera_refusing_a_setting_raises_device_error():
         attached.fail_next("set_config", GP_ERROR)
         with pytest.raises(DeviceError, match="imagequality"):
             camera.set_setting("imagequality", "JPEG Fine")
+
+
+def mapped(attached):
+    """An open camera that has read its settings once, so knows their widgets."""
+    camera = opened(attached)
+    camera.settings()
+    attached.calls.clear()
+    return camera
+
+
+def test_first_setting_read_reads_the_whole_tree_once():
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        camera.setting(ISO)
+        camera.setting(ISO)
+    assert attached.calls.count("config") == 1
+
+
+def test_settings_are_read_and_written_without_the_whole_tree():
+    attached = FakeCamera()
+    with mapped(attached) as camera:
+        camera.setting(EXPOSURE_TIME)
+        camera.set_setting(ISO, 200)
+        camera.set_setting("imagequality", "JPEG Fine")
+        assert attached.calls.count("config") == 0
+        assert attached.calls.count("widget") == 3
+    assert attached.widgets["iso"].value == "200"
+
+
+def test_each_setting_read_sees_the_current_choices():
+    attached = FakeCamera()
+    with mapped(attached) as camera:
+        # As if the exposure mode changed which shutter speeds are allowed.
+        attached.widgets["shutterspeed"] = dataclasses.replace(
+            attached.widgets["shutterspeed"], choices=("1/60", "1/30")
+        )
+        assert camera.setting(EXPOSURE_TIME).choices == pytest.approx([1 / 60, 1 / 30])
+        camera.set_setting(EXPOSURE_TIME, 1 / 30)
+        with pytest.raises(ValueError):
+            camera.set_setting(EXPOSURE_TIME, 1 / 1000)
+    assert attached.widgets["shutterspeed"].value == "1/30"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [EXPOSURE_TIME, ISO, APERTURE, "imagequality", "colortemperature", "artist"],
+)
+def test_one_setting_matches_the_full_read(name):
+    attached = FakeCamera()
+    with mapped(attached) as camera:
+        assert camera.setting(name) == camera.settings()[name]
+
+
+def test_one_toggle_setting_matches_the_full_read():
+    toggle = _gphoto2.Widget("recordingmedia", "Media", "toggle", 1, section="settings")
+    attached = FakeCamera(widgets=[*NIKON_WIDGETS, toggle])
+    with mapped(attached) as camera:
+        assert camera.setting("recordingmedia") == camera.settings()["recordingmedia"]
+
+
+def test_a_vanished_widget_falls_back_to_the_whole_tree():
+    attached = FakeCamera()
+    with mapped(attached) as camera:
+        shutter = attached.widgets.pop("shutterspeed")
+        attached.widgets["shutterspeed2"] = dataclasses.replace(
+            shutter, name="shutterspeed2", value="1/3"
+        )
+        assert camera.setting(EXPOSURE_TIME).value == pytest.approx(1 / 3)
+        assert attached.calls.count("config") == 1
+        camera.set_setting(EXPOSURE_TIME, 1.0)
+        assert attached.calls.count("config") == 1
+    assert attached.widgets["shutterspeed2"].value == "1"
+
+
+def test_a_removed_setting_raises_key_error():
+    attached = FakeCamera()
+    with mapped(attached) as camera:
+        del attached.widgets["imagequality"]
+        with pytest.raises(KeyError):
+            camera.setting("imagequality")
+
+
+def test_an_unknown_setting_raises_key_error_after_the_mapping_exists():
+    attached = FakeCamera()
+    with mapped(attached) as camera:
+        with pytest.raises(KeyError):
+            camera.setting("nosuchsetting")
+        with pytest.raises(KeyError):
+            camera.set_setting("nosuchsetting", 1)
+
+
+def test_actions_are_not_settings_after_the_mapping_exists():
+    with mapped(FakeCamera()) as camera, pytest.raises(KeyError):
+        camera.setting("manualfocusdrive")
+
+
+def test_reopening_forgets_which_widget_holds_each_setting():
+    attached = FakeCamera()
+    camera = mapped(attached)
+    camera.close()
+    with camera:
+        camera.setting(ISO)
+    assert attached.calls.count("config") == 1
+
+
+def test_failed_single_setting_read_raises_device_error():
+    attached = FakeCamera()
+    with mapped(attached) as camera:
+        attached.fail_next("widget", GP_ERROR)
+        with pytest.raises(DeviceError, match=ISO):
+            camera.setting(ISO)
 
 
 def test_preview_is_a_decoded_rgb_array():

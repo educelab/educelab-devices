@@ -14,10 +14,10 @@ Test-first on the fakes: count whole-tree reads, then add a single-widget read t
 ### Tasks
 
 - [x] Task 1.1: Give the fake `Session` (`FakeCamera` in `tests/fakes/gphoto2.py`) the new single-widget read, and have it count `config()` calls.
-- [~] Task 1.2: Write failing tests in `tests/test_gphoto2.py`.
+- [x] Task 1.2: Write failing tests in `tests/test_gphoto2.py`.
   - Driver level, on the fake `Session`: once the mapping exists, `setting()` and `set_setting()` make no `config()` calls. Each read is fresh, so a choice change on the fake is seen by the next validation. Single-widget and `settings()` results match for canonical and native settings. A missing widget falls back to the tree. An unknown name raises `KeyError`.
   - Session level, on the `ConfigCamera` stub: one widget is read through `get_single_config`, and the read falls back to the tree on `-6`.
-- [ ] Task 1.3: Factor the per-widget conversion out of `flatten_config`, and add `Session.widget(name) -> Widget | None` over `get_single_config`. It falls back to the tree on `-6`, and gives `None` for a widget the camera doesn't have.
+- [~] Task 1.3: Factor the per-widget conversion out of `flatten_config`, and add `Session.widget(name) -> Widget | None` over `get_single_config`. It falls back to the tree on `-6`, and gives `None` for a widget the camera doesn't have.
 - [ ] Task 1.4: Split `_settings()` so one widget can become its canonical or native `Setting`. Keep a name-to-(widget, kind) mapping next to `_writers`, built by the first full read.
 - [ ] Task 1.5: Override `_setting(name)` in `GPhoto2Camera`: read the mapped widget alone, and fall back to `_settings()` when there's no mapping, no such name, or the widget is gone.
 

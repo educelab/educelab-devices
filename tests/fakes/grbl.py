@@ -123,6 +123,13 @@ class GrblMachine:
         if self.settings[22]:
             self.state = "Alarm"
 
+    def __setattr__(self, name: str, value: object) -> None:
+        # On Windows, changing an open port's timeout reconfigures it, which
+        # cuts off an XLC2 mid-reply (docs/hardware/xlc2.md).
+        if name == "timeout" and getattr(self, "is_open", False):
+            raise AssertionError("the timeout of an open port changed")
+        super().__setattr__(name, value)
+
     # Test controls
 
     def alarm(self, code: int) -> None:

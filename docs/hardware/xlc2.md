@@ -56,6 +56,10 @@ Holtek's datasheet or configuration tool would settle it. The `usbmodem` name su
 the bridge is a USB CDC device, which macOS names from the serial number (**assumed**).
 Other units may have other bridges, since `pgs-scan` also searches for the CH340's VID.
 
+On Windows 11 (2026-11-02, the same board as COM4) it has the same VID:PID and serial
+number. Windows binds Microsoft's in-box CDC driver, so pyserial reports the description
+`USB Serial Device (COM4)` and the manufacturer `Microsoft`. **Verified**.
+
 ### What the firmware drives
 
 - A 222-pixel DotStar strip on hardware SPI, colour order BRG, always set to grey
@@ -74,6 +78,22 @@ Other units may have other bridges, since `pgs-scan` also searches for the CH340
 - Opening the port resets the board (DTR). `pgs-scan` waits 2 s before sending the
   handshake. The firmware has no boot banner.
 - Replies end in `\r\n` (Arduino `Serial.println`).
+- **On Windows, changing the port's timeout while a reply is arriving kills the
+  link.** **Verified** on Windows 11 with pyserial 3.5, 2026-10-30 and 2026-11-02:
+  - Setting `Serial.timeout` just after sending `<?>` cut the reply to a few bytes
+    plus garbage (`Edu\x16%`, `du\x00\x16%`). After that the same handle got nothing
+    for at least 6 s.
+  - DTR and RTS stayed asserted and the port's settings were unchanged. The board
+    didn't reset, since it boots in under 2 s and never answered again.
+  - Closing and reopening the port brought it straight back.
+  - Changing the timeout while nothing was arriving was harmless.
+
+  pyserial applies a timeout change on Windows by reconfiguring the whole port
+  (**assumed**). Which part stays wedged is **unknown**: the in-box CDC driver, the
+  HT42B534 or the firmware. So the transport opens each port with a fixed 50 ms read
+  timeout and never changes it; `read_line` polls up to its own deadline. Library
+  0.3.0 changed the timeout right after sending the handshake, so it never found an
+  XLC2 on Windows.
 
 ## Protocol (2.0.0)
 
@@ -201,10 +221,23 @@ bootloader this one has is **unknown**.
   would let `serial_number=` pick out one XLC2.
 - The XL4's current and thermal limits at full duty.
 - Whether any deployed unit runs firmware other than 1.2.0.
+- What a mid-reply timeout change on Windows wedges: the CDC driver, the HT42B534 or
+  the firmware. Reopening the port both resets the board and reconfigures the port,
+  so the probes so far can't tell. It doesn't matter while the transport never
+  changes the timeout.
 
 ## Manual check
 
 ### Last run
+
+2026-11-02, Windows 11, Python 3.12, pyserial 3.5, the same board at COM4. This was the
+`fix/serial-fixed-timeout` branch (0.3.1), which never changes the port's timeout.
+
+- `el-devices xlc`: found `XLC2 at COM4, firmware 2.0.0, hardware 1.0`, then set white
+  and 940 nm to 25% and turned all off, with no errors. On 0.3.0 the same check failed
+  with `DeviceNotFound` (see [Transport](#transport)).
+
+### Earlier run
 
 2026-10-29, macOS, the XLC2 at `/dev/cu.usbmodem00001` (HT42B534 bridge, serial `0000`),
 flashed with 2.0.0 from the Arduino IDE by the maintainer. Its port kept the same name

@@ -93,6 +93,8 @@ firmware reflashes. Write the name on the panel's housing too.
 ## Transport
 
 - USB serial at 9600 baud, 8N1 (the firmware's `Serial.begin(9600)`).
+- The transport never changes an open port's timeout: on Windows, doing it while a reply
+  was arriving cut an XLC2 off ([xlc2.md](xlc2.md#transport)). Untested on a panel.
 - ASCII lines ending in `\n`. The firmware trims surrounding whitespace, so `\r\n`
   also works.
 - A command without a newline is still processed after about 1 second, when the

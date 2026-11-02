@@ -37,9 +37,15 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
-# Opens a port and returns an object with the parts of serial.Serial's API the
-# transport uses. Tests pass one that returns a fake.
+# Opens a port with a read timeout and returns an object with the parts of
+# serial.Serial's API the transport uses. Tests pass one that returns a fake.
 Opener = Callable[[str, int, float], Any]
+
+# Ports are opened with this read timeout, and read_line() polls with it up to
+# its own deadline. The timeout is never changed on an open port: on Windows
+# that reconfigures it, which cuts off an XLC2 mid-reply (docs/hardware/xlc2.md).
+READ_POLL_S = 0.05
+WRITE_TIMEOUT_S = 2.0
 
 
 @dataclass(frozen=True)
@@ -233,7 +239,7 @@ class SerialTransport:
         if self._conn is not None:
             return
         try:
-            conn = self._opener(self.port, self.baudrate, self.timeout)
+            conn = self._opener(self.port, self.baudrate, READ_POLL_S)
         except OSError as exc:
             raise DeviceNotFound(
                 f"could not open serial port {self.port!r}: {exc}"
@@ -306,21 +312,15 @@ class SerialTransport:
             NotConnected: The port isn't open or the connection was lost.
         """
         conn = self._require_open()
-        limit = max(0.0, self.timeout if timeout is None else timeout)
-        deadline = time.monotonic() + limit
-        while limit > 0:
-            # pyserial reconfigures the port whenever its timeout changes, so
-            # it changes only when a partial line leaves less time to wait.
-            if conn.timeout != limit:
-                conn.timeout = limit
+        wait = self.timeout if timeout is None else timeout
+        deadline = time.monotonic() + max(0.0, wait)
+        while True:
+            # Each readline() waits at most READ_POLL_S, returning a partial
+            # line if that's all that came; partials join up across polls.
             try:
                 chunk = conn.readline()
             except OSError as exc:
                 raise self._lost(exc) from exc
-            # readline() returns what it has so far when it times out. With
-            # nothing at all, the wait is over, even if the clock disagrees.
-            if not chunk:
-                break
             self._partial += chunk
             if self._partial.endswith(b"\n"):
                 line = self._partial.decode("ascii", errors="replace").strip()
@@ -328,7 +328,10 @@ class SerialTransport:
                 if line:
                     logger.debug("%s < %s", self.port, line)
                     return line
-            limit = deadline - time.monotonic()
+            if time.monotonic() >= deadline:
+                break
+        if self._partial:
+            logger.debug("%s < (partial) %r", self.port, self._partial)
         raise DeviceTimeout(f"no reply from serial port {self.port!r}")
 
     def _require_open(self) -> Any:
@@ -422,4 +425,6 @@ def parse_version(text: str) -> tuple[int, ...]:
 
 def _open_pyserial(port: str, baudrate: int, timeout: float) -> Any:
     pyserial = import_optional("serial", extra="serial")
-    return pyserial.Serial(port, baudrate, timeout=timeout, write_timeout=timeout)
+    return pyserial.Serial(
+        port, baudrate, timeout=timeout, write_timeout=WRITE_TIMEOUT_S
+    )

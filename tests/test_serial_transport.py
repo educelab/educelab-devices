@@ -74,7 +74,11 @@ def test_find_ports_lists_host_ports_by_default(monkeypatch):
 
 
 class StubSerial:
-    """The slice of ``serial.Serial`` the transport uses, fed canned bytes."""
+    """The slice of ``serial.Serial`` the transport uses, fed canned bytes.
+
+    Changing the timeout of an open port fails the test: on Windows, pyserial
+    reconfigures the port, which cuts off an XLC2 mid-reply.
+    """
 
     def __init__(self, chunks=()):
         self.chunks = list(chunks)
@@ -82,6 +86,16 @@ class StubSerial:
         self.timeout = None
         self.closed = False
         self.flushed_input = 0
+        self.reads = 0
+
+    def __setattr__(self, name, value):
+        if name == "timeout" and getattr(self, "timeout", None) is not None:
+            raise AssertionError("the timeout of an open port changed")
+        super().__setattr__(name, value)
+
+    def open(self, port, baudrate, timeout):
+        self.timeout = timeout
+        return self
 
     def reset_input_buffer(self):
         self.flushed_input += 1
@@ -93,6 +107,7 @@ class StubSerial:
         pass
 
     def readline(self):
+        self.reads += 1
         if self.chunks:
             return self.chunks.pop(0)
         time.sleep(self.timeout)
@@ -104,7 +119,7 @@ class StubSerial:
 
 def open_transport(stub, **kwargs):
     transport = _serial.SerialTransport(
-        "/dev/ttyFAKE", baudrate=9600, opener=lambda *args: stub, **kwargs
+        "/dev/ttyFAKE", baudrate=9600, opener=stub.open, **kwargs
     )
     transport.open()
     return transport
@@ -121,7 +136,7 @@ def test_open_passes_port_settings_to_the_opener():
         "COM3", baudrate=9600, timeout=0.5, opener=opener
     )
     transport.open()
-    assert calls == [("COM3", 9600, 0.5)]
+    assert calls == [("COM3", 9600, _serial.READ_POLL_S)]
     assert transport.is_open
 
 
@@ -225,40 +240,33 @@ def test_handshake_without_an_answer_returns_none():
     assert _serial.handshake(transport, "ID", lambda line: None, timeout=0.05) is None
 
 
-class CountingSerial(StubSerial):
-    """A StubSerial counting timeout changes, each a reconfigure in pyserial.
-
-    Its reads time out at once, as if just before the deadline, which a
-    coarse clock (Windows) makes common.
-    """
-
-    def __init__(self):
-        self.timeout_changes = 0
-        super().__init__()
-
-    def __setattr__(self, name, value):
-        if name == "timeout" and getattr(self, "timeout", None) != value:
-            self.timeout_changes += 1
-        super().__setattr__(name, value)
-
-    def readline(self):
-        return self.chunks.pop(0) if self.chunks else b""
-
-
-def test_repeated_reads_with_one_timeout_set_it_once():
-    # A reader thread polls read_line(0.1) for the life of the connection.
-    stub = CountingSerial()
+def test_read_line_polls_until_its_own_timeout():
+    # Each read waits READ_POLL_S; read_line keeps polling to its deadline.
+    stub = StubSerial()
     transport = open_transport(stub)
-    for _ in range(5):
-        with pytest.raises(DeviceTimeout):
-            transport.read_line(0.1)
-    assert stub.timeout_changes == 1
+    start = time.monotonic()
+    with pytest.raises(DeviceTimeout):
+        transport.read_line(timeout=4 * _serial.READ_POLL_S)
+    assert time.monotonic() - start >= 4 * _serial.READ_POLL_S
+    assert stub.reads >= 4
+
+
+def test_a_line_arriving_after_quiet_polls_is_read():
+    stub = StubSerial([b"", b"", b"EduceLab XLC2,1.0,2.0.0\r\n"])
+    assert open_transport(stub).read_line(1.0) == "EduceLab XLC2,1.0,2.0.0"
 
 
 def test_a_partial_line_waits_out_the_rest_of_the_timeout():
-    stub = CountingSerial()
-    stub.chunks = [b"Grbl 1.1", b"g\n"]
-    assert open_transport(stub).read_line(0.1) == "Grbl 1.1g"
+    stub = StubSerial([b"Grbl 1.1", b"", b"g\n"])
+    assert open_transport(stub).read_line(1.0) == "Grbl 1.1g"
+
+
+def test_handshake_with_a_different_timeout_leaves_the_port_alone():
+    # The XLC2 handshake waits 2 s on a transport whose default is 1 s.
+    stub = StubSerial([b"EduceLab XLC2,1.0,2.0.0\n"])
+    transport = open_transport(stub, timeout=1.0)
+    assert _serial.handshake(transport, "<?>", lambda line: line, timeout=2.0)
+    assert stub.timeout == _serial.READ_POLL_S
 
 
 def test_wait_for_skips_lines_until_one_parses():

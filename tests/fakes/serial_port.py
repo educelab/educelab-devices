@@ -37,6 +37,13 @@ class ScriptedSerial:
         self.timeout: float | None = None
         self._pending: list[bytes] = []
 
+    def __setattr__(self, name: str, value: object) -> None:
+        # On Windows, changing an open port's timeout reconfigures it, which
+        # cuts off an XLC2 mid-reply (docs/hardware/xlc2.md).
+        if name == "timeout" and getattr(self, "is_open", False):
+            raise AssertionError("the timeout of an open port changed")
+        super().__setattr__(name, value)
+
     def open(self, port: str, baudrate: int, timeout: float) -> "ScriptedSerial":
         if not self.present:
             raise OSError(f"could not open port {port}: no such device")

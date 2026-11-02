@@ -36,6 +36,9 @@ case, as `pgs-scan` does. That every X-Controller's serial number contains it is
 ## Transport
 
 - 115200 baud, 8N1.
+- The transport never changes an open port's timeout: on Windows, doing it while a reply
+  was arriving cut an XLC2 off ([xlc2.md](xlc2.md#transport)). Library 0.3.0 changed it once, when
+  the reader thread started; whether that disturbed GRBL on Windows is unknown.
 - Opening the port resets the controller (DTR), and it sends its banner once it has
   booted: `Grbl 1.1g ['$' for help]`, then `[MSG:'$H'|'$X' to unlock]`. Until homed it
   is in `Alarm` at machine position 0, 0, 0 and refuses motion. **Verified** on macOS,

@@ -36,6 +36,7 @@ Planned tracks, in order. All are registered in [tracks.md](./tracks.md).
 | 7 | Acroname hub | `brainstem`-based Hub |
 | 8 | USB3 Vision camera | Shared GenICam core from the Spinnaker driver; Aravis (Linux/macOS) and GenTL (Windows) backends; IDS U3-36P0XCP-M-GL first |
 | 9 | Docs site and machine setup | Setup guides per OS, shipped udev/usbfs files, `el-devices setup check`; MkDocs Material + mkdocstrings on GitHub Pages. After USB3 Vision |
+| 10 | Camera preview mode | Explicit preview state with region and size (ADR 0007); hardware ROI/binning on GenICam, live-view zoom on gphoto2; hardware discovery first |
 
 ## Out of scope
 

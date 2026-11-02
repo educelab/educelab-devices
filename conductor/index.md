@@ -23,6 +23,7 @@ Project-level context outside this directory:
 
 - [XLC Lights and X-Carve Stage](./tracks/xlc-xcarve_20261012/index.md) — pending
 - [Documentation Site and Machine Setup](./tracks/docs-site_20261012/index.md) — pending
+- [Camera Preview Mode](./tracks/preview-mode_20261102/index.md) — pending
 
 ## Completed Tracks
 

@@ -1,0 +1,19 @@
+{
+  "id": "preview-mode_20261102",
+  "title": "Camera Preview Mode",
+  "type": "feature",
+  "status": "pending",
+  "created": "2026-11-02T00:00:00Z",
+  "updated": "2026-11-02T00:00:00Z",
+  "phases": {
+    "total": 5,
+    "completed": 0
+  },
+  "tasks": {
+    "total": 21,
+    "completed": 0
+  },
+  "current_phase": null,
+  "current_task": null,
+  "commits": []
+}

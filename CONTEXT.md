@@ -25,6 +25,14 @@ A role that acquires images from a single sensor. A camera captures either frame
 A decoded pixel array captured by a camera, with its capture metadata.
 _Avoid_: Image (ambiguous with camera file)
 
+**Preview**:
+A camera state, entered and left explicitly, in which the camera delivers fresh, display-sized images for framing a shot and judging focus. Preview images are never captures.
+_Avoid_: Live view, viewfinder
+
+**Preview region**:
+The part of the sensor a preview shows, given as fractions of the sensor's width and height. A camera may round a requested region to one it can deliver, and reports the region it actually used.
+_Avoid_: Zoom area, ROI (except for the GenICam mechanism)
+
 **Setting**:
 A named, adjustable device parameter (e.g. a camera's exposure time or a stage's speed) with a range or set of choices and a current value, whose type it takes on. Canonical camera settings (e.g. `exposure_time`) mean the same thing on every camera; all others use the camera's native name.
 

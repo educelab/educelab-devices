@@ -157,6 +157,9 @@ class GPhoto2Camera(FileCamera):
         # a converter to its native value. Every write validates (and so reads)
         # first, so this is never stale.
         self._writers: dict[str, tuple[str, Callable[[SettingValue], WidgetValue]]] = {}
+        # Which widget each setting comes from, and whether it's canonical, so
+        # one setting can be read alone. Built by the first full read.
+        self._sources: dict[str, tuple[str, _Canonical | None]] = {}
         # Set while the shutter is released or files are downloading, so the
         # keep-alive thread stays off the bus.
         self._capture_in_flight = threading.Event()
@@ -369,23 +372,42 @@ class GPhoto2Camera(FileCamera):
             raise self._error(exc, "reading settings") from exc
         settings: dict[str, Setting] = {}
         self._writers = {}
+        self._sources = {}
         hidden: set[str] = set()
         for canonical in _CANONICAL:
-            found = canonical.read(widgets)
-            if found is not None:
-                setting, widget, natives = found
+            widget = canonical.find(widgets)
+            setting = None if widget is None else self._convert(widget, canonical)
+            if setting is not None:
                 settings[setting.name] = setting
-                self._writers[setting.name] = (widget.name, natives.__getitem__)
                 hidden.update(canonical.widgets)
         for widget in widgets.values():
             if widget.name in hidden or widget.section in _NOT_SETTINGS:
                 continue
-            native = _native_setting(widget)
-            if native is not None:
-                settings[widget.name] = native
-                to_native = _toggle_value if widget.kind == "toggle" else _same
-                self._writers[widget.name] = (widget.name, to_native)
+            setting = self._convert(widget, None)
+            if setting is not None:
+                settings[setting.name] = setting
         return settings
+
+    def _convert(
+        self, widget: Widget, canonical: "_Canonical | None"
+    ) -> Setting | None:
+        """``widget`` as its canonical or native setting, remembering how to
+        read and write it. ``None`` if it isn't a setting."""
+        if canonical is not None:
+            found = canonical.setting(widget)
+            if found is None:
+                return None
+            setting, natives = found
+            to_native: Callable[[SettingValue], WidgetValue] = natives.__getitem__
+        else:
+            native = _native_setting(widget)
+            if native is None:
+                return None
+            setting = native
+            to_native = _toggle_value if widget.kind == "toggle" else _same
+        self._writers[setting.name] = (widget.name, to_native)
+        self._sources[setting.name] = (widget.name, canonical)
+        return setting
 
     def _set_setting(self, name: str, value: SettingValue) -> None:
         widget, to_native = self._writers[name]
@@ -666,17 +688,18 @@ class _Canonical:
     widgets: tuple[str, ...]
     parse: Callable[[str], float | int | None]
 
-    def read(
-        self, widgets: Mapping[str, Widget]
-    ) -> tuple[Setting, Widget, dict[SettingValue, str]] | None:
-        """The setting, its widget, and the native text of each choice, or
-        ``None`` if the camera has no such widget.
+    def find(self, widgets: Mapping[str, Widget]) -> Widget | None:
+        """The first of ``widgets`` the camera has, if any."""
+        return next((widgets[w] for w in self.widgets if w in widgets), None)
+
+    def setting(self, widget: Widget) -> tuple[Setting, dict[SettingValue, str]] | None:
+        """The setting and the native text of each choice, or ``None`` if
+        ``widget`` isn't a list of choices.
 
         Choices that aren't numbers are left out. While the camera is at one,
         the setting's value is ``None``, and writing any choice leaves it.
         """
-        widget = next((widgets[w] for w in self.widgets if w in widgets), None)
-        if widget is None or widget.kind not in ("radio", "menu"):
+        if widget.kind not in ("radio", "menu"):
             return None
         value = self.parse(str(widget.value))
         natives: dict[SettingValue, str] = {}
@@ -691,7 +714,7 @@ class _Canonical:
             unit=CANONICAL_UNITS[self.name],
             read_only=widget.read_only,
         )
-        return setting, widget, natives
+        return setting, natives
 
 
 # Shutter speeds that aren't durations (Bulb, Time) and Auto ISO aren't

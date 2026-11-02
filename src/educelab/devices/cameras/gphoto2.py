@@ -329,6 +329,8 @@ class GPhoto2Camera(FileCamera):
 
     def _close(self) -> None:
         self._focus_checked = False
+        self._writers = {}
+        self._sources = {}
         if self._focus is not None:
             self._focus._detach()
         self._keep_alive_stop.set()
@@ -387,6 +389,23 @@ class GPhoto2Camera(FileCamera):
             if setting is not None:
                 settings[setting.name] = setting
         return settings
+
+    def _setting(self, name: str) -> Setting:
+        # The whole tree takes seconds on the Z7 II; one widget is quick
+        # (docs/hardware/gphoto2-cameras.md#settings).
+        source = self._sources.get(name)
+        if source is not None:
+            widget_name, canonical = source
+            try:
+                widget = self._require_session().widget(widget_name)
+            except GPhoto2Error as exc:
+                raise self._error(exc, f"reading {name}") from exc
+            if widget is not None:
+                setting = self._convert(widget, canonical)
+                if setting is not None:
+                    return setting
+        # Not read yet, or its widget is gone: read everything and remap.
+        return super()._setting(name)
 
     def _convert(
         self, widget: Widget, canonical: "_Canonical | None"

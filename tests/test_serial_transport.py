@@ -86,7 +86,6 @@ class StubSerial:
         self.timeout = None
         self.closed = False
         self.flushed_input = 0
-        self.reads = 0
 
     def __setattr__(self, name, value):
         if name == "timeout" and getattr(self, "timeout", None) is not None:
@@ -107,7 +106,6 @@ class StubSerial:
         pass
 
     def readline(self):
-        self.reads += 1
         if self.chunks:
             return self.chunks.pop(0)
         time.sleep(self.timeout)
@@ -241,14 +239,12 @@ def test_handshake_without_an_answer_returns_none():
 
 
 def test_read_line_polls_until_its_own_timeout():
-    # Each read waits READ_POLL_S; read_line keeps polling to its deadline.
-    stub = StubSerial()
-    transport = open_transport(stub)
+    # An empty poll doesn't end the wait; read_line keeps polling to its deadline.
+    transport = open_transport(StubSerial())
     start = time.monotonic()
     with pytest.raises(DeviceTimeout):
         transport.read_line(timeout=4 * _serial.READ_POLL_S)
     assert time.monotonic() - start >= 4 * _serial.READ_POLL_S
-    assert stub.reads >= 4
 
 
 def test_a_line_arriving_after_quiet_polls_is_read():

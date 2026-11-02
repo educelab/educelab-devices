@@ -1,0 +1,19 @@
+{
+  "id": "gphoto2-single-setting_20261102",
+  "title": "gphoto2 Single-Setting Reads",
+  "type": "bug",
+  "status": "pending",
+  "created": "2026-11-02T00:00:00Z",
+  "updated": "2026-11-02T00:00:00Z",
+  "phases": {
+    "total": 2,
+    "completed": 0
+  },
+  "tasks": {
+    "total": 8,
+    "completed": 0
+  },
+  "current_phase": null,
+  "current_task": null,
+  "commits": []
+}

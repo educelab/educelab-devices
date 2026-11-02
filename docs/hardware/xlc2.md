@@ -230,6 +230,15 @@ bootloader this one has is **unknown**.
 
 ### Last run
 
+2026-11-02, Windows 11, Python 3.12, pyserial 3.5, the same board at COM4. This was the
+`fix/serial-fixed-timeout` branch (0.3.1), which never changes the port's timeout.
+
+- `el-devices xlc`: found `XLC2 at COM4, firmware 2.0.0, hardware 1.0`, then set white
+  and 940 nm to 25% and turned all off, with no errors. On 0.3.0 the same check failed
+  with `DeviceNotFound` (see [Transport](#transport)).
+
+### Earlier run
+
 2026-10-29, macOS, the XLC2 at `/dev/cu.usbmodem00001` (HT42B534 bridge, serial `0000`),
 flashed with 2.0.0 from the Arduino IDE by the maintainer. Its port kept the same name
 after flashing.

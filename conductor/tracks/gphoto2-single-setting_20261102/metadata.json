@@ -4,17 +4,17 @@
   "type": "bug",
   "status": "in_progress",
   "created": "2026-11-02T00:00:00Z",
-  "updated": "2026-11-02T00:00:00Z",
+  "updated": "2026-11-04T00:00:00Z",
   "phases": {
     "total": 2,
     "completed": 1
   },
   "tasks": {
     "total": 8,
-    "completed": 5
+    "completed": 7
   },
   "current_phase": 2,
-  "current_task": "2.1",
+  "current_task": "2.3",
   "commits": [
     "6f8b807: Give the fake gphoto2 session a single-widget read",
     "15470eb: Test that gphoto2 settings are read one widget at a time",

@@ -52,7 +52,7 @@ What the driver reaches, and what's missing. Verified with `arv-tool-0.8 -n <id>
 | `width`, `height` | `Width`, `Height` | 5112 × 3840, matching captured frames. The nodes are writable (`Width` 648 to 5124 in steps of 12, `Height` 2 to 3848 in steps of 2), but the driver reports them read-only and leaves the ROI as found. |
 | `sensor_width`, `sensor_height` | `SensorWidth`, `SensorHeight` | 5136 × 3856. |
 | `throughput_limit` | `DeviceLinkThroughputLimit` | 108 to 300 MB/s in 2 MB/s steps in Mono8 (2026-10-22 and 2026-11-04); pgs-scan saw a 136 MB/s minimum, probably in Mono10g40IDS, so the minimum depends on the pixel format. 162 MB/s as found. `DeviceLinkSpeed` is 500 MB/s. See [Frame rate](#frame-rate). |
-| `resulting_frame_rate` | `AcquisitionFrameRate` | There is no `AcquisitionResultingFrameRate`, so the driver reports `AcquisitionFrameRate`, read-only. See [Frame rate](#frame-rate). |
+| `resulting_frame_rate` | `AcquisitionFrameRate` | There is no `AcquisitionResultingFrameRate`, so the driver reports `AcquisitionFrameRate`, read-only. That is the camera's cap, not a measured rate: under a trigger, frames come only as fast as the triggers. See [Frame rate](#frame-rate). |
 | `trigger` | `TriggerSelector`, `TriggerMode`, `TriggerSource`, `TriggerSoftware` | `FrameStart` (used) and `ExposureStart`; sources `Software` and `Line0`. |
 | timestamps | `Timestamp`, `TimestampLatch` | **Missing.** See [Timestamps](#timestamps). |
 

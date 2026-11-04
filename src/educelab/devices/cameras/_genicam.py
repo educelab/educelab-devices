@@ -425,6 +425,8 @@ class GenICamCamera(FrameCamera):
         self._timestamp_node: str | None = None
         self._exposure_node: str | None = None
         self._linear_gain = False
+        # On a linear-gain camera, the dB of each factor it keeps, to that factor.
+        self._gain_table: dict[float, float] = {}
         self._self_slowing = False
         self._timestamp_offset: float | None = None
         self._timestamp_source: str | None = None
@@ -576,6 +578,7 @@ class GenICamCamera(FrameCamera):
             (n for n in _EXPOSURE_NODES if self._connection.has(n)), None
         )
         self._linear_gain = self._vendor in _LINEAR_GAIN_VENDORS
+        self._gain_table = self._read_gain_table() if self._linear_gain else {}
         self._self_slowing = self._vendor in _SELF_SLOWING_VENDORS
         # Another program may have left the camera slowed down.
         self._raise_frame_rate()
@@ -724,13 +727,17 @@ class GenICamCamera(FrameCamera):
         if name in (EXPOSURE_TIME, GAIN):
             if name == EXPOSURE_TIME:
                 node, native = str(self._exposure_node), float(value) * _US_PER_S
+            elif self._gain_table:
+                # The exact factor: one a hair below it would be rounded down a step.
+                node, native = "Gain", self._gain_table[float(value)]
             else:
                 node, native = "Gain", self._gain_to_native(float(value))
-            # Clamp, so a limit that went through the unit conversion still fits.
-            low, high = self._call(
-                f"read the limits of {name}", lambda: conn.float_range(node)
-            )
-            native = min(max(native, low), high)
+            if node != "Gain" or not self._gain_table:
+                # Clamp, so a limit that went through the unit conversion still fits.
+                low, high = self._call(
+                    f"read the limits of {name}", lambda: conn.float_range(node)
+                )
+                native = min(max(native, low), high)
             self._call(
                 f"set {name}",
                 lambda: conn.set_float(node, native),
@@ -769,35 +776,60 @@ class GenICamCamera(FrameCamera):
         conn = self._connection
         if not conn.is_readable("Gain"):
             return None
-        factors = self._gain_factors()
-        current = self._read_float("Gain")
+        writable = conn.is_writable("Gain")
+        if self._gain_table:
+            return Setting(
+                GAIN,
+                self._factor_to_gain(self._read_float("Gain")),
+                choices=tuple(self._gain_table),
+                unit="dB",
+                read_only=not writable,
+            )
+        value, (low, high) = self._call(
+            "read Gain", lambda: (conn.get_float("Gain"), conn.float_range("Gain"))
+        )
         return Setting(
             GAIN,
-            _factor_to_db(min(factors, key=lambda f: abs(f - current))),
-            choices=tuple(_factor_to_db(f) for f in factors),
+            _factor_to_db(value),
+            minimum=_factor_to_db(low),
+            maximum=_factor_to_db(high),
             unit="dB",
-            read_only=not conn.is_writable("Gain"),
+            read_only=not writable,
         )
 
-    def _gain_factors(self) -> list[float]:
+    def _read_gain_table(self) -> dict[float, float]:
         conn = self._connection
+        if not conn.is_readable("Gain"):
+            return {}
         low, high = self._call(
             "read the limits of Gain", lambda: conn.float_range("Gain")
         )
-        return _binary_steps(low, high, _GAIN_MANTISSA_BITS)
+        factors = _binary_steps(low, high, _GAIN_MANTISSA_BITS)
+        if len(factors) < 2:
+            logger.warning(
+                "%r: Gain's range %g to %g has no steps; offering it as a range",
+                self,
+                low,
+                high,
+            )
+            return {}
+        return {_factor_to_db(f): f for f in factors}
+
+    def _factor_to_gain(self, factor: float) -> float:
+        """A linear-gain camera's factor as the dB it's offered as."""
+        if not self._gain_table:
+            return _factor_to_db(factor)
+        return min(self._gain_table, key=lambda db: abs(self._gain_table[db] - factor))
 
     def _gain_to_native(self, db: float) -> float:
-        if not self._linear_gain:
-            return db
-        # The exact factor: one a hair below it would be rounded down a step.
-        return min(self._gain_factors(), key=lambda f: abs(_factor_to_db(f) - db))
+        return 10 ** (db / 20) if self._linear_gain else db
 
     def _gain(self) -> float | None:
         """The gain in dB, or None if the camera has no ``Gain`` node."""
         native = self._read_optional_float("Gain")
         if native is None or not self._linear_gain:
             return native
-        return _factor_to_db(native)
+        return self._factor_to_gain(native)
 
     def _raise_frame_rate(self) -> None:
         """Set ``AcquisitionFrameRate`` to its maximum on a camera that slows
@@ -1336,9 +1368,13 @@ def _unpack_10g40(data: Any, width: int, height: int) -> npt.NDArray[np.uint16]:
 
 def _binary_steps(low: float, high: float, bits: int) -> list[float]:
     """Every value from ``low`` to ``high`` with at most ``bits`` binary places
-    after its leading one: for 4 bits, 1, 1.0625, …, 1.9375, 2, 2.125, …"""
-    if low <= 0:
-        return [low]
+    after its leading one: for 4 bits, 1, 1.0625, …, 1.9375, 2, 2.125, …
+
+    The ends are matched loosely, so a limit read as 1.0000001 still includes 1.
+    """
+    if not 0 < low <= high:
+        return []
+    low, high = low * (1 - 1e-6), high * (1 + 1e-6)
     octave = math.floor(math.log2(low))
     found: list[float] = []
     while (base := 2.0**octave) <= high:

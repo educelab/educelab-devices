@@ -451,6 +451,29 @@ def test_a_linear_gain_refuses_a_value_the_camera_would_round():
         camera.set_setting(GAIN, 6.0)
 
 
+def ids_backend_with_gain_range(low, high):
+    backend = only(vendor=IDS, auto=False, ids_nodes=True)
+    gain = backend.cameras[0].nodes["Gain"]
+    gain.value, gain.minimum, gain.maximum = low, low, high
+    return backend
+
+
+def test_a_linear_gain_minimum_read_a_hair_high_still_offers_0_db():
+    with GenICamCamera(MONO, ids_backend_with_gain_range(1.0000001, 8.042)) as camera:
+        gain = camera.setting(GAIN)
+        assert gain.value == 0.0
+        assert gain.choices[0] == 0.0
+        assert camera.capture_frame().metadata[GAIN] == 0.0
+
+
+@pytest.mark.parametrize(("low", "high"), [(0.0, 4.0), (1.01, 1.05)])
+def test_a_linear_gain_without_steps_is_offered_as_a_decibel_range(low, high):
+    with GenICamCamera(MONO, ids_backend_with_gain_range(low, high)) as camera:
+        gain = camera.setting(GAIN)
+        assert gain.choices is None
+        assert gain.maximum == pytest.approx(20 * math.log10(high))
+
+
 def test_the_same_gain_factor_from_another_vendor_stays_as_it_is():
     with GenICamCamera(MONO, only(auto=False, ids_nodes=True)) as camera:
         assert camera.setting(GAIN).maximum == pytest.approx(8.042)

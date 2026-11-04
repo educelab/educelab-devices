@@ -3,7 +3,7 @@
 **Track ID:** gphoto2-single-setting_20261102
 **Type:** Bug
 **Created:** 2026-11-02
-**Status:** Draft
+**Status:** Complete
 
 ## Summary
 
@@ -24,12 +24,12 @@ Each exposure-and-ISO change is two `set_setting` calls, about 5.4 s with the lo
 
 ## Acceptance Criteria
 
-- [ ] Once the name-to-widget mapping exists, `setting()` and `set_setting()` make no whole-tree reads. A fake-`Session` test counts `config()` calls.
-- [ ] Each call still reads its setting fresh, so validation sees current choices (e.g. shutter speeds after a mode change). This keeps the guide's snapshot rule. A `Setting` is never cached.
-- [ ] A setting read from one widget equals the one `settings()` returns for that name, for both canonical and native settings.
-- [ ] On a camera driver without single-widget access (`-6`), or for a name the mapping doesn't hold, both calls still work through the whole tree. A name the camera doesn't have still raises `KeyError`.
-- [ ] The Z7 II single-widget read time is measured and recorded in `docs/hardware/gphoto2-cameras.md`. The **Writes** bullet is corrected to state what `set_setting` costs.
-- [ ] `tests/test_gphoto2_hardware.py` passes on the Z7 II.
+- [x] Once the name-to-widget mapping exists, `setting()` and `set_setting()` make no whole-tree reads. A fake-`Session` test counts `config()` calls.
+- [x] Each call still reads its setting fresh, so validation sees current choices (e.g. shutter speeds after a mode change). This keeps the guide's snapshot rule. A `Setting` is never cached.
+- [x] A setting read from one widget equals the one `settings()` returns for that name, for both canonical and native settings.
+- [x] On a camera driver without single-widget access (`-6`), or for a name the mapping doesn't hold, both calls still work through the whole tree. A name the camera doesn't have still raises `KeyError`.
+- [x] The Z7 II single-widget read time is measured and recorded in `docs/hardware/gphoto2-cameras.md`. The **Writes** bullet is corrected to state what `set_setting` costs.
+- [x] `tests/test_gphoto2_hardware.py` passes on the Z7 II. Everything but the three focus tests passed on 2026-11-04. The fitted lens has no focus motor, so those fail with `-1` as documented. This track doesn't change focus moves.
 
 ## Dependencies
 

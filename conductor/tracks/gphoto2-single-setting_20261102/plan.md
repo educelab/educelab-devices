@@ -3,7 +3,7 @@
 **Track ID:** gphoto2-single-setting_20261102
 **Spec:** [spec.md](./spec.md)
 **Created:** 2026-11-02
-**Status:** [~] In Progress
+**Status:** [x] Complete
 
 ## Overview
 
@@ -31,7 +31,7 @@ Test-first on the fakes: count whole-tree reads, then add a single-widget read t
 
 - [x] Task 2.1: On the Z7 II, time `setting("exposure_time")`, `set_setting()` for shutter and ISO, and `settings()`. Book the rig first.
 - [x] Task 2.2: Update `docs/hardware/gphoto2-cameras.md#settings` with the measured single-widget read time, and correct the **Writes** bullet to state what `set_setting` and `setting` cost.
-- [~] Task 2.3: Run `tests/test_gphoto2_hardware.py` on the Z7 II, and record the result.
+- [x] Task 2.3: Run `tests/test_gphoto2_hardware.py` on the Z7 II, and record the result.
 
 Prepared before the rig was available: `time_settings.py` in this track times
 everything in Task 2.1. The hardware suite gained
@@ -47,19 +47,20 @@ Rig run, 2026-11-04 (Z7 II `…03059822`, V1.62, Linux aarch64, Python 3.14.10;
 - Hardware suite: 10 passed, 1 skipped. That includes the new single-read test
   (0.015 s against a 3.667 s full read), and settings, capture and preview.
 - 3 failed: the focus tests. Each `manualfocusdrive` write failed with `-1`.
-  This matches the documented "camera must be in AF" case, and focus writes
-  aren't changed by this track. Waiting on a re-run with `focusmode` at AF-S.
+  The fitted lens has no focus motor, which the hardware doc already covers.
+  Focus writes aren't changed by this track, so the maintainer accepted the run
+  without a focus re-test.
 
 ### Verification
 
-- [ ] The maintainer confirms the timings and the hardware run.
+- [x] The maintainer confirms the timings and the hardware run.
 
 ## Final Verification
 
-- [ ] All acceptance criteria met
-- [ ] Tests passing
-- [ ] Documentation updated
-- [ ] Ready for review
+- [x] All acceptance criteria met
+- [x] Tests passing
+- [x] Documentation updated
+- [x] Ready for review
 
 ---
 

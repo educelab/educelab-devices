@@ -2,7 +2,8 @@
 
 Uses the only camera attached, or ``GPHOTO2_PORT`` to pick one. Set the camera to
 M and AF-S, with a lens that has a focus motor; the focus tests move the lens to
-both ends of its range. Run with ``-s`` to see the measurements printed for the
+both ends of its range. Without a focus motor, the three focus tests fail with
+``-1``. Run with ``-s`` to see the measurements printed for the
 hardware doc.
 """
 

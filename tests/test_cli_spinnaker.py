@@ -73,7 +73,7 @@ def test_applies_exposure_and_pixel_format(pyspin, capsys):
 
 def test_applies_gain(pyspin, capsys):
     assert main(["spinnaker", "--serial", MONO, "--frames", "1", "--gain", "10"]) == 0
-    assert "gain 10.0 dB" in capsys.readouterr().out
+    assert "gain 10 dB" in capsys.readouterr().out
 
 
 def test_failed_captures_fail_the_command(pyspin, capsys):

@@ -413,6 +413,118 @@ def test_gain_is_in_decibels(camera, fake):
     assert camera.setting(GAIN).value == 12.0
 
 
+IDS = "IDS Imaging Development Systems GmbH"
+
+
+def ids_camera(**options):
+    """An open camera behaving as the IDS U3-36PxXCP's nodes do."""
+    options = {"vendor": IDS, "auto": False, "ids_nodes": True, **options}
+    return GenICamCamera(MONO, only(**options))
+
+
+def test_a_linear_gain_offers_the_decibels_of_each_factor_the_camera_keeps():
+    with ids_camera() as camera:
+        gain = camera.setting(GAIN)
+        assert gain.unit == "dB"
+        assert gain.value == 0.0
+        factors = [10 ** (db / 20) for db in gain.choices]
+        assert len(factors) == 49
+        assert factors[:3] == pytest.approx([1, 1.0625, 1.125])
+        assert factors[16:18] == pytest.approx([2, 2.125])
+        assert factors[32:34] == pytest.approx([4, 4.25])
+        assert factors[-1] == pytest.approx(8.0)
+
+
+def test_a_linear_gain_choice_is_written_as_its_exact_factor():
+    with ids_camera() as camera:
+        fake = camera._backend.cameras[0]
+        for db in camera.setting(GAIN).choices:
+            camera.set_setting(GAIN, db)
+            assert camera.setting(GAIN).value == db
+        camera.set_setting(GAIN, camera.setting(GAIN).nearest(6.0))
+        assert fake.get("Gain") == 2.0
+        assert camera.capture_frame().metadata[GAIN] == pytest.approx(6.0206, abs=1e-4)
+
+
+def test_a_linear_gain_refuses_a_value_the_camera_would_round():
+    with ids_camera() as camera, pytest.raises(ValueError, match="not a choice"):
+        camera.set_setting(GAIN, 6.0)
+
+
+def ids_backend_with_gain_range(low, high):
+    backend = only(vendor=IDS, auto=False, ids_nodes=True)
+    gain = backend.cameras[0].nodes["Gain"]
+    gain.value, gain.minimum, gain.maximum = low, low, high
+    return backend
+
+
+def test_a_linear_gain_minimum_read_a_hair_high_still_offers_0_db():
+    with GenICamCamera(MONO, ids_backend_with_gain_range(1.0000001, 8.042)) as camera:
+        gain = camera.setting(GAIN)
+        assert gain.value == 0.0
+        assert gain.choices[0] == 0.0
+        assert camera.capture_frame().metadata[GAIN] == 0.0
+
+
+@pytest.mark.parametrize(("low", "high"), [(0.0, 4.0), (1.01, 1.05)])
+def test_a_linear_gain_without_steps_is_offered_as_a_decibel_range(low, high):
+    with GenICamCamera(MONO, ids_backend_with_gain_range(low, high)) as camera:
+        gain = camera.setting(GAIN)
+        assert gain.choices is None
+        assert gain.maximum == pytest.approx(20 * math.log10(high))
+
+
+def test_the_same_gain_factor_from_another_vendor_stays_as_it_is():
+    with GenICamCamera(MONO, only(auto=False, ids_nodes=True)) as camera:
+        assert camera.setting(GAIN).maximum == pytest.approx(8.042)
+
+
+def test_a_shorter_exposure_raises_a_self_slowed_frame_rate():
+    with ids_camera() as camera:
+        fake = camera._backend.cameras[0]
+        camera.set_setting(EXPOSURE_TIME, 2.0)
+        assert fake.get("AcquisitionFrameRate") == pytest.approx(0.5)
+        assert camera.setting("resulting_frame_rate").value == pytest.approx(0.5)
+        camera.set_setting(EXPOSURE_TIME, 0.1)
+        assert fake.get("AcquisitionFrameRate") == pytest.approx(10.0)
+        assert camera.setting("resulting_frame_rate").value == pytest.approx(10.0)
+
+
+def test_open_raises_a_frame_rate_left_low():
+    backend = only(vendor=IDS, auto=False, ids_nodes=True)
+    fake = backend.cameras[0]
+    fake.opened = True
+    fake.write("ExposureTime", 2_000_000.0)
+    fake.write("ExposureTime", 10_000.0)
+    fake.opened = False
+    assert fake.get("AcquisitionFrameRate") == pytest.approx(0.5)
+    with GenICamCamera(MONO, backend):
+        assert fake.get("AcquisitionFrameRate") == pytest.approx(
+            FakeCamera.MAX_FRAME_RATE
+        )
+
+
+def test_other_vendors_frame_rate_is_left_alone():
+    # On FLIR cameras the frame rate caps the exposure, so raising it would
+    # shrink the exposure range.
+    backend = only(auto=False, ids_nodes=True)
+    fake = backend.cameras[0]
+    with GenICamCamera(MONO, backend) as camera:
+        camera.set_setting(EXPOSURE_TIME, 2.0)
+        camera.set_setting(EXPOSURE_TIME, 0.1)
+        assert fake.get("AcquisitionFrameRate") == pytest.approx(0.5)
+
+
+def test_a_failed_frame_rate_write_leaves_the_exposure_set(caplog):
+    with ids_camera() as camera:
+        fake = camera._backend.cameras[0]
+        camera.set_setting(EXPOSURE_TIME, 2.0)
+        fake.failures["write AcquisitionFrameRate"] = FakeCameraError("access", "no")
+        camera.set_setting(EXPOSURE_TIME, 0.1)
+        assert camera.setting(EXPOSURE_TIME).value == pytest.approx(0.1)
+        assert "AcquisitionFrameRate" in caplog.text
+
+
 def test_auto_modes_offer_off_and_continuous(camera):
     # "Once" reverts to "Off" on its own, so it would never read back.
     assert camera.setting("ExposureAuto").choices == ("Off", "Continuous")

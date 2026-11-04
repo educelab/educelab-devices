@@ -200,6 +200,10 @@ class FakeCamera:
             None stamps frames at the end of their exposure.
         busy_after_frame: Seconds after handing out a frame during which the
             camera ignores triggers, as the IDS U3-36PxXCP does for about 3 ms.
+        ids_nodes: Behave as the IDS U3-36PxXCP's nodes do: ``Gain`` is a
+            factor from 1 to 8.042, rounded down to 4 binary places, and a writable ``AcquisitionFrameRate``
+            drops to fit a longer exposure and stays there after a shorter one.
+            There is no ``AcquisitionResultingFrameRate``.
     """
 
     # Made-up figures, roughly a USB3 camera; nothing tests them against hardware.
@@ -232,8 +236,10 @@ class FakeCamera:
         arrival_latency: float | None = None,
         ready_after: float | None = None,
         busy_after_frame: float = 0.0,
+        ids_nodes: bool = False,
     ) -> None:
         self.arrival_latency = arrival_latency
+        self.ids_nodes = ids_nodes
         self.ready_after = ready_after
         self.last_trigger_ns: int | None = None
         self.busy_after_frame = busy_after_frame
@@ -343,9 +349,7 @@ class FakeCamera:
             Node(
                 "Gain",
                 "float",
-                0.0,
-                minimum=0.0,
-                maximum=47.99,
+                *((1.0, 1.0, 8.042) if ids_nodes else (0.0, 0.0, 47.99)),
                 access=when_off("GainAuto"),
             ),
             enum("TriggerSelector", "FrameStart"),
@@ -390,7 +394,12 @@ class FakeCamera:
         ]
         if throughput_mode:
             nodes.append(enum("DeviceLinkThroughputLimitMode", "Off"))
+        if ids_nodes:
+            rate = self.MAX_FRAME_RATE
+            nodes.append(Node("AcquisitionFrameRate", "float", rate, 0.1, rate))
         dropped = set(without)
+        if ids_nodes:
+            dropped.add("AcquisitionResultingFrameRate")
         self.nodes = {n.name: n for n in nodes if n.name not in dropped}
 
     def __repr__(self) -> str:
@@ -485,7 +494,12 @@ class FakeCamera:
                 )
             if node.kind == "int" and (value - node.minimum) % node.inc:
                 raise FakeCameraError("range", f"{name} {value} is off its increment")
+        if name == "Gain" and self.ids_nodes:
+            step = 2.0 ** (math.floor(math.log2(value)) - 4)
+            value = math.floor(value / step) * step
         node.value = value
+        if name == self.exposure_node and self.has("AcquisitionFrameRate"):
+            self._fit_frame_rate(value)
 
     def execute(self, name: str) -> None:
         self._require_open()
@@ -589,6 +603,12 @@ class FakeCamera:
         self._require_attached()
         if not self.opened:
             raise FakeCameraError("state", f"camera {self.serial} isn't open")
+
+    def _fit_frame_rate(self, exposure_us: float) -> None:
+        """Lower the frame rate to fit the exposure, but never raise it."""
+        rate = self.nodes["AcquisitionFrameRate"]
+        rate.maximum = min(self.MAX_FRAME_RATE, 1e6 / exposure_us)
+        rate.value = min(rate.value, rate.maximum)
 
     def _latch(self) -> None:
         self.latch_calls += 1

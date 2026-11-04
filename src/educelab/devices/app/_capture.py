@@ -53,7 +53,8 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--gain",
         type=float,
-        help="gain in dB, with auto gain off (default: leave it)",
+        help="gain in dB, with auto gain off, rounded to the nearest the camera "
+        "keeps (default: leave it)",
     )
     parser.add_argument("--pixel-format", help="e.g. Mono8, Mono16, or RGB8")
     parser.add_argument(
@@ -177,6 +178,7 @@ def _describe(camera: "GenICamCamera") -> None:
     if "ExposureAuto" in settings:
         exposure_text += f" ({settings['ExposureAuto'].value})"
     gain = settings[GAIN].value if GAIN in settings else None
+    gain_text = f"{gain:.3g}" if isinstance(gain, float) else str(gain)
     pixel_format = settings[PIXEL_FORMAT].value if PIXEL_FORMAT in settings else "?"
     offset = camera.timestamp_offset
     offset_text = "none" if offset is None else f"{offset:.6f} s"
@@ -184,7 +186,7 @@ def _describe(camera: "GenICamCamera") -> None:
         offset_text += f" {_TIMESTAMP_SOURCES[camera.timestamp_source]}"
     print(
         f"{info.serial_number}: {info.vendor or 'unknown vendor'} {info.model}, firmware {info.firmware_version}, "
-        f"{pixel_format}, exposure {exposure_text}, gain {gain} dB, "
+        f"{pixel_format}, exposure {exposure_text}, gain {gain_text} dB, "
         f"{_throughput_text(settings)}, "
         f"trigger {settings['trigger'].value if 'trigger' in settings else 'none'}, "
         f"timestamp node {camera.timestamp_node}, timestamp offset {offset_text}"
@@ -234,7 +236,11 @@ def _set_up(camera: "GenICamCamera", args: argparse.Namespace) -> str | None:
             return f"{serial} has no gain"
         if "GainAuto" in settings:
             camera.set_setting("GainAuto", "Off")
-        if problem := _apply(camera, GAIN, args.gain):
+        gain = args.gain
+        if settings[GAIN].choices:
+            # Some cameras keep only certain gains (the IDS U3-36PxXCP).
+            gain = settings[GAIN].nearest(gain)
+        if problem := _apply(camera, GAIN, gain):
             return problem
     return None
 
@@ -398,7 +404,11 @@ def _streaming_rate(
 
 
 def _write_png(path: Path, frame: "Frame") -> None:
-    """Save a frame as an 8- or 16-bit grayscale or RGB PNG; Bayer frames stay raw."""
+    """Save a frame as an 8- or 16-bit grayscale or RGB PNG; Bayer frames stay raw.
+
+    Pixels are written as they come, so a 10-bit frame runs 0–1023 in a 16-bit
+    PNG, with its depth in an ``sBIT`` chunk.
+    """
     import numpy as np
 
     pixels = frame.pixels
@@ -415,9 +425,13 @@ def _write_png(path: Path, frame: "Frame") -> None:
 
     color = {1: 0, 3: 2}[channels]
     header = struct.pack(">IIBBBBB", width, height, depth, color, 0, 0, 0)
+    # sBIT records a 10-bit frame's real depth, so readers know 1023 is full scale.
+    bits = frame.metadata.get("bit_depth") or depth
+    significant = chunk(b"sBIT", bytes([bits] * channels)) if bits < depth else b""
     path.write_bytes(
         b"\x89PNG\r\n\x1a\n"
         + chunk(b"IHDR", header)
+        + significant
         + chunk(b"IDAT", zlib.compress(raw.tobytes()))
         + chunk(b"IEND", b"")
     )

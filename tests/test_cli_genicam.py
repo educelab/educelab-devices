@@ -7,6 +7,7 @@ import pytest
 
 from educelab.devices.app.cli import main
 from educelab.devices.cameras import aravis, gentl
+from educelab.devices.cameras._genicam import BufferStatus
 from fakes.aravis import FakeRepository
 from fakes.genicam import FakeCamera, FrameSpec
 from fakes.gentl import PRODUCER, FakeGenicam
@@ -89,6 +90,26 @@ def test_reports_bit_depth_and_timestamp_source(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "10-bit pixels" in out
     assert "from the latch" in out
+
+
+def test_saved_10_bit_frames_record_their_depth(monkeypatch, tmp_path):
+    sim = FakeCamera(MONO, formats=["Mono8", "Mono10g40IDS"])
+    sim.queue_frames(FrameSpec(status=BufferStatus.MISSING_TRAILER))
+    monkeypatch.setattr(aravis, "load_aravis", lambda: FakeRepository([sim]))
+    args = ["--frames", "1", "--pixel-format", "Mono10g40IDS"]
+    main(
+        [
+            "genicam",
+            "--backend",
+            "aravis",
+            *args,
+            "--save-missing-trailer",
+            str(tmp_path),
+        ]
+    )
+    data = next(tmp_path.iterdir()).read_bytes()
+    assert data[data.index(b"sBIT") + 4] == 10
+    assert data.index(b"sBIT") < data.index(b"IDAT")
 
 
 def test_a_camera_without_a_latch_is_timed_by_arrival(monkeypatch, capsys):
@@ -216,3 +237,12 @@ def test_producer_needs_the_gentl_backend(repository, capsys):
     args = ["--backend", "aravis", "--producer", PRODUCER, "--frames", "0"]
     assert main(["genicam", *args]) == 1
     assert "--producer" in capsys.readouterr().err
+
+
+def test_gain_is_rounded_to_one_the_camera_keeps(monkeypatch, capsys):
+    vendor = "IDS Imaging Development Systems GmbH"
+    sim = FakeCamera(MONO, vendor=vendor, auto=False, ids_nodes=True)
+    monkeypatch.setattr(aravis, "load_aravis", lambda: FakeRepository([sim]))
+    assert main(["genicam", "--backend", "aravis", "--frames", "1", "--gain", "6"]) == 0
+    assert sim.get("Gain") == 2.0
+    assert "gain 6.02 dB" in capsys.readouterr().out

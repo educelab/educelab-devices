@@ -45,13 +45,14 @@ What the driver reaches, and what's missing. Verified with `arv-tool-0.8 -n <id>
 
 | Setting | Node | On this camera |
 |---|---|---|
-| `exposure_time` | `ExposureTime` (µs) | Present. An out-of-range write is accepted and clamped by the camera (asked for less than the minimum, it read 31.7 µs). |
+| `exposure_time` | `ExposureTime` (µs) | Present. Up to 1.999 s at a throughput limit of 162 MB/s or less, less above it (see [Frame rate](#frame-rate)). An out-of-range write is accepted and clamped by the camera (asked for less than the minimum, it read 31.7 µs). |
 | `ExposureAuto` | none | **Missing.** The driver leaves the setting out. |
-| `gain` | `Gain` (dB) | 1.0 to 8.04 dB. No `GainAuto`. |
+| `gain` | `Gain` (factor) | A linear factor, 1 to 8.042 (the node calls it "an amplification factor applied to all pixel values"; the datasheet says "8x"). The camera has only **49 gains**, and rounds a written factor **down** to one of them: steps of 1/16 from 1 to 2, 1/8 from 2 to 4, and 1/4 from 4 to 8.0. 8.0 (18.06 dB) is the top: 8.042, the node's maximum, reads back 8.0. The node reports no increment. Verified 2026-11-04 by writing factors on a grid finer than each step (1/64, 1/32, 1/16) and reading them back; none rounded up. So the driver's `gain` offers the 49 as `choices`, in dB (0 to 18.06 dB), and writes each as its exact factor; use `setting.nearest()` to pick one. `el-devices genicam --gain` rounds to the nearest itself. No `GainAuto`. Verified, 2026-11-04: 395 nm read 0.831 at 971 ms and factor 5, and 0.334 at 1999 ms and factor 1, against 0.342 predicted linearly. |
 | `pixel_format` | `PixelFormat` | Mono8 and `Mono10g40IDS` only; other entries are listed as "Not available". See [Pixel formats](#pixel-formats). |
 | `width`, `height` | `Width`, `Height` | 5112 × 3840, matching captured frames. The nodes are writable (`Width` 648 to 5124 in steps of 12, `Height` 2 to 3848 in steps of 2), but the driver reports them read-only and leaves the ROI as found. |
 | `sensor_width`, `sensor_height` | `SensorWidth`, `SensorHeight` | 5136 × 3856. |
-| `throughput_limit` | `DeviceLinkThroughputLimit` | 108 to 300 MB/s in 2 MB/s steps; 162 MB/s as found. |
+| `throughput_limit` | `DeviceLinkThroughputLimit` | 108 to 300 MB/s in 2 MB/s steps in Mono8 (2026-10-22 and 2026-11-04); pgs-scan saw a 136 MB/s minimum, probably in Mono10g40IDS, so the minimum depends on the pixel format. 162 MB/s as found. `DeviceLinkSpeed` is 500 MB/s. See [Frame rate](#frame-rate). |
+| `resulting_frame_rate` | `AcquisitionFrameRate` | There is no `AcquisitionResultingFrameRate`, so the driver reports `AcquisitionFrameRate`, read-only. See [Frame rate](#frame-rate). |
 | `trigger` | `TriggerSelector`, `TriggerMode`, `TriggerSource`, `TriggerSoftware` | `FrameStart` (used) and `ExposureStart`; sources `Software` and `Line0`. |
 | timestamps | `Timestamp`, `TimestampLatch` | **Missing.** See [Timestamps](#timestamps). |
 
@@ -101,6 +102,33 @@ The camera has **no timestamp latch**, so the driver can't read the device clock
 - **Newest only.** After a 1 s pause, the frame taken was exposed 13 ms before the call in one run and 278 ms in another, so the stream keeps only the newest frame. Verified.
 - **Opening.** Without a latch, open times one complete frame to get a first offset; later frames refine it. Through GenTL, which reports no arrival times, open skips that frame and opens with no offset.
 
+## Frame rate
+
+Verified 2026-11-04 with `arv-tool-0.8` on macOS and through the driver on Asahi Linux (reported from pgs-scan's PGS Spectral work).
+
+- **The camera slows itself down and stays slow.** IDS's node docs for `ExposureTime` and `AcquisitionFrameRate`: "If you increase ExposureTime and its new value is not applicable with the value of AcquisitionFrameRate, the frame rate will be reduced automatically. If you decrease ExposureTime again, the frame rate stays low and must be manually increased to the desired value." Measured:
+
+  | Step | `AcquisitionFrameRate` |
+  |---|---|
+  | Start, 15 ms | 4.99971 Hz (max 7.987) |
+  | `ExposureTime` = 1.9 s | 0.526 Hz (max 0.526) |
+  | `ExposureTime` = 100 ms | **0.526 Hz** (max back to 7.987) |
+  | `AcquisitionFrameRate` = 7.98 | 7.979 Hz: accepted |
+
+  So after one long exposure, every later frame took about 2 s, whatever its exposure, and PGS Spectral's captures timed out. Writing a rate above the current maximum is refused (`USB3Vision write_memory error`).
+- **What the driver does.** It raises `AcquisitionFrameRate` to its maximum at open, and after every write to `exposure_time`, `pixel_format` or `throughput_limit`. A failed raise is logged as a warning and the write still succeeds. The camera takes the rate write while acquiring. Verified 2026-11-04 on macOS through the driver: open raised 4.99971 Hz to 7.987; a 1.9 s exposure dropped it to 0.526; setting 0.1 s raised it back to 7.987, and `not_before` captures then took 0.25 s each.
+- **The throughput limit trades frame rate against the longest exposure.** A full Mono8 frame is 19.6 MB, so 162 MB/s caps the camera at about 8 frames/s, not the datasheet's 14. With Mono10g40IDS:
+
+  | Throughput limit | Frame rate range | `ExposureTime` maximum |
+  |---|---|---|
+  | 136 MB/s (min) | 0.323–5.4 Hz | 1.999 s (a 5 s write is refused) |
+  | 162 MB/s (as found) | 0.385–6.4 Hz | 1.999 s |
+  | 300 MB/s (max) | 0.699–11.55 Hz | 1.431 s |
+
+  Above about 162 MB/s the sensor timing scales with the link rate, so a higher limit raises the frame-rate floor and lowers the longest exposure. At or below it, 1.999 s is a hard cap and a lower limit only slows frames. The datasheet's 1144 ms maximum is out of date: image levels scale linearly up to 1.999 s.
+- **A too-long write at 300 MB/s is ignored silently.** Through arv-tool, writing 1.999 s at 300 MB/s left the old exposure in place with no error. The driver's own range check refuses it with `ValueError`, since `ExposureTime`'s range already shows the 1.431 s maximum.
+- For long exposures (e.g. narrowband UV), leave the limit at 162 MB/s or below; exposure range matters more there than frame rate.
+
 ## State and recovery
 
 - **A wedged camera needs a power cycle.** After `TLParamsLocked = 1`, or (before the driver waited for an async stream to go quiet) a session closed in Aravis's async USB mode on macOS, the camera streams nothing (or only `missing-packets` frames) until it is power-cycled. Clearing the flag doesn't help. On the lab rig it is on Acroname port 6: `el-devices hub cycle 6`. Verified.
@@ -137,6 +165,8 @@ ARAVIS_SERIAL=4110091493 pytest -m hardware tests/test_aravis_hardware.py -s
 6. The hardware tests pass: 20 passed, 1 skipped, with the multi-camera tests deselected or skipped when it is the only camera of its model.
 
 ### Last run
+
+2026-11-04, macOS 27 (arm64), Python 3.12.15, Aravis 0.8.36, Mono8 at 162 MB/s, through `AravisCamera` (a script, not the hardware tests): the frame-rate raise, as in [Frame rate](#frame-rate), and `gain` as 49 dB choices, each of which read back exactly; 6.0 dB was refused, and `el-devices genicam --gain 6` set 6.02 dB. `tests/test_aravis_hardware.py`: 24 passed, 2 skipped. The camera was left at 15 ms, 4.99971 Hz, factor 1, as found.
 
 2026-10-29, macOS 27 (arm64), Python 3.14.8, Aravis 0.8.36 (Homebrew), firmware `3.90.27889`, async USB mode (the driver's first macOS run in it): `tests/test_aravis_hardware.py` 23 passed, 2 skipped. Ten open/capture/close cycles, alternating Mono10g40IDS and Mono8, each closed in 0.22–0.28 s, with no hang and no incomplete frame in the next session. The five CM3-U3-50S5M on the same hub were idle.
 

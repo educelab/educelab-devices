@@ -15,5 +15,7 @@
   },
   "current_phase": 1,
   "current_task": "1.1",
-  "commits": []
+  "commits": [
+    "adc8c90: Prepare the preview-mode hardware discovery runs"
+  ]
 }

@@ -2,7 +2,8 @@
 
 Uses the only camera attached, or ``GPHOTO2_PORT`` to pick one. Set the camera to
 M and AF-S, with a lens that has a focus motor; the focus tests move the lens to
-both ends of its range. Run with ``-s`` to see the measurements printed for the
+both ends of its range. Without a focus motor, the three focus tests fail with
+``-1``. Run with ``-s`` to see the measurements printed for the
 hardware doc.
 """
 
@@ -84,6 +85,17 @@ def test_reports_its_settings(camera):
         if name in settings:
             print(f"{name}: {settings[name].value!r} of {settings[name].choices}")
     assert EXPOSURE_TIME in settings
+
+
+def test_one_setting_is_read_without_the_whole_tree(camera):
+    started = time.monotonic()
+    camera.settings()
+    full = time.monotonic() - started
+    started = time.monotonic()
+    camera.setting(EXPOSURE_TIME)
+    single = time.monotonic() - started
+    print(f"\nfull read {full:.3f} s, setting(exposure_time) {single:.3f} s")
+    assert single < full / 2
 
 
 def test_exposure_time_reads_back_as_set(camera):

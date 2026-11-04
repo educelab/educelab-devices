@@ -3,7 +3,7 @@
 **Track ID:** gphoto2-single-setting_20261102
 **Spec:** [spec.md](./spec.md)
 **Created:** 2026-11-02
-**Status:** [ ] Not Started
+**Status:** [x] Complete
 
 ## Overview
 
@@ -13,36 +13,54 @@ Test-first on the fakes: count whole-tree reads, then add a single-widget read t
 
 ### Tasks
 
-- [ ] Task 1.1: Give the fake `Session` (`FakeCamera` in `tests/fakes/gphoto2.py`) the new single-widget read, and have it count `config()` calls.
-- [ ] Task 1.2: Write failing tests in `tests/test_gphoto2.py`.
+- [x] Task 1.1: Give the fake `Session` (`FakeCamera` in `tests/fakes/gphoto2.py`) the new single-widget read, and have it count `config()` calls.
+- [x] Task 1.2: Write failing tests in `tests/test_gphoto2.py`.
   - Driver level, on the fake `Session`: once the mapping exists, `setting()` and `set_setting()` make no `config()` calls. Each read is fresh, so a choice change on the fake is seen by the next validation. Single-widget and `settings()` results match for canonical and native settings. A missing widget falls back to the tree. An unknown name raises `KeyError`.
   - Session level, on the `ConfigCamera` stub: one widget is read through `get_single_config`, and the read falls back to the tree on `-6`.
-- [ ] Task 1.3: Factor the per-widget conversion out of `flatten_config`, and add `Session.widget(name) -> Widget | None` over `get_single_config`. It falls back to the tree on `-6`, and gives `None` for a widget the camera doesn't have.
-- [ ] Task 1.4: Split `_settings()` so one widget can become its canonical or native `Setting`. Keep a name-to-(widget, kind) mapping next to `_writers`, built by the first full read.
-- [ ] Task 1.5: Override `_setting(name)` in `GPhoto2Camera`: read the mapped widget alone, and fall back to `_settings()` when there's no mapping, no such name, or the widget is gone.
+- [x] Task 1.3: Factor the per-widget conversion out of `flatten_config`, and add `Session.widget(name) -> Widget | None` over `get_single_config`. It falls back to the tree on `-6`, and gives `None` for a widget the camera doesn't have.
+- [x] Task 1.4: Split `_settings()` so one widget can become its canonical or native `Setting`. Keep a name-to-(widget, kind) mapping next to `_writers`, built by the first full read.
+- [x] Task 1.5: Override `_setting(name)` in `GPhoto2Camera`: read the mapped widget alone, and fall back to `_settings()` when there's no mapping, no such name, or the widget is gone.
 
 ### Verification
 
-- [ ] The full suite and Ruff pass, and the camera contract still passes on the fake.
+- [x] The full suite and Ruff pass, and the camera contract still passes on the fake.
 
 ## Phase 2: Hardware and docs
 
 ### Tasks
 
-- [ ] Task 2.1: On the Z7 II, time `setting("exposure_time")`, `set_setting()` for shutter and ISO, and `settings()`. Book the rig first.
-- [ ] Task 2.2: Update `docs/hardware/gphoto2-cameras.md#settings` with the measured single-widget read time, and correct the **Writes** bullet to state what `set_setting` and `setting` cost.
-- [ ] Task 2.3: Run `tests/test_gphoto2_hardware.py` on the Z7 II, and record the result.
+- [x] Task 2.1: On the Z7 II, time `setting("exposure_time")`, `set_setting()` for shutter and ISO, and `settings()`. Book the rig first.
+- [x] Task 2.2: Update `docs/hardware/gphoto2-cameras.md#settings` with the measured single-widget read time, and correct the **Writes** bullet to state what `set_setting` and `setting` cost.
+- [x] Task 2.3: Run `tests/test_gphoto2_hardware.py` on the Z7 II, and record the result.
+
+Prepared before the rig was available: `time_settings.py` in this track times
+everything in Task 2.1. The hardware suite gained
+`test_one_setting_is_read_without_the_whole_tree`. The hardware doc describes
+single-setting reads and corrects **Writes**, but the Z7 II read time is still
+marked **unknown**.
+
+Rig run, 2026-11-04 (Z7 II `…03059822`, V1.62, Linux aarch64, Python 3.14.10;
+`gphoto2-single-setting-time-settings-1.log`, `gphoto2-tests-1.log`):
+
+- Single-widget `setting()` takes about 1 ms, and `set_setting()` 0.02–0.27 s.
+  The first full read takes 2.8 s, and repeated ones 3.6–3.7 s.
+- Hardware suite: 10 passed, 1 skipped. That includes the new single-read test
+  (0.015 s against a 3.667 s full read), and settings, capture and preview.
+- 3 failed: the focus tests. Each `manualfocusdrive` write failed with `-1`.
+  The fitted lens has no focus motor, which the hardware doc already covers.
+  Focus writes aren't changed by this track, so the maintainer accepted the run
+  without a focus re-test.
 
 ### Verification
 
-- [ ] The maintainer confirms the timings and the hardware run.
+- [x] The maintainer confirms the timings and the hardware run.
 
 ## Final Verification
 
-- [ ] All acceptance criteria met
-- [ ] Tests passing
-- [ ] Documentation updated
-- [ ] Ready for review
+- [x] All acceptance criteria met
+- [x] Tests passing
+- [x] Documentation updated
+- [x] Ready for review
 
 ---
 

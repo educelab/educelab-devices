@@ -12,6 +12,6 @@
 | [ ] | [docs-site_20261012](./tracks/docs-site_20261012/index.md) | Documentation Site and Machine Setup | 2026-10-12 | 2026-10-23 |
 | [x] | [usb3-vision-camera_20261021](./tracks/_archive/usb3-vision-camera_20261021/index.md) | USB3 Vision Camera | 2026-10-21 | 2026-10-23 |
 | [ ] | [preview-mode_20261102](./tracks/preview-mode_20261102/index.md) | Camera Preview Mode | 2026-11-02 | 2026-11-02 |
-| [ ] | [gphoto2-single-setting_20261102](./tracks/gphoto2-single-setting_20261102/index.md) | gphoto2 Single-Setting Reads | 2026-11-02 | 2026-11-02 |
+| [x] | [gphoto2-single-setting_20261102](./tracks/gphoto2-single-setting_20261102/index.md) | gphoto2 Single-Setting Reads | 2026-11-02 | 2026-11-04 |
 
 <!-- Tracks registered by /conductor:new-track. Planned order is in product.md. -->

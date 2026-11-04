@@ -150,13 +150,33 @@ shutter, waits out the exposure, and returns the first file the release produced
 
 Settings come from the camera's config tree, which libgphoto2 builds from PTP device
 properties. Every `settings()` call reads the whole tree, so it is a snapshot (see the
-guide). On the Z7 II a full read takes 2.6–2.8 s for 102 settings. **verified**.
+guide). On the Z7 II a full read takes 2.6–2.8 s for 102 settings. Reads straight
+after another take longer: 3.6–3.7 s, over 10 in a row (body `…03059822`, 2026-11-04).
+**verified**.
 
-- **Writes.** A write of one widget (a setting, a focus move) reads and writes just
-  that widget through `gp_camera_get_single_config()`/`set_single_config()`, falling
-  back to the whole tree if the camera driver doesn't support it (`-6`). Writes of
-  several widgets at once (turning live view on) use one whole-tree round trip, which
-  costs a full read first. The Z7 II supports single-widget access. **verified**.
+- **Reading one setting.** `setting(name)` reads just the widget the setting comes from,
+  through `gp_camera_get_single_config()`. The driver learns which widget that is from
+  a full read, so the first `setting()` after `open()` (unless `settings()` came first)
+  reads the whole tree. A setting whose widget has gone, or a name the driver hasn't
+  seen, also takes a full read. Each call still reads the camera, so the result is as
+  fresh as `settings()` as far as the driver goes. On the Z7 II a single read takes
+  about 1 ms (at most 15 ms over 10 reads each of `exposure_time`, `iso` and
+  `imagequality`), against 2.8 s for the first full read and 3.6–3.7 s for repeated
+  ones. **verified** (2026-11-04, `gphoto2-single-setting-time-settings-1.log`). 1 ms
+  is quick for a USB round trip. libgphoto2 may be answering from its own copy of the
+  property, which it updates from camera events. Whether a change made on the body
+  (a dial turned) shows up in the next single read is **unknown**. A value the driver
+  wrote does read back at once. **verified**.
+- **Writes.** `set_setting()` first reads the setting to check the value against its
+  current choices, then writes it. Both the read and the write touch only that one
+  widget, through `gp_camera_get_single_config()`/`set_single_config()`. If the camera
+  driver doesn't support single-widget access (`-6`), each falls back to a whole-tree
+  read or round trip. Writes of several widgets at once (turning live view on) use
+  one whole-tree round trip, which costs a full read first. The Z7 II supports
+  single-widget access. **verified**. On the Z7 II, `set_setting()` takes 0.19–0.27 s
+  for `exposure_time` and 0.02–0.20 s for `iso`, each moving one choice and back,
+  20 writes each. **verified** (same log). Before single-setting reads, each
+  `set_setting()` also did a full read to validate, so it cost at least 2.8 s.
 - **Canonical settings** are read from these widgets, taking the first one the camera
   has, and replace them in the list:
 

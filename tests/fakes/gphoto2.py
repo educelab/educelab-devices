@@ -98,7 +98,8 @@ class FakeCamera:
     events, as RAW + JPEG does on a Nikon.
 
     Use `fail_next()` to make the next calls of a method raise, and set
-    ``on_capture`` to run code while the shutter is "open".
+    ``on_capture`` to run code while the shutter is "open". ``calls`` records
+    each method called, so ``calls.count("config")`` counts whole-tree reads.
 
     Args:
         model: What libgphoto2 identifies the camera as.
@@ -188,6 +189,12 @@ class FakeCamera:
     def config(self) -> dict[str, Widget]:
         self._call("config")
         return dict(self.widgets)
+
+    def widget(self, name: str) -> Widget | None:
+        self._call("widget")
+        widget = self.widgets.get(name)
+        # A single-widget read can't see which section a widget is in.
+        return None if widget is None else dataclasses.replace(widget, section="")
 
     def value(self, name: str) -> WidgetValue | None:
         self._call("value")

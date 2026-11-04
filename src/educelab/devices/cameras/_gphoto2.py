@@ -38,6 +38,7 @@ __all__ = [
     "Widget",
     "WidgetValue",
     "import_sdk",
+    "read_widget",
 ]
 
 # libgphoto2 result codes the driver tells apart (gphoto2-port-result.h and
@@ -160,6 +161,15 @@ class Session(Protocol):
 
     def config(self) -> dict[str, Widget]:
         """Read the whole config tree, flattened and keyed by widget name."""
+        ...
+
+    def widget(self, name: str) -> Widget | None:
+        """Read one widget without reading the whole tree, where the camera
+        driver allows it.
+
+        ``None`` if the camera has no such widget. The widget's ``section`` is
+        empty, since a single read can't see it.
+        """
         ...
 
     def value(self, name: str) -> WidgetValue | None:
@@ -339,6 +349,19 @@ class _LibSession:
         with _translated(self._gp):
             return flatten_config(self._gp, self._camera.get_config())
 
+    def widget(self, name: str) -> Widget | None:
+        gp = self._gp
+        with _translated(gp):
+            try:
+                node = self._camera.get_single_config(name)
+            except gp.GPhoto2Error as exc:
+                if exc.code == GP_ERROR_BAD_PARAMETERS:
+                    return None
+                if exc.code != GP_ERROR_NOT_SUPPORTED:
+                    raise
+                return flatten_config(gp, self._camera.get_config()).get(name)
+            return read_widget(gp, node)
+
     def value(self, name: str) -> WidgetValue | None:
         gp = self._gp
         with _translated(gp):
@@ -400,20 +423,10 @@ def flatten_config(gp: Any, root: Any) -> dict[str, Widget]:
     skipped. If two widgets share a name, the first one found wins, matching
     libgphoto2's own lookup by name.
     """
-    kinds: dict[int, WidgetKind] = {
-        gp.GP_WIDGET_TEXT: "text",
-        gp.GP_WIDGET_RANGE: "range",
-        gp.GP_WIDGET_TOGGLE: "toggle",
-        gp.GP_WIDGET_RADIO: "radio",
-        gp.GP_WIDGET_MENU: "menu",
-        gp.GP_WIDGET_DATE: "date",
-        gp.GP_WIDGET_BUTTON: "button",
-    }
     widgets: dict[str, Widget] = {}
 
     def visit(node: Any, section: str) -> None:
-        kind = kinds.get(node.get_type())
-        if kind is None:
+        if _widget_kind(gp, node) is None:
             if node is not root:
                 section = node.get_name()
                 if section in UNREAD_SECTIONS:
@@ -424,24 +437,48 @@ def flatten_config(gp: Any, root: Any) -> dict[str, Widget]:
         name = node.get_name()
         if name in widgets:
             return
-        choices: tuple[str, ...] = ()
-        minimum = maximum = step = None
-        if kind in ("radio", "menu"):
-            choices = tuple(node.get_choices())
-        elif kind == "range":
-            minimum, maximum, step = node.get_range()
-        widgets[name] = Widget(
-            name=name,
-            label=node.get_label(),
-            kind=kind,
-            value=None if kind == "button" else node.get_value(),
-            read_only=bool(node.get_readonly()),
-            choices=choices,
-            minimum=minimum,
-            maximum=maximum,
-            step=step,
-            section=section,
-        )
+        widget = read_widget(gp, node, section)
+        if widget is not None:
+            widgets[name] = widget
 
     visit(root, "")
     return widgets
+
+
+def read_widget(gp: Any, node: Any, section: str = "") -> Widget | None:
+    """One python-gphoto2 ``CameraWidget`` as a `Widget`, or ``None`` for a
+    window or section."""
+    kind = _widget_kind(gp, node)
+    if kind is None:
+        return None
+    choices: tuple[str, ...] = ()
+    minimum = maximum = step = None
+    if kind in ("radio", "menu"):
+        choices = tuple(node.get_choices())
+    elif kind == "range":
+        minimum, maximum, step = node.get_range()
+    return Widget(
+        name=node.get_name(),
+        label=node.get_label(),
+        kind=kind,
+        value=None if kind == "button" else node.get_value(),
+        read_only=bool(node.get_readonly()),
+        choices=choices,
+        minimum=minimum,
+        maximum=maximum,
+        step=step,
+        section=section,
+    )
+
+
+def _widget_kind(gp: Any, node: Any) -> WidgetKind | None:
+    kinds: dict[int, WidgetKind] = {
+        gp.GP_WIDGET_TEXT: "text",
+        gp.GP_WIDGET_RANGE: "range",
+        gp.GP_WIDGET_TOGGLE: "toggle",
+        gp.GP_WIDGET_RADIO: "radio",
+        gp.GP_WIDGET_MENU: "menu",
+        gp.GP_WIDGET_DATE: "date",
+        gp.GP_WIDGET_BUTTON: "button",
+    }
+    return kinds.get(node.get_type())

@@ -2,18 +2,27 @@
   "id": "gphoto2-single-setting_20261102",
   "title": "gphoto2 Single-Setting Reads",
   "type": "bug",
-  "status": "pending",
+  "status": "complete",
   "created": "2026-11-02T00:00:00Z",
-  "updated": "2026-11-02T00:00:00Z",
+  "updated": "2026-11-04T00:00:00Z",
   "phases": {
     "total": 2,
-    "completed": 0
+    "completed": 2
   },
   "tasks": {
     "total": 8,
-    "completed": 0
+    "completed": 8
   },
   "current_phase": null,
   "current_task": null,
-  "commits": []
+  "commits": [
+    "6f8b807: Give the fake gphoto2 session a single-widget read",
+    "15470eb: Test that gphoto2 settings are read one widget at a time",
+    "d290c23: Read one gphoto2 widget without the whole config tree",
+    "7cb7745: Convert gphoto2 settings one widget at a time, and remember each one's widget",
+    "e8b409b: Read and validate one gphoto2 setting from its widget alone",
+    "5befac6: Record Phase 1 of gphoto2 single-setting reads",
+    "950ce20: Prepare the Z7 II timing run, and correct what gphoto2 setting writes cost",
+    "98bbe8a: Record the Z7 II's single-setting read and write times"
+  ]
 }

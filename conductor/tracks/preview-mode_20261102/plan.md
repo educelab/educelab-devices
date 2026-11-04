@@ -3,7 +3,7 @@
 **Track ID:** preview-mode_20261102
 **Spec:** [spec.md](./spec.md)
 **Created:** 2026-11-02
-**Status:** [ ] Not Started
+**Status:** [~] In Progress
 
 ## Overview
 
@@ -15,11 +15,26 @@ Use throwaway scripts in a scratch directory, not package code. Each finding goe
 
 ### Tasks
 
-- [ ] Task 1.1: Z7 II: record what `viewfinder=1` (and `0`) does to the rear screen and the EVF, and whether `capture_preview()` alone does the same.
+- [~] Task 1.1: Z7 II: record what `viewfinder=1` (and `0`) does to the rear screen and the EVF, and whether `capture_preview()` alone does the same.
 - [ ] Task 1.2: Z7 II: check whether `changeafarea` (or another widget) moves the `liveviewzoomarea` crop, and record its coordinate system and limits. Record the exact crop each zoom level gives at each `liveviewsize`.
 - [ ] Task 1.3: Z7 II: after a focus step, check whether the next preview requested can still show the lens from before the step, and how many previews it takes to settle.
 - [ ] Task 1.4: CM3-U3-50S5M and IDS U3-36P0XCP: check which of `OffsetX`/`OffsetY` and `Width`/`Height` can be written while streaming, through each backend we support on the bench (Spinnaker, Aravis, GenTL), and record their increments.
 - [ ] Task 1.5: CM3 and IDS: record the binning and decimation nodes, modes and selectors, whether each mode averages or sums, whether it changes the frame rate, and the restart cost of switching geometry.
+
+Prepared before the rig run, smoke-tested on the fakes only:
+
+- `z7_live_view.py` covers Tasks 1.1–1.3, in three checks. `viewfinder` asks
+  the operator what the rear screen and EVF show at each step. `zoom` saves a
+  JPEG for every `liveviewsize` × `liveviewzoomarea` and every `changeafarea`
+  probe. Send the directory, so each crop can be measured against the
+  full-sensor frame. `settle` steps focus and times each preview after the step,
+  with its sharpness and whether its bytes repeat the last frame. That also
+  settles whether the 15–21 ms frames are repeats.
+- `genicam_geometry.py` covers Tasks 1.4–1.5 for one camera and backend per
+  run. It tries each ROI, binning and decimation write while streaming, and
+  retries any that fail with acquisition paused, timing the restart. It
+  reports each frame's size, mean level and frame rate. It puts the geometry
+  back as found, and never touches `TLParamsLocked`.
 
 ### Verification
 

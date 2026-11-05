@@ -375,6 +375,88 @@ def test_settings_cover_exposure_gain_format_auto_modes_and_throughput(camera):
     }
 
 
+# The nodes each setting needs. Reading or writing one setting reads nothing else.
+SETTING_NODES = {
+    EXPOSURE_TIME: {"ExposureTime"},
+    "ExposureAuto": {"ExposureAuto"},
+    GAIN: {"Gain"},
+    "GainAuto": {"GainAuto"},
+    PIXEL_FORMAT: {"PixelFormat"},
+    WIDTH: {"Width"},
+    HEIGHT: {"Height"},
+    SENSOR_WIDTH: {"SensorWidth"},
+    SENSOR_HEIGHT: {"SensorHeight"},
+    THROUGHPUT_LIMIT: {"DeviceLinkThroughputLimit", "DeviceLinkThroughputLimitMode"},
+    TRIGGER: {"TriggerMode", "TriggerSource", "TriggerSelector"},
+    "current_throughput": {"DeviceLinkCurrentThroughput"},
+    "resulting_frame_rate": {"AcquisitionResultingFrameRate", "AcquisitionFrameRate"},
+}
+
+# A write may also raise a self-slowing camera's frame rate, and priming a
+# software trigger waits out an exposure.
+WRITE_NODES = {
+    EXPOSURE_TIME: {"AcquisitionFrameRate"},
+    PIXEL_FORMAT: {"AcquisitionFrameRate"},
+    THROUGHPUT_LIMIT: {"AcquisitionFrameRate"},
+    TRIGGER: {"ExposureTime"},
+}
+
+
+@pytest.fixture(params=["sfnc", "ids"])
+def any_camera(request, backend):
+    camera = ids_camera() if request.param == "ids" else GenICamCamera(MONO, backend)
+    with camera:
+        camera.set_setting("ExposureAuto", "Off")
+        camera.set_setting("GainAuto", "Off")
+        yield camera
+
+
+def test_every_setting_has_its_nodes_listed(any_camera):
+    assert set(any_camera.settings()) <= set(SETTING_NODES)
+
+
+@pytest.mark.parametrize("name", SETTING_NODES)
+def test_one_setting_equals_its_entry_in_all_settings(any_camera, name):
+    every = any_camera.settings()
+    if name not in every:
+        with pytest.raises(KeyError):
+            any_camera.setting(name)
+    else:
+        assert any_camera.setting(name) == every[name]
+
+
+@pytest.mark.parametrize("name", SETTING_NODES)
+def test_reading_one_setting_reads_only_its_nodes(any_camera, name):
+    if name not in any_camera.settings():
+        pytest.skip(f"no {name}")
+    reads = connection(any_camera._backend).node_reads
+    reads.clear()
+    any_camera.setting(name)
+    assert set(reads) <= SETTING_NODES[name]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        n
+        for n in SETTING_NODES
+        if n not in (WIDTH, HEIGHT, SENSOR_WIDTH, SENSOR_HEIGHT)
+        and n not in ("current_throughput", "resulting_frame_rate")
+    ],
+)
+def test_writing_one_setting_reads_only_its_nodes(any_camera, name):
+    if name not in any_camera.settings():
+        pytest.skip(f"no {name}")
+    current = any_camera.setting(name)
+    value = "Software" if name == TRIGGER else current.value
+    if value is None:
+        value = current.minimum
+    reads = connection(any_camera._backend).node_reads
+    reads.clear()
+    any_camera.set_setting(name, value)
+    assert set(reads) <= SETTING_NODES[name] | WRITE_NODES.get(name, set())
+
+
 def test_exposure_time_is_in_seconds(camera):
     exposure = camera.setting(EXPOSURE_TIME)
     assert exposure.value == pytest.approx(0.01)

@@ -424,10 +424,8 @@ class GenICamCamera(FrameCamera):
         self._own_serial: str | None = None
         self._timestamp_node: str | None = None
         self._exposure_node: str | None = None
-        self._linear_gain = False
-        # On a linear-gain camera, the dB of each factor it keeps, to that factor.
-        self._gain_table: dict[float, float] = {}
         self._self_slowing = False
+        self._descriptors: dict[str, _Descriptor] = {}
         self._timestamp_offset: float | None = None
         self._timestamp_source: str | None = None
         self._arrival_gaps: deque[float] = deque(maxlen=ARRIVAL_SAMPLES)
@@ -577,9 +575,8 @@ class GenICamCamera(FrameCamera):
         self._exposure_node = next(
             (n for n in _EXPOSURE_NODES if self._connection.has(n)), None
         )
-        self._linear_gain = self._vendor in _LINEAR_GAIN_VENDORS
-        self._gain_table = self._read_gain_table() if self._linear_gain else {}
         self._self_slowing = self._vendor in _SELF_SLOWING_VENDORS
+        self._descriptors = self._describe_settings()
         # Another program may have left the camera slowed down.
         self._raise_frame_rate()
 
@@ -694,110 +691,73 @@ class GenICamCamera(FrameCamera):
     # --- Role hooks ------------------------------------------------------------
 
     def _settings(self) -> Mapping[str, Setting]:
-        found = (
-            self._exposure_setting(),
-            self._enum_setting("ExposureAuto", _AUTO_MODES),
-            self._gain_setting(),
-            self._enum_setting("GainAuto", _AUTO_MODES),
-            # Read-only while acquiring, but _set_setting pauses acquisition.
-            self._enum_setting(
-                "PixelFormat", _PIXEL_FORMATS, name=PIXEL_FORMAT, writable=True
+        self._require_open()
+        found = (d.read(self) for d in self._descriptors.values())
+        return {s.name: s for s in found if s is not None}
+
+    def _setting(self, name: str) -> Setting:
+        self._require_open()
+        descriptor = self._descriptors.get(name)
+        found = descriptor.read(self) if descriptor is not None else None
+        if found is None:
+            raise KeyError(f"{self!r} has no setting {name!r}")
+        return found
+
+    def _set_setting(self, name: str, value: SettingValue) -> None:
+        logger.debug("%r: %s = %r", self, name, value)
+        self._descriptors[name].write(self, value)
+
+    def _describe_settings(self) -> dict[str, "_Descriptor"]:
+        """Each setting's descriptor, for this camera's nodes and vendor."""
+        gain: _Descriptor = _Float(GAIN, "Gain", "dB")
+        if self._vendor in _LINEAR_GAIN_VENDORS:
+            steps = self._read_gain_steps()
+            gain = _GainSteps(steps) if steps else _LinearGain()
+        rate_nodes: tuple[str, ...] = ("AcquisitionResultingFrameRate",)
+        if self._self_slowing:
+            # The rate such a camera lowered itself to is the rate it runs at
+            # (the IDS U3-36PxXCP has only AcquisitionFrameRate).
+            rate_nodes += ("AcquisitionFrameRate",)
+        found: list[_Descriptor | None] = [
+            None
+            if self._exposure_node is None
+            else _Float(
+                EXPOSURE_TIME, self._exposure_node, "s", _US_PER_S, moves_rate=True
             ),
+            _Enum("ExposureAuto", "ExposureAuto", _AUTO_MODES),
+            gain,
+            _Enum("GainAuto", "GainAuto", _AUTO_MODES),
+            _Enum(PIXEL_FORMAT, "PixelFormat", _PIXEL_FORMATS, paused=True),
             # Read-only even where the camera could crop: the driver sets no ROI.
-            self._pixels_setting(WIDTH, "Width"),
-            self._pixels_setting(HEIGHT, "Height"),
-            self._pixels_setting(SENSOR_WIDTH, "SensorWidth"),
-            self._pixels_setting(SENSOR_HEIGHT, "SensorHeight"),
-            self._throughput_limit_setting(),
-            self._trigger_setting(),
-            self._read_only_number(
+            _ReadOnly(WIDTH, ("Width",), "px", integer=True),
+            _ReadOnly(HEIGHT, ("Height",), "px", integer=True),
+            _ReadOnly(SENSOR_WIDTH, ("SensorWidth",), "px", integer=True),
+            _ReadOnly(SENSOR_HEIGHT, ("SensorHeight",), "px", integer=True),
+            _ThroughputLimit(),
+            _Trigger(),
+            _ReadOnly(
                 "current_throughput",
-                "DeviceLinkCurrentThroughput",
+                ("DeviceLinkCurrentThroughput",),
                 "MB/s",
                 _BYTES_PER_MB,
                 integer=True,
             ),
-            self._resulting_frame_rate_setting(),
-        )
-        return {s.name: s for s in found if s is not None}
-
-    def _set_setting(self, name: str, value: SettingValue) -> None:
-        logger.debug("%r: %s = %r", self, name, value)
-        conn = self._connection
-        if name in (EXPOSURE_TIME, GAIN):
-            if name == EXPOSURE_TIME:
-                node, native = str(self._exposure_node), float(value) * _US_PER_S
-            elif self._gain_table:
-                # The exact factor: one a hair below it would be rounded down a step.
-                node, native = "Gain", self._gain_table[float(value)]
-            else:
-                node, native = "Gain", self._gain_to_native(float(value))
-            if node != "Gain" or not self._gain_table:
-                # Clamp, so a limit that went through the unit conversion still fits.
-                low, high = self._call(
-                    f"read the limits of {name}", lambda: conn.float_range(node)
-                )
-                native = min(max(native, low), high)
-            self._call(
-                f"set {name}",
-                lambda: conn.set_float(node, native),
-                kind=CommandRejected,
-            )
-            if name == EXPOSURE_TIME:
-                self._raise_frame_rate()
-        elif name == PIXEL_FORMAT:
-            with self._acquisition_paused():
-                self._set_enum("PixelFormat", str(value), kind=CommandRejected)
-            self._raise_frame_rate()
-        elif name == THROUGHPUT_LIMIT:
-            self._set_throughput_limit(float(value))
-            self._raise_frame_rate()
-        elif name == TRIGGER:
-            self._set_trigger(str(value))
-        else:
-            self._set_enum(name, str(value), kind=CommandRejected)
-
-    def _exposure_setting(self) -> Setting | None:
-        if self._exposure_node is None:
-            return None
-        return self._float_setting(EXPOSURE_TIME, self._exposure_node, "s", _US_PER_S)
+            _ReadOnly("resulting_frame_rate", rate_nodes, "Hz"),
+        ]
+        return {d.name: d for d in found if d is not None}
 
     def _exposure(self) -> float | None:
         """The exposure time in seconds, or None if the camera has no such node."""
-        if self._exposure_node is None:
-            return None
-        return self._read_float(self._exposure_node) / _US_PER_S
+        exposure = self._descriptors.get(EXPOSURE_TIME)
+        return None if exposure is None else exposure.current(self)
 
-    def _gain_setting(self) -> Setting | None:
-        """``gain`` in dB: a range, or on a linear-gain camera, the dB of each
-        factor it keeps, since it would round any other down unannounced."""
-        if not self._linear_gain:
-            return self._float_setting(GAIN, "Gain", "dB")
-        conn = self._connection
-        if not conn.is_readable("Gain"):
-            return None
-        writable = conn.is_writable("Gain")
-        if self._gain_table:
-            return Setting(
-                GAIN,
-                self._factor_to_gain(self._read_float("Gain")),
-                choices=tuple(self._gain_table),
-                unit="dB",
-                read_only=not writable,
-            )
-        value, (low, high) = self._call(
-            "read Gain", lambda: (conn.get_float("Gain"), conn.float_range("Gain"))
-        )
-        return Setting(
-            GAIN,
-            _factor_to_db(value),
-            minimum=_factor_to_db(low),
-            maximum=_factor_to_db(high),
-            unit="dB",
-            read_only=not writable,
-        )
+    def _gain(self) -> float | None:
+        """The gain in dB, or None if the camera has no ``Gain`` node."""
+        gain = self._descriptors.get(GAIN)
+        return None if gain is None else gain.current(self)
 
-    def _read_gain_table(self) -> dict[float, float]:
+    def _read_gain_steps(self) -> dict[float, float]:
+        """On a linear-gain camera, the dB of each factor it keeps, to that factor."""
         conn = self._connection
         if not conn.is_readable("Gain"):
             return {}
@@ -814,22 +774,6 @@ class GenICamCamera(FrameCamera):
             )
             return {}
         return {_factor_to_db(f): f for f in factors}
-
-    def _factor_to_gain(self, factor: float) -> float:
-        """A linear-gain camera's factor as the dB it's offered as."""
-        if not self._gain_table:
-            return _factor_to_db(factor)
-        return min(self._gain_table, key=lambda db: abs(self._gain_table[db] - factor))
-
-    def _gain_to_native(self, db: float) -> float:
-        return 10 ** (db / 20) if self._linear_gain else db
-
-    def _gain(self) -> float | None:
-        """The gain in dB, or None if the camera has no ``Gain`` node."""
-        native = self._read_optional_float("Gain")
-        if native is None or not self._linear_gain:
-            return native
-        return self._factor_to_gain(native)
 
     def _raise_frame_rate(self) -> None:
         """Set ``AcquisitionFrameRate`` to its maximum on a camera that slows
@@ -853,163 +797,6 @@ class GenICamCamera(FrameCamera):
                 self._call(f"set {node}", lambda: conn.set_float(node, high))
         except DeviceError as exc:
             logger.warning("%s", exc)
-
-    def _resulting_frame_rate_setting(self) -> Setting | None:
-        found = self._read_only_number(
-            "resulting_frame_rate", "AcquisitionResultingFrameRate", "Hz"
-        )
-        if found is not None or not self._self_slowing:
-            return found
-        # Without the SFNC node, the rate such a camera lowered itself to is the
-        # rate it runs at (the IDS U3-36PxXCP has only AcquisitionFrameRate).
-        return self._read_only_number(
-            "resulting_frame_rate", "AcquisitionFrameRate", "Hz"
-        )
-
-    def _throughput_limit_setting(self) -> Setting | None:
-        conn = self._connection
-        node = "DeviceLinkThroughputLimit"
-        if not conn.is_readable(node):
-            return None
-        value, (low, high, inc) = self._call(
-            f"read {node}", lambda: (conn.get_int(node), conn.int_range(node))
-        )
-        return Setting(
-            THROUGHPUT_LIMIT,
-            # None while a limit mode turns the limit off; writing turns it on.
-            value / _BYTES_PER_MB if self._throughput_limit_active() else None,
-            minimum=low / _BYTES_PER_MB,
-            maximum=_snap(high, low, high, inc) / _BYTES_PER_MB,
-            step=inc / _BYTES_PER_MB,
-            unit="MB/s",
-        )
-
-    def _throughput_limit_active(self) -> bool:
-        if not self._connection.is_readable("DeviceLinkThroughputLimitMode"):
-            return True
-        return self._read_enum("DeviceLinkThroughputLimitMode") == "On"
-
-    def _set_throughput_limit(self, mb_per_s: float) -> None:
-        conn = self._connection
-        node = "DeviceLinkThroughputLimit"
-        if not self._throughput_limit_active():
-            self._set_enum("DeviceLinkThroughputLimitMode", "On", kind=CommandRejected)
-        low, high, inc = self._call(
-            f"read the limits of {node}", lambda: conn.int_range(node)
-        )
-        native = _snap(mb_per_s * _BYTES_PER_MB, low, high, inc)
-
-        def write() -> None:
-            self._call(
-                f"set {node} to {native} B/s",
-                lambda: conn.set_int(node, native),
-                kind=CommandRejected,
-            )
-
-        if conn.is_writable(node):
-            write()
-            return
-        # Some cameras may only take it while stopped (unverified; spinnaker.md).
-        with self._acquisition_paused():
-            if not conn.is_writable(node):
-                raise CommandRejected(f"{self!r} won't accept {node}, even stopped")
-            write()
-
-    def _trigger_setting(self) -> Setting | None:
-        conn = self._connection
-        if not (conn.is_readable("TriggerMode") and conn.is_readable("TriggerSource")):
-            return None
-        if not conn.has("TriggerSoftware"):
-            return None
-        value: str | None = None
-        if self._read_enum("TriggerMode") == "Off":
-            value = "Off"
-        elif self._read_enum("TriggerSource") == "Software" and (
-            self._trigger_selector() in (None, "FrameStart")
-        ):
-            value = "Software"
-        # Any other state (e.g. a hardware line) reads None; writing leaves it.
-        return Setting(TRIGGER, value, choices=_TRIGGER_MODES)
-
-    def _trigger_selector(self) -> str | None:
-        if not self._connection.is_readable("TriggerSelector"):
-            return None
-        return self._read_enum("TriggerSelector")
-
-    def _set_trigger(self, value: str) -> None:
-        # TriggerSource is only writable while TriggerMode is Off (Spinnaker's
-        # Trigger example); the mode itself is switched with acquisition stopped.
-        with self._acquisition_paused():
-            self._set_enum("TriggerMode", "Off", kind=CommandRejected)
-            self._software_trigger = False
-            self._fired_at = None
-            if value == "Software":
-                if self._trigger_selector() not in (None, "FrameStart"):
-                    self._set_enum(
-                        "TriggerSelector", "FrameStart", kind=CommandRejected
-                    )
-                self._set_enum("TriggerSource", "Software", kind=CommandRejected)
-                self._set_enum("TriggerMode", "On", kind=CommandRejected)
-                self._software_trigger = True
-
-    def _read_only_number(
-        self,
-        name: str,
-        node: str,
-        unit: str,
-        scale: float = 1.0,
-        *,
-        integer: bool = False,
-    ) -> Setting | None:
-        conn = self._connection
-        if not conn.is_readable(node):
-            return None
-        read = conn.get_int if integer else conn.get_float
-        value = self._call(f"read {node}", lambda: read(node))
-        return Setting(name, float(value) / scale, unit=unit, read_only=True)
-
-    def _pixels_setting(self, name: str, node: str) -> Setting | None:
-        conn = self._connection
-        if not conn.is_readable(node):
-            return None
-        value = self._call(f"read {node}", lambda: conn.get_int(node))
-        return Setting(name, value, unit="px", read_only=True)
-
-    def _float_setting(
-        self, name: str, node: str, unit: str, scale: float = 1.0
-    ) -> Setting | None:
-        conn = self._connection
-        if not conn.is_readable(node):
-            return None
-        value, (low, high) = self._call(
-            f"read {node}", lambda: (conn.get_float(node), conn.float_range(node))
-        )
-        return Setting(
-            name,
-            value / scale,
-            minimum=low / scale,
-            maximum=high / scale,
-            unit=unit,
-            read_only=not conn.is_writable(node),
-        )
-
-    def _enum_setting(
-        self,
-        node: str,
-        supported: Iterable[str],
-        *,
-        name: str | None = None,
-        writable: bool = False,
-    ) -> Setting | None:
-        conn = self._connection
-        if not conn.is_readable(node):
-            return None
-        return Setting(
-            name or node,
-            self._read_enum(node),
-            choices=self._enum_choices(node, supported),
-            read_only=not (writable or conn.is_writable(node)),
-        )
 
     def _capture_frame(self, not_before: datetime | None, timeout: float) -> Frame:
         return self._grab(not_before, timeout)
@@ -1298,6 +1085,317 @@ class GenICamCamera(FrameCamera):
         self._call(
             f"set {name} to {symbol}", lambda: conn.set_enum(name, symbol), kind=kind
         )
+
+
+# --- Settings ----------------------------------------------------------------
+
+
+class _Descriptor(Protocol):
+    """How one setting is read from and written to a camera's nodes."""
+
+    @property
+    def name(self) -> str: ...
+
+    def read(self, camera: GenICamCamera) -> Setting | None:
+        """The setting now, or None if the camera lacks it."""
+
+    def write(self, camera: GenICamCamera, value: SettingValue) -> None:
+        """Write a value `Setting.validate` has accepted."""
+
+    def current(self, camera: GenICamCamera) -> float | None:
+        """Just the value, for frame metadata (exposure and gain only)."""
+
+
+@dataclass(frozen=True)
+class _Float:
+    """A float node, offered in its own unit: the node holds value × scale."""
+
+    name: str
+    node: str
+    unit: str
+    scale: float = 1.0
+    # Whether a write can move a self-slowing camera's frame-rate cap.
+    moves_rate: bool = False
+
+    def read(self, camera: GenICamCamera) -> Setting | None:
+        conn, node = camera._connection, self.node
+        if not conn.is_readable(node):
+            return None
+        value, (low, high) = camera._call(
+            f"read {node}", lambda: (conn.get_float(node), conn.float_range(node))
+        )
+        return Setting(
+            self.name,
+            value / self.scale,
+            minimum=low / self.scale,
+            maximum=high / self.scale,
+            unit=self.unit,
+            read_only=not conn.is_writable(node),
+        )
+
+    def write(self, camera: GenICamCamera, value: SettingValue) -> None:
+        conn, node = camera._connection, self.node
+        low, high = camera._call(
+            f"read the limits of {self.name}", lambda: conn.float_range(node)
+        )
+        # Clamp, so a limit that went through the unit conversion still fits.
+        native = min(max(float(value) * self.scale, low), high)
+        camera._call(
+            f"set {self.name}",
+            lambda: conn.set_float(node, native),
+            kind=CommandRejected,
+        )
+        if self.moves_rate:
+            camera._raise_frame_rate()
+
+    def current(self, camera: GenICamCamera) -> float | None:
+        native = camera._read_optional_float(self.node)
+        return None if native is None else native / self.scale
+
+
+@dataclass(frozen=True)
+class _LinearGain:
+    """``gain`` in dB on a camera whose ``Gain`` node is a factor."""
+
+    name: str = GAIN
+
+    def read(self, camera: GenICamCamera) -> Setting | None:
+        conn = camera._connection
+        if not conn.is_readable("Gain"):
+            return None
+        value, (low, high) = camera._call(
+            "read Gain", lambda: (conn.get_float("Gain"), conn.float_range("Gain"))
+        )
+        return Setting(
+            GAIN,
+            _factor_to_db(value),
+            minimum=_factor_to_db(low),
+            maximum=_factor_to_db(high),
+            unit="dB",
+            read_only=not conn.is_writable("Gain"),
+        )
+
+    def write(self, camera: GenICamCamera, value: SettingValue) -> None:
+        conn = camera._connection
+        low, high = camera._call(
+            "read the limits of gain", lambda: conn.float_range("Gain")
+        )
+        factor = min(max(10 ** (float(value) / 20), low), high)
+        camera._call(
+            "set gain", lambda: conn.set_float("Gain", factor), kind=CommandRejected
+        )
+
+    def current(self, camera: GenICamCamera) -> float | None:
+        factor = camera._read_optional_float("Gain")
+        return None if factor is None else _factor_to_db(factor)
+
+
+@dataclass(frozen=True)
+class _GainSteps:
+    """``gain`` on a linear-gain camera that keeps only some factors and rounds
+    any other down unannounced, so it's offered as the dB of each."""
+
+    steps: Mapping[float, float]  # dB to factor
+    name: str = GAIN
+
+    def read(self, camera: GenICamCamera) -> Setting | None:
+        conn = camera._connection
+        if not conn.is_readable("Gain"):
+            return None
+        return Setting(
+            GAIN,
+            self._db(camera._read_float("Gain")),
+            choices=tuple(self.steps),
+            unit="dB",
+            read_only=not conn.is_writable("Gain"),
+        )
+
+    def write(self, camera: GenICamCamera, value: SettingValue) -> None:
+        conn = camera._connection
+        # The exact factor: one a hair below it would be rounded down a step.
+        factor = self.steps[float(value)]
+        camera._call(
+            "set gain", lambda: conn.set_float("Gain", factor), kind=CommandRejected
+        )
+
+    def current(self, camera: GenICamCamera) -> float | None:
+        factor = camera._read_optional_float("Gain")
+        return None if factor is None else self._db(factor)
+
+    def _db(self, factor: float) -> float:
+        return min(self.steps, key=lambda db: abs(self.steps[db] - factor))
+
+
+@dataclass(frozen=True)
+class _Enum:
+    """An enumeration node, offering the entries in ``supported``."""
+
+    name: str
+    node: str
+    supported: Iterable[str]
+    # Written with acquisition paused, since the camera only takes it stopped.
+    paused: bool = False
+
+    def read(self, camera: GenICamCamera) -> Setting | None:
+        conn = camera._connection
+        if not conn.is_readable(self.node):
+            return None
+        return Setting(
+            self.name,
+            camera._read_enum(self.node),
+            choices=camera._enum_choices(self.node, self.supported),
+            read_only=not (self.paused or conn.is_writable(self.node)),
+        )
+
+    def write(self, camera: GenICamCamera, value: SettingValue) -> None:
+        if not self.paused:
+            camera._set_enum(self.node, str(value), kind=CommandRejected)
+            return
+        with camera._acquisition_paused():
+            camera._set_enum(self.node, str(value), kind=CommandRejected)
+        camera._raise_frame_rate()
+
+    def current(self, camera: GenICamCamera) -> float | None:
+        return None
+
+
+@dataclass(frozen=True)
+class _ReadOnly:
+    """A number read from the first of ``nodes`` the camera can read."""
+
+    name: str
+    nodes: tuple[str, ...]
+    unit: str
+    scale: float = 1.0
+    integer: bool = False
+
+    def read(self, camera: GenICamCamera) -> Setting | None:
+        conn = camera._connection
+        node = next((n for n in self.nodes if conn.is_readable(n)), None)
+        if node is None:
+            return None
+        if self.integer:
+            value: float = camera._call(f"read {node}", lambda: conn.get_int(node))
+        else:
+            value = camera._read_float(node)
+        if self.scale != 1.0:
+            value /= self.scale
+        return Setting(self.name, value, unit=self.unit, read_only=True)
+
+    def write(self, camera: GenICamCamera, value: SettingValue) -> None:
+        raise AssertionError(f"{self.name} is read-only")
+
+    def current(self, camera: GenICamCamera) -> float | None:
+        return None
+
+
+@dataclass(frozen=True)
+class _ThroughputLimit:
+    """The link's throughput limit in MB/s; ``None`` while a mode turns it off."""
+
+    name: str = THROUGHPUT_LIMIT
+    node: str = "DeviceLinkThroughputLimit"
+    mode: str = "DeviceLinkThroughputLimitMode"
+
+    def read(self, camera: GenICamCamera) -> Setting | None:
+        conn, node = camera._connection, self.node
+        if not conn.is_readable(node):
+            return None
+        value, (low, high, inc) = camera._call(
+            f"read {node}", lambda: (conn.get_int(node), conn.int_range(node))
+        )
+        return Setting(
+            self.name,
+            # Writing a value turns the limit on.
+            value / _BYTES_PER_MB if self._active(camera) else None,
+            minimum=low / _BYTES_PER_MB,
+            maximum=_snap(high, low, high, inc) / _BYTES_PER_MB,
+            step=inc / _BYTES_PER_MB,
+            unit="MB/s",
+        )
+
+    def write(self, camera: GenICamCamera, value: SettingValue) -> None:
+        conn, node = camera._connection, self.node
+        if not self._active(camera):
+            camera._set_enum(self.mode, "On", kind=CommandRejected)
+        low, high, inc = camera._call(
+            f"read the limits of {node}", lambda: conn.int_range(node)
+        )
+        native = _snap(float(value) * _BYTES_PER_MB, low, high, inc)
+
+        def write() -> None:
+            camera._call(
+                f"set {node} to {native} B/s",
+                lambda: conn.set_int(node, native),
+                kind=CommandRejected,
+            )
+
+        if conn.is_writable(node):
+            write()
+        else:
+            # Some cameras may only take it while stopped (unverified; spinnaker.md).
+            with camera._acquisition_paused():
+                if not conn.is_writable(node):
+                    raise CommandRejected(
+                        f"{camera!r} won't accept {node}, even stopped"
+                    )
+                write()
+        camera._raise_frame_rate()
+
+    def current(self, camera: GenICamCamera) -> float | None:
+        return None
+
+    def _active(self, camera: GenICamCamera) -> bool:
+        if not camera._connection.is_readable(self.mode):
+            return True
+        return camera._read_enum(self.mode) == "On"
+
+
+@dataclass(frozen=True)
+class _Trigger:
+    """``"Off"`` or ``"Software"``: whether each capture fires a software trigger."""
+
+    name: str = TRIGGER
+
+    def read(self, camera: GenICamCamera) -> Setting | None:
+        conn = camera._connection
+        if not (conn.is_readable("TriggerMode") and conn.is_readable("TriggerSource")):
+            return None
+        if not conn.has("TriggerSoftware"):
+            return None
+        value: str | None = None
+        if camera._read_enum("TriggerMode") == "Off":
+            value = "Off"
+        elif camera._read_enum("TriggerSource") == "Software" and (
+            self._selector(camera) in (None, "FrameStart")
+        ):
+            value = "Software"
+        # Any other state (e.g. a hardware line) reads None; writing leaves it.
+        return Setting(TRIGGER, value, choices=_TRIGGER_MODES)
+
+    def write(self, camera: GenICamCamera, value: SettingValue) -> None:
+        # TriggerSource is only writable while TriggerMode is Off (Spinnaker's
+        # Trigger example); the mode itself is switched with acquisition stopped.
+        with camera._acquisition_paused():
+            camera._set_enum("TriggerMode", "Off", kind=CommandRejected)
+            camera._software_trigger = False
+            camera._fired_at = None
+            if value == "Software":
+                if self._selector(camera) not in (None, "FrameStart"):
+                    camera._set_enum(
+                        "TriggerSelector", "FrameStart", kind=CommandRejected
+                    )
+                camera._set_enum("TriggerSource", "Software", kind=CommandRejected)
+                camera._set_enum("TriggerMode", "On", kind=CommandRejected)
+                camera._software_trigger = True
+
+    def current(self, camera: GenICamCamera) -> float | None:
+        return None
+
+    def _selector(self, camera: GenICamCamera) -> str | None:
+        if not camera._connection.is_readable("TriggerSelector"):
+            return None
+        return camera._read_enum("TriggerSelector")
 
 
 @dataclass(frozen=True)

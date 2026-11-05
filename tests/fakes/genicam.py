@@ -690,6 +690,8 @@ class FakeConnection:
         self.camera = camera
         self.closed = False
         self.grab_timeouts: list[float | None] = []
+        # Every node whose access, value, range or entries the core asked for.
+        self.node_reads: list[str] = []
 
     @property
     def times_arrivals(self) -> bool:
@@ -705,32 +707,41 @@ class FakeConnection:
         return self.camera.has(name)
 
     def is_readable(self, name: str) -> bool:
+        self.node_reads.append(name)
         return self.camera.access(name) in ("RW", "RO")
 
     def is_writable(self, name: str) -> bool:
+        self.node_reads.append(name)
         return self.camera.access(name) in ("RW", "WO")
 
+    def _read(self, name: str) -> Any:
+        self.node_reads.append(name)
+        return self._do(lambda: self.camera.read(name))
+
     def get_float(self, name: str) -> float:
-        return float(self._do(lambda: self.camera.read(name)))
+        return float(self._read(name))
 
     def get_int(self, name: str) -> int:
-        return int(self._do(lambda: self.camera.read(name)))
+        return int(self._read(name))
 
     def get_string(self, name: str) -> str:
-        return str(self._do(lambda: self.camera.read(name)))
+        return str(self._read(name))
 
     def get_enum(self, name: str) -> str:
-        return str(self._do(lambda: self.camera.read(name)))
+        return str(self._read(name))
 
     def float_range(self, name: str) -> tuple[float, float]:
+        self.node_reads.append(name)
         low, high = self._do(lambda: self.camera.range(name))
         return float(low), float(high)
 
     def int_range(self, name: str) -> tuple[int, int, int]:
+        self.node_reads.append(name)
         low, high, inc = self._do(lambda: self.camera.range(name))
         return int(low), int(high), int(inc)
 
     def enum_entries(self, name: str) -> tuple[str, ...]:
+        self.node_reads.append(name)
         return tuple(self._do(lambda: self.camera.entries(name)))
 
     def set_float(self, name: str, value: float) -> None:

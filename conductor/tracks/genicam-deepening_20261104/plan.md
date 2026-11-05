@@ -18,8 +18,9 @@ Move the Spinnaker tests onto the shared fake first, so the descriptor work in P
 - [x] Task 1.3: Rebuild `tests/fakes/pyspin.py` as a PySpin-shaped skin over `FakeCamera`: node pointers and casts, `IsReadable`/`IsWritable`, `CameraList`, `System` refcounting, `SpinnakerException` codes, image status. Keep the tests in `test_fake_pyspin.py` that check PySpin's own rules.
 - [x] Task 1.4: Add `TestPySpinBackend(BackendContract)`.
 - [x] Task 1.5: Delete the duplicated tests from `test_spinnaker_camera.py`. Keep the PySpin-specific ones, and keep `test_cli_spinnaker.py` passing.
-- [~] Task 1.6: Make `test_spinnaker_hardware.py` subclass `GenICamHardwareTests`, keeping only Spinnaker-specific checks. Run it on the CM3.
-  - Done in code: two Spinnaker-specific checks are kept, and the frame-rate unit check moved into `GenICamHardwareTests`. Waiting on a run on the CM3; no Spinnaker camera was attached on 2026-11-05.
+- [x] Task 1.6: Make `test_spinnaker_hardware.py` subclass `GenICamHardwareTests`, keeping only Spinnaker-specific checks. Run it on the CM3.
+  - Two Spinnaker-specific checks are kept, and the frame-rate unit check moved into `GenICamHardwareTests`. On CM3 20305122 (2026-11-05): 26 passed, 1 skipped (the untimed-frames check).
+  - The shared `test_a_second_open_of_the_same_camera_is_busy` found a driver bug: a second open in the same process passed `Init()`, failed at `BeginAcquisition()` (-1004), and its cleanup de-initialized the first open's camera. Fixed by checking `IsInitialized()` first; `BackendContract` now covers it for every backend.
 
 ### Inventory (Task 1.1)
 
@@ -62,7 +63,8 @@ Move the Spinnaker tests onto the shared fake first, so the descriptor work in P
 
 ### Verification
 
-- [ ] The full suite passes on every supported Python version. The hardware suite passes on the CM3.
+- [x] The full suite passes on every supported Python version. The hardware suite passes on the CM3.
+  - Locally on 3.15 (1914 passed) and 3.12 with PySpin (1963 passed); CI covers the other versions on push.
 
 ## Phase 2: Setting descriptors
 

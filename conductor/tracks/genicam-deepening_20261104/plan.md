@@ -17,8 +17,8 @@ Move the Spinnaker tests onto the shared fake first, so the descriptor work in P
 - [x] Task 1.2: Grow `fakes.genicam.FakeCamera` with anything from 1.1 that is GenICam behaviour rather than PySpin behaviour, with tests in `test_fake_genicam.py`.
 - [x] Task 1.3: Rebuild `tests/fakes/pyspin.py` as a PySpin-shaped skin over `FakeCamera`: node pointers and casts, `IsReadable`/`IsWritable`, `CameraList`, `System` refcounting, `SpinnakerException` codes, image status. Keep the tests in `test_fake_pyspin.py` that check PySpin's own rules.
 - [x] Task 1.4: Add `TestPySpinBackend(BackendContract)`.
-- [~] Task 1.5: Delete the duplicated tests from `test_spinnaker_camera.py`. Keep the PySpin-specific ones, and keep `test_cli_spinnaker.py` passing.
-- [ ] Task 1.6: Make `test_spinnaker_hardware.py` subclass `GenICamHardwareTests`, keeping only Spinnaker-specific checks. Run it on the CM3.
+- [x] Task 1.5: Delete the duplicated tests from `test_spinnaker_camera.py`. Keep the PySpin-specific ones, and keep `test_cli_spinnaker.py` passing.
+- [~] Task 1.6: Make `test_spinnaker_hardware.py` subclass `GenICamHardwareTests`, keeping only Spinnaker-specific checks. Run it on the CM3.
 
 ### Inventory (Task 1.1)
 

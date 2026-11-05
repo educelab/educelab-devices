@@ -269,6 +269,8 @@ class FakeCamera:
         # Triggers to ignore before answering again, as a real camera ignores
         # one it isn't ready for.
         self.ignore_triggers = 0
+        # Triggers to ignore by number, counting from 1.
+        self.ignored_trigger_calls: set[int] = set()
         self.ignored_while_busy = 0
         self.respond_to_triggers = True
         # Operations to fail, e.g. {"write Gain": FakeCameraError(...)}. Keys are
@@ -624,6 +626,8 @@ class FakeCamera:
             self.ignored_while_busy += 1
         elif self.ignore_triggers:
             self.ignore_triggers -= 1
+        elif self.trigger_calls in self.ignored_trigger_calls:
+            pass
         elif self.respond_to_triggers:
             self.pending_triggers.append(self.device_time_ns())
 

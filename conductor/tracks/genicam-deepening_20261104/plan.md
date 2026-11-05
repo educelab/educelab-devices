@@ -107,16 +107,28 @@ Move the Spinnaker tests onto the shared fake first, so the descriptor work in P
 
 ### Tasks
 
-- [ ] Task 3.1: Export `GenICamCamera`, `TRIGGER`, `THROUGHPUT_LIMIT` and `host_time` from `educelab.devices.cameras`, and switch `app/_capture.py` to them.
-- [ ] Task 3.2: Document the GenICam frame metadata keys in `docs/guide.md`.
-- [ ] Task 3.3: Give `Setting.nearest()` a way to refuse values more than half a step past either end, with tests. Use it in `_capture.py`.
-- [ ] Task 3.4: Remove `aravis.py`'s import of `_EXPOSURE_NODES`. Hand the drain what it needs from the core through the seam, with a `BackendContract` test if the seam changes.
+- [x] Task 3.1: Export `GenICamCamera`, `TRIGGER`, `THROUGHPUT_LIMIT` and `host_time` from `educelab.devices.cameras`, and switch `app/_capture.py` to them.
+- [x] Task 3.2: Document the GenICam frame metadata keys in `docs/guide.md`.
+- [x] Task 3.3: Give `Setting.nearest()` a way to refuse values more than half a step past either end, with tests. Use it in `_capture.py`.
+- [x] Task 3.4: Remove `aravis.py`'s import of `_EXPOSURE_NODES`. Hand the drain what it needs from the core through the seam, with a `BackendContract` test if the seam changes.
+  - `Connection.stop_acquisition()` and `close()` take `exposure_time`, which the core reads through its exposure descriptor. Aravis drains for it; after a failed start it uses the last one it was given. `BackendContract` checks every backend takes it.
 
 ### Verification
 
-- [ ] The full suite, Ruff and mypy pass.
+- [x] The full suite, Ruff and mypy pass.
+  - Locally on 3.15 (1995 passed) and 3.12 with PySpin (2044 passed). mypy has only its three earlier errors.
 
 ## Final Verification
+
+### Hardware runs owed
+
+Run together at the end of the track, with the cameras attached (`venv/`, Python 3.12, `-s`):
+
+- [ ] Aravis on the IDS: `ARAVIS_SERIAL=4110091493 venv/bin/python -m pytest -m hardware tests/test_aravis_hardware.py -s`. Checks the drain with the exposure passed through the seam (3.4).
+- [ ] Aravis on a CM3: the same with `ARAVIS_SERIAL=0135BAD4`. The CM3 is the camera whose endpoint wedged when its stream was dropped mid-frame.
+- [ ] Spinnaker and GenTL on a CM3 (`SPINNAKER_SERIAL` / `GENTL_SERIAL=20305122`), for the seam's new signatures (3.4).
+- [ ] `el-devices genicam --backend aravis --serial 4110091493 --frames 5 --gain 6` rounds to 6.021 dB, and `--gain 30` is refused (3.3).
+
 
 - [ ] All acceptance criteria met
 - [ ] Tests passing

@@ -297,6 +297,8 @@ Code that searches for a value, like automatic exposure calibration, should use
 allowed value, breaking ties toward the lower one. `direction="down"` picks the largest
 allowed value not above `value`, and `direction="up"` the smallest not below it. A value
 outside the allowed range gives the closest allowed value at that end of the range.
+With `strict=True`, a value more than half a step past either end raises `ValueError`
+instead, for rounding a value someone typed without quietly replacing one far off.
 
 A `Setting` is a snapshot. What one setting accepts can depend on others (maximum exposure
 on frame rate, shutter speeds on the exposure mode), so read it again after changing

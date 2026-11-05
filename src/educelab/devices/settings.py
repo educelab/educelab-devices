@@ -78,7 +78,9 @@ class Setting:
             raise ValueError(f"{self.name}={value} is above {self.maximum}")
         return value
 
-    def nearest(self, value: float, direction: Rounding = "nearest") -> float:
+    def nearest(
+        self, value: float, direction: Rounding = "nearest", *, strict: bool = False
+    ) -> float:
         """The allowed value closest to ``value``.
 
         Allowed values are the ``choices`` if there are any, otherwise
@@ -91,10 +93,14 @@ class Setting:
                 value not above ``value``, and ``"up"`` the smallest not below
                 it. In every direction a value outside the allowed range gives
                 the closest end of the range, so the result is always allowed.
+            strict: Refuse a value more than half a step past either end of
+                the allowed values (any value past a range without a step),
+                rather than giving that end.
 
         Raises:
             TypeError: The setting isn't numeric.
-            ValueError: ``direction`` is unknown.
+            ValueError: ``direction`` is unknown, or ``strict`` refused
+                ``value``.
         """
         if direction not in ("nearest", "down", "up"):
             raise ValueError(
@@ -108,13 +114,20 @@ class Setting:
             )
             if not allowed:
                 raise TypeError(f"setting {self.name!r} has no numeric choices")
+            if strict:
+                below = (allowed[1] - allowed[0]) / 2 if len(allowed) > 1 else 0.0
+                above = (allowed[-1] - allowed[-2]) / 2 if len(allowed) > 1 else 0.0
+                self._check_reach(value, allowed[0], allowed[-1], below, above)
             return _pick(allowed, value, direction)
         low, high = self.minimum, self.maximum
+        base = low if low is not None else 0.0
+        if self.step and high is not None:
+            # The top of the range may be off the grid.
+            high = base + math.floor((high - base) / self.step + 1e-9) * self.step
+        if strict:
+            half = (self.step or 0.0) / 2
+            self._check_reach(value, low, high, half, half)
         if self.step:
-            base = low if low is not None else 0.0
-            if high is not None:
-                # The top of the range may be off the grid.
-                high = base + math.floor((high - base) / self.step + 1e-9) * self.step
             # Tolerance so a value already on the grid isn't pushed off it by
             # floating-point error in the division.
             k = (value - base) / self.step
@@ -126,6 +139,33 @@ class Setting:
         if high is not None:
             value = min(value, high)
         return value
+
+    def _check_reach(
+        self,
+        value: float,
+        low: float | None,
+        high: float | None,
+        below: float,
+        above: float,
+    ) -> None:
+        """Raise if ``value`` is more than ``below`` under ``low`` or ``above``
+        over ``high``."""
+
+        def past(limit: float) -> bool:
+            return not math.isclose(value, limit, rel_tol=1e-9, abs_tol=1e-12)
+
+        too_low = low is not None and value < low - below and past(low - below)
+        too_high = high is not None and value > high + above and past(high + above)
+        if not (too_low or too_high):
+            return
+        unit = f" {self.unit}" if self.unit else ""
+        if low is not None and high is not None:
+            where = f"outside {low:.4g} to {high:.4g}"
+        elif too_low:
+            where = f"below {low:.4g}"
+        else:
+            where = f"above {high:.4g}"
+        raise ValueError(f"{self.name} {value:.4g}{unit} is {where}{unit}")
 
 
 def _pick(allowed: list[float], value: float, direction: Rounding) -> float:

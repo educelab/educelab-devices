@@ -241,16 +241,12 @@ def _set_up(camera: "GenICamCamera", args: argparse.Namespace) -> str | None:
         if "GainAuto" in settings:
             camera.set_setting("GainAuto", "Off")
         gain = args.gain
-        if choices := settings[GAIN].choices:
-            # Some cameras keep only certain gains (the IDS U3-36PxXCP). Round to
-            # one, but refuse a gain more than half a step past either end.
-            gains = sorted(float(c) for c in choices)
-            low = gains[0] - (gains[1] - gains[0]) / 2
-            high = gains[-1] + (gains[-1] - gains[-2]) / 2
-            if not low <= gain <= high:
-                span = f"{gains[0]:.4g} to {gains[-1]:.4g} dB"
-                return f"{serial}: gain {gain:g} dB is outside {span}"
-            gain = settings[GAIN].nearest(gain)
+        if settings[GAIN].choices:
+            # Some cameras keep only certain gains (the IDS U3-36PxXCP): round to one.
+            try:
+                gain = settings[GAIN].nearest(gain, strict=True)
+            except ValueError as exc:
+                return f"{serial}: {exc}"
         if problem := _apply(camera, GAIN, gain):
             return problem
     return None

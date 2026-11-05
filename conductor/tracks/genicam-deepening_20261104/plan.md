@@ -19,6 +19,7 @@ Move the Spinnaker tests onto the shared fake first, so the descriptor work in P
 - [x] Task 1.4: Add `TestPySpinBackend(BackendContract)`.
 - [x] Task 1.5: Delete the duplicated tests from `test_spinnaker_camera.py`. Keep the PySpin-specific ones, and keep `test_cli_spinnaker.py` passing.
 - [~] Task 1.6: Make `test_spinnaker_hardware.py` subclass `GenICamHardwareTests`, keeping only Spinnaker-specific checks. Run it on the CM3.
+  - Done in code: two Spinnaker-specific checks are kept, and the frame-rate unit check moved into `GenICamHardwareTests`. Waiting on a run on the CM3; no Spinnaker camera was attached on 2026-11-05.
 
 ### Inventory (Task 1.1)
 

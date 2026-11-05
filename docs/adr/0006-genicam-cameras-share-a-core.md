@@ -4,7 +4,7 @@ Every GenICam frame camera, whatever the library that reaches it, is driven by o
 
 There is one public driver class per backend (`SpinnakerCamera`, `AravisCamera`, `GenTLCamera`), each in its own module with its library imported lazily. The GenTL backend uses EMVA's `genicam` package directly, not Harvesters. Optional features (software trigger, throughput limit, timestamp latch, auto modes, resulting frame rate) are probed when the camera opens, and settings for features a camera lacks are left out.
 
-The Spinnaker driver keeps its public API and its tests unchanged. It becomes the PySpin backend plus the shared core.
+The Spinnaker driver keeps its public API. It becomes the PySpin backend plus the shared core. Its tests stayed unchanged through the migration to keep it safe; afterwards they move onto the shared fake and the backend and hardware contracts, like the other backends' tests (amended 2026-11-04).
 
 ## Considered Options
 

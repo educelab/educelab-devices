@@ -38,6 +38,10 @@ Planned tracks, in order. All are registered in [tracks.md](./tracks.md).
 | 9 | Docs site and machine setup | Setup guides per OS, shipped udev/usbfs files, `el-devices setup check`; MkDocs Material + mkdocstrings on GitHub Pages. After USB3 Vision |
 | 10 | gphoto2 single-setting reads | `setting()`/`set_setting()` read one widget instead of the whole config tree (2.6–2.8 s on the Z7 II); reported from pgs-scan |
 | 11 | Camera preview mode | Explicit preview state with region and size (ADR 0007); hardware ROI/binning on GenICam, live-view zoom on gphoto2; hardware discovery first |
+| 12 | GenICam deepening | Spinnaker fake onto the shared GenICam fake; per-setting read/write descriptors; public `GenICamCamera`. From the 2026-11-04 architecture review. Before preview mode's Phase 2 |
+| 13 | CLI errors and missing SDKs | `MissingDependency`/`DependencyFailed` as `DeviceError`s; one-line messages; `cli.main` owns exit codes; terse `discover` |
+| 14 | Lab board connection and GRBL link | Shared ADR 0004 open sequence for MISHA and XLC2; GRBL protocol out of the X-Carve stage; Stage base can lose homing |
+| 15 | Second roles and stage helpers | One open rule for the halo and the focus drive; typed Foldio transport; Axis offset and clamp helpers |
 
 ## Out of scope
 

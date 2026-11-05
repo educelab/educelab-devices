@@ -9,6 +9,16 @@
 
 Discovery on the hardware comes first, so each driver's preview path is chosen against known behavior. Next, the `Camera` API, the contract and a host-side implementation in every driver land together, which keeps the suite green. Hardware ROI and binning on GenICam and zoom on gphoto2 follow. Docs, the CLI and hardware checks come last.
 
+## Design inputs from the architecture review (2026-11-04)
+
+Phase 2 waits for the GenICam deepening track: the Spinnaker fake moves onto `fakes.genicam.FakeCamera`, and the core's settings become per-setting read/write descriptors. ROI and binning are then simulated in one fake, and the capture geometry has one place to live. Fold these into Phases 2 and 3:
+
+- The `Camera` base owns the preview state and its guards, not each driver. `Device.close()` runs `_close()` then `_reset_state()` (`device.py:143-147`), so the base needs a `_stop_preview` hook that runs before `_close()`. Otherwise every driver stops preview in its own `_close()`, as gphoto2 already does for live view (`gphoto2.py:342-350`).
+- The core's canonical `width`/`height` read the live `Width`/`Height` nodes (`_genicam.py:706-710`), so they'd report preview geometry once preview writes ROI. Keep an explicit capture-geometry record in the core instead (Task 3.3).
+- `_configure` (`_genicam.py:560-584`) doesn't restore the full-sensor ROI on open, and a camera keeps its ROI until it's power-cycled. A preview interrupted by a crash would leave the next session capturing a crop.
+- `_grab` (`_genicam.py:1028-1137`) tracks free-run versus software-trigger through loose flags (`_software_trigger`, `_fired_at`, `_fires`, `_trigger_turnaround`, `_delivered`, `_last_frame_at`). Make the acquisition mode explicit before preview adds a third (Task 2.5).
+- gphoto2's latent `_live_view_tried`/`_live_view` (`gphoto2.py:170-172, 440-483`) become the explicit start/stop. Making `liveviewzoomarea`/`liveviewsize` read-only during preview (Task 4.2) needs the settings conversion to see the preview state.
+
 ## Phase 1: Hardware discovery
 
 Use throwaway scripts in a scratch directory, not package code. Each finding goes into the camera's hardware doc, marked verified, assumed or unknown.

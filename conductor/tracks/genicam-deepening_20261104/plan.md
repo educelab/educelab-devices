@@ -86,13 +86,22 @@ Move the Spinnaker tests onto the shared fake first, so the descriptor work in P
     | IDS 4110091493 | Aravis | 36.9 ms | 35.1 ms | 139.4 ms |
 
   - Spinnaker's node map (and its GenTL producer) answers reads without going to the camera, so descriptors can't save much there; Aravis reads the camera each time.
-- [ ] Task 2.3: Write failing tests on `FakeBackend`: `setting(name)` and `set_setting(name, …)` read only that setting's nodes. `setting(name)` equals `settings()[name]` for every setting. An unknown name raises `KeyError`.
-- [ ] Task 2.4: Build the descriptors. Make `_settings()`, `_setting(name)` and `_set_setting()` lookups, and remove the if/elif and the duplicated scaling.
-- [ ] Task 2.5: Measure again, and record both times in `docs/hardware/spinnaker.md` and `docs/hardware/ids-u3-36p0xcp.md`.
+- [x] Task 2.3: Write failing tests on `FakeBackend`: `setting(name)` and `set_setting(name, …)` read only that setting's nodes. `setting(name)` equals `settings()[name]` for every setting. An unknown name raises `KeyError`.
+- [x] Task 2.4: Build the descriptors. Make `_settings()`, `_setting(name)` and `_set_setting()` lookups, and remove the if/elif and the duplicated scaling.
+- [x] Task 2.5: Measure again, and record both times in `docs/hardware/spinnaker.md` and `docs/hardware/ids-u3-36p0xcp.md`.
+  - After, on 2026-11-05 (every GenICam hardware suite passed on both cameras):
+
+    | Camera | Backend | `setting()` before → after | `set_setting()` before → after |
+    |---|---|---|---|
+    | CM3 20305122 | Spinnaker | 1.0 → 0.5 ms | 1.7 → 1.1 ms |
+    | CM3 20305122 | GenTL | 0.9 → 0.4 ms | 1.6 → 1.1 ms |
+    | CM3 0135BAD4 | Aravis | 31.8 → 3.9 ms | 36.4 → 7.2 ms |
+    | IDS 4110091493 | Aravis | 35.1 → 3.3 ms | 139.4 → 11.1 ms |
 
 ### Verification
 
-- [ ] The core, backend and contract tests pass, unchanged except for the new tests.
+- [x] The core, backend and contract tests pass, unchanged except for the new tests.
+  - Locally on 3.15 (1982 passed) and 3.12 with PySpin (2031 passed). Ruff clean; mypy has only its three earlier errors.
 
 ## Phase 3: Public surface and leaks
 

@@ -10,6 +10,7 @@ with ``-s``.
 """
 
 import os
+import statistics
 import threading
 import time
 from datetime import UTC, datetime, timedelta
@@ -124,6 +125,32 @@ class GenICamHardwareTests:
         print(f"discovered: {found.vendor!r} {found.model!r}")
         print(f"opened: {opened.vendor!r} {opened.model!r}")
         assert (opened.vendor, opened.model) == (found.vendor, found.model)
+
+    def test_time_to_read_and_write_one_setting(self, restore):
+        # Prints the times the hardware docs record (Settings).
+        camera = restore
+        if "ExposureAuto" in camera.settings():
+            camera.set_setting("ExposureAuto", "Off")
+        exposure = camera.setting(EXPOSURE_TIME)
+        low = max(exposure.minimum or 0.0, exposure.value * 0.9)
+        values = (exposure.value, low)
+
+        def median_ms(fn) -> float:
+            times = []
+            for i in range(20):
+                started = time.perf_counter()
+                fn(i)
+                times.append(time.perf_counter() - started)
+            return statistics.median(times) * 1000
+
+        every = median_ms(lambda i: camera.settings())
+        one = median_ms(lambda i: camera.setting(EXPOSURE_TIME))
+        write = median_ms(lambda i: camera.set_setting(EXPOSURE_TIME, values[i % 2]))
+        print(
+            f"median of 20: settings() {every:.1f} ms, setting() {one:.1f} ms, "
+            f"set_setting() {write:.1f} ms"
+        )
+        assert camera.setting(EXPOSURE_TIME).value == pytest.approx(low, rel=0.01)
 
     def test_settings_the_camera_offers(self, camera):
         # Records which optional features this model has (usb3-vision.md).

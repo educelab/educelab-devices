@@ -3,6 +3,7 @@
 import math
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import ClassVar
 
 import numpy as np
@@ -17,15 +18,13 @@ from educelab.devices.cameras import (
     PIXEL_FORMAT,
     SENSOR_HEIGHT,
     SENSOR_WIDTH,
-    WIDTH,
-    _genicam,
-)
-from educelab.devices.cameras._genicam import (
     THROUGHPUT_LIMIT,
     TRIGGER,
-    BufferStatus,
+    WIDTH,
     GenICamCamera,
+    _genicam,
 )
+from educelab.devices.cameras._genicam import BufferStatus
 from educelab.devices.errors import (
     CommandRejected,
     DeviceBusy,
@@ -1377,3 +1376,21 @@ class TestGenICamCameraContractSoftwareTrigger(TestGenICamCameraContract):
         with make_device() as camera:
             camera.set_setting(TRIGGER, "Software")
             yield camera
+
+
+# --- Public names -------------------------------------------------------------
+
+
+def test_the_genicam_names_callers_need_are_public():
+    from educelab.devices import cameras
+
+    for name in ("GenICamCamera", "TRIGGER", "THROUGHPUT_LIMIT", "host_time"):
+        assert name in cameras.__all__
+        assert getattr(cameras, name) is getattr(_genicam, name)
+
+
+def test_the_cli_reaches_genicam_cameras_through_public_names():
+    from educelab.devices import app
+
+    for module in Path(app.__path__[0]).glob("*.py"):
+        assert "cameras._genicam" not in module.read_text(), module.name

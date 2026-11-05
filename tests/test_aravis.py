@@ -11,8 +11,8 @@ import pytest
 
 from contracts import FrameCameraContract
 from contracts.genicam import BackendContract
-from educelab.devices.cameras import PIXEL_FORMAT, aravis
-from educelab.devices.cameras._genicam import TRIGGER, BufferStatus
+from educelab.devices.cameras import PIXEL_FORMAT, TRIGGER, aravis
+from educelab.devices.cameras._genicam import BufferStatus
 from educelab.devices.cameras.aravis import (
     ARAVIS_INSTALL_HINT,
     BUFFER_COUNT,

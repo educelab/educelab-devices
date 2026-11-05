@@ -65,6 +65,7 @@ __all__ = [
     "BufferStatus",
     "Connection",
     "GenICamCamera",
+    "host_time",
 ]
 
 logger = logging.getLogger(__name__)

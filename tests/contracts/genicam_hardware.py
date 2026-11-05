@@ -19,13 +19,16 @@ from typing import ClassVar
 import numpy as np
 import pytest
 
-from educelab.devices.cameras import EXPOSURE_TIME, HEIGHT, PIXEL_FORMAT, WIDTH
-from educelab.devices.cameras._genicam import (
-    RETRIES_BEFORE_REMEASURE,
+from educelab.devices.cameras import (
+    EXPOSURE_TIME,
+    HEIGHT,
+    PIXEL_FORMAT,
     THROUGHPUT_LIMIT,
     TRIGGER,
+    WIDTH,
     GenICamCamera,
 )
+from educelab.devices.cameras._genicam import RETRIES_BEFORE_REMEASURE
 from educelab.devices.errors import DeviceBusy, DeviceError, DeviceTimeout
 
 # Loose on purpose: these catch a broken offset or a wedged stream, not jitter.

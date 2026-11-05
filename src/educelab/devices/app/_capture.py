@@ -20,8 +20,7 @@ from typing import TYPE_CHECKING
 
 # Imported where it's used, so other subcommands don't load the drivers.
 if TYPE_CHECKING:
-    from educelab.devices.cameras import Frame, Setting
-    from educelab.devices.cameras._genicam import GenICamCamera
+    from educelab.devices.cameras import Frame, GenICamCamera, Setting
     from educelab.devices.device import DeviceInfo
     from educelab.devices.settings import SettingValue
 
@@ -199,8 +198,13 @@ def _set_up(camera: "GenICamCamera", args: argparse.Namespace) -> str | None:
     The throughput limit goes before exposure, because it lowers the frame rate,
     which raises the longest exposure the camera allows.
     """
-    from educelab.devices.cameras import EXPOSURE_TIME, GAIN, PIXEL_FORMAT
-    from educelab.devices.cameras._genicam import THROUGHPUT_LIMIT, TRIGGER
+    from educelab.devices.cameras import (
+        EXPOSURE_TIME,
+        GAIN,
+        PIXEL_FORMAT,
+        THROUGHPUT_LIMIT,
+        TRIGGER,
+    )
 
     serial = camera.info.serial_number
     if args.trigger == "software":
@@ -267,7 +271,7 @@ def _apply(camera: "GenICamCamera", name: str, value: "SettingValue") -> str | N
 
 
 def _throughput_text(settings: Mapping[str, "Setting"]) -> str:
-    from educelab.devices.cameras._genicam import THROUGHPUT_LIMIT
+    from educelab.devices.cameras import THROUGHPUT_LIMIT
 
     limit = settings.get(THROUGHPUT_LIMIT)
     if limit is None:
@@ -333,7 +337,7 @@ def _benchmark(
             _write_png(save_dir / f"{camera.info.serial_number}-{name}.png", frame)
             result.saved += 1
 
-    from educelab.devices.cameras._genicam import host_time
+    from educelab.devices.cameras import host_time
 
     print(f"Capturing {frames} frame(s) from {len(cameras)} camera(s) at once...")
     trial_ms = []

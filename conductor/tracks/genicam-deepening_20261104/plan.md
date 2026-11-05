@@ -70,8 +70,22 @@ Move the Spinnaker tests onto the shared fake first, so the descriptor work in P
 
 ### Tasks
 
-- [ ] Task 2.1: Decide the descriptor's interface: how it reads a `Setting` (or `None` when the camera lacks the feature), how it writes, and how native settings are covered without the name-equals-node fallthrough. Use design-it-twice if there's no clear winner. Record the choice here.
-- [ ] Task 2.2: Measure a `set_setting` on the CM3 and the IDS, as the baseline.
+- [x] Task 2.1: Decide the descriptor's interface: how it reads a `Setting` (or `None` when the camera lacks the feature), how it writes, and how native settings are covered without the name-equals-node fallthrough. Use design-it-twice if there's no clear winner. Record the choice here.
+  - A descriptor is a small private object with a `name`, `read(camera) -> Setting | None` (None when the camera lacks the feature) and `write(camera, value)`, taking a value `Setting.validate` has accepted. It reaches the node map through the camera's helpers (`_call`, `_set_enum`, `_acquisition_paused`, `_raise_frame_rate`).
+  - The camera builds an ordered `_descriptors` dict once, in `_configure()`. Per-camera differences are settled there: the exposure node, dB gain or the IDS's linear gain (its steps, or a factor range), and the resulting frame rate's fallback node.
+  - `_settings()` reads every descriptor, `_setting(name)` reads one (`KeyError` for an unknown name or a missing feature), and `_set_setting()` writes one. `ExposureAuto` and `GainAuto` are entries of their own, so there's no fallthrough.
+  - Rejected: a table of (reader, writer) method pairs on the camera. Fewer types, but the vendor branches would stay inside the methods.
+- [x] Task 2.2: Measure a `set_setting` on the CM3 and the IDS, as the baseline.
+  - `GenICamHardwareTests.test_time_to_read_and_write_one_setting` prints the median of 20 for `exposure_time`; the tag `genicam-settings-baseline` marks the code before descriptors. On 2026-11-05:
+
+    | Camera | Backend | `settings()` | `setting()` | `set_setting()` |
+    |---|---|---|---|---|
+    | CM3 20305122 | Spinnaker | 1.1 ms | 1.0 ms | 1.7 ms |
+    | CM3 20305122 | GenTL | 0.9 ms | 0.9 ms | 1.6 ms |
+    | CM3 0135BAD4 | Aravis | 32.6 ms | 31.8 ms | 36.4 ms |
+    | IDS 4110091493 | Aravis | 36.9 ms | 35.1 ms | 139.4 ms |
+
+  - Spinnaker's node map (and its GenTL producer) answers reads without going to the camera, so descriptors can't save much there; Aravis reads the camera each time.
 - [ ] Task 2.3: Write failing tests on `FakeBackend`: `setting(name)` and `set_setting(name, …)` read only that setting's nodes. `setting(name)` equals `settings()[name]` for every setting. An unknown name raises `KeyError`.
 - [ ] Task 2.4: Build the descriptors. Make `_settings()`, `_setting(name)` and `_set_setting()` lookups, and remove the if/elif and the duplicated scaling.
 - [ ] Task 2.5: Measure again, and record both times in `docs/hardware/spinnaker.md` and `docs/hardware/ids-u3-36p0xcp.md`.

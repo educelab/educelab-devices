@@ -21,9 +21,9 @@ from educelab.devices.cameras import (
     SENSOR_HEIGHT,
     SENSOR_WIDTH,
     WIDTH,
-    _genicam,
     spinnaker,
 )
+from educelab.devices.cameras._genicam import BufferStatus
 from educelab.devices.cameras.spinnaker import (
     THROUGHPUT_LIMIT,
     TRIGGER,
@@ -36,16 +36,14 @@ from educelab.devices.errors import (
     DeviceNotFound,
     DeviceTimeout,
 )
+from fakes.genicam import FakeCameraError
 from fakes.pyspin import (
-    SPINNAKER_IMAGE_STATUS_DATA_INCOMPLETE,
-    SPINNAKER_IMAGE_STATUS_MISSING_PACKETS,
-    SPINNAKER_IMAGE_STATUS_MISSING_TRAILER,
     CameraPtr,
-    FakeCamera,
     FakeImage,
     FakePySpin,
     FrameSpec,
     SpinnakerException,
+    flir_camera,
 )
 
 MONO = "20000001"
@@ -56,8 +54,8 @@ COLOR = "20000002"
 def pyspin():
     return FakePySpin(
         [
-            FakeCamera(MONO, "Blackfly S BFS-U3-51S5M"),
-            FakeCamera(COLOR, "Blackfly S BFS-U3-200S6C", color=True),
+            flir_camera(MONO, "Blackfly S BFS-U3-51S5M"),
+            flir_camera(COLOR, "Blackfly S BFS-U3-200S6C", color=True),
         ]
     )
 
@@ -77,7 +75,7 @@ def camera(pyspin):
 def assert_released(pyspin):
     assert pyspin.system.instances == 0
     assert pyspin.system.live_pointers == 0
-    assert all(not c.initialized for c in pyspin.system.cameras)
+    assert all(not c.opened for c in pyspin.system.cameras)
 
 
 # --- Open and close -----------------------------------------------------------
@@ -89,15 +87,15 @@ def test_constructor_does_not_touch_the_sdk(pyspin):
 
 
 def test_open_initializes_the_camera(camera, fake):
-    assert fake.initialized
-    assert fake.init_calls == 1
+    assert fake.opened
+    assert fake.open_calls == 1
 
 
 def test_close_releases_the_camera_and_the_system(pyspin, fake):
     camera = SpinnakerCamera(MONO, pyspin=pyspin)
     camera.open()
     camera.close()
-    assert fake.deinit_calls == 1
+    assert not fake.opened
     assert_released(pyspin)
 
 
@@ -106,8 +104,8 @@ def test_reopening_initializes_again(pyspin, fake):
     with camera:
         pass
     with camera:
-        assert fake.initialized
-    assert fake.init_calls == 2
+        assert fake.opened
+    assert fake.open_calls == 2
     assert_released(pyspin)
 
 
@@ -141,7 +139,7 @@ def test_camera_held_elsewhere_raises_device_busy(pyspin, fake):
 
 
 def test_failed_configuration_releases_everything(pyspin, fake):
-    fake.tl_stream_nodes["StreamBufferHandlingMode"]._access = pyspin.RO
+    pyspin.transport(fake).stream.nodes["StreamBufferHandlingMode"].access = pyspin.RO
     camera = SpinnakerCamera(MONO, pyspin=pyspin)
     with pytest.raises(DeviceError, match="StreamBufferHandlingMode"):
         camera.open()
@@ -180,7 +178,7 @@ def test_timestamp_offset_can_be_remeasured(camera, fake):
 
 
 def test_older_timestamp_node_is_used_as_a_fallback():
-    pyspin = FakePySpin([FakeCamera(MONO, timestamp_node="TimestampLatchValue")])
+    pyspin = FakePySpin([flir_camera(MONO, timestamp_node="TimestampLatchValue")])
     with SpinnakerCamera(MONO, pyspin=pyspin) as camera:
         expected = pyspin.system.cameras[0].device_epoch
         assert camera.timestamp_offset == pytest.approx(expected, abs=0.01)
@@ -255,7 +253,7 @@ def test_exposure_time_is_read_only_while_auto_exposure_runs(camera):
 def test_exposure_time_is_written_in_microseconds(camera, fake):
     camera.set_setting("ExposureAuto", "Off")
     camera.set_setting(EXPOSURE_TIME, 0.02)
-    assert fake.nodes["ExposureTime"]._value == pytest.approx(20_000.0)
+    assert fake.get("ExposureTime") == pytest.approx(20_000.0)
     assert camera.setting(EXPOSURE_TIME).value == pytest.approx(0.02)
 
 
@@ -263,7 +261,7 @@ def test_exposure_time_limits_survive_the_unit_conversion(camera, fake):
     camera.set_setting("ExposureAuto", "Off")
     for limit in ("minimum", "maximum"):
         camera.set_setting(EXPOSURE_TIME, getattr(camera.setting(EXPOSURE_TIME), limit))
-    assert fake.nodes["ExposureTime"]._value == fake.nodes["ExposureTime"].maximum
+    assert fake.get("ExposureTime") == fake.nodes["ExposureTime"].maximum
 
 
 def test_gain_is_in_decibels(camera, fake):
@@ -271,7 +269,7 @@ def test_gain_is_in_decibels(camera, fake):
     assert (gain.minimum, gain.maximum, gain.unit) == (0.0, 47.99, "dB")
     camera.set_setting("GainAuto", "Off")
     camera.set_setting(GAIN, 12)
-    assert fake.nodes["Gain"]._value == 12.0
+    assert fake.get("Gain") == 12.0
     assert camera.setting(GAIN).value == 12.0
 
 
@@ -296,12 +294,12 @@ def test_pixel_formats_are_the_ones_the_camera_offers(pyspin):
 
 def test_set_pixel_format(camera, fake):
     camera.set_setting(PIXEL_FORMAT, "Mono16")
-    assert fake.pixel_format.symbolic == "Mono16"
+    assert fake.get("PixelFormat") == "Mono16"
     assert camera.setting(PIXEL_FORMAT).value == "Mono16"
 
 
 def test_open_replaces_a_pixel_format_the_driver_cannot_decode():
-    pyspin = FakePySpin([FakeCamera(MONO, formats=["Mono12Packed", "Mono8"])])
+    pyspin = FakePySpin([flir_camera(MONO, formats=["Mono12Packed", "Mono8"])])
     with SpinnakerCamera(MONO, pyspin=pyspin) as camera:
         assert camera.setting(PIXEL_FORMAT).choices == ("Mono8",)
         assert camera.setting(PIXEL_FORMAT).value == "Mono8"
@@ -315,12 +313,9 @@ def test_a_feature_the_camera_lacks_is_not_a_setting(pyspin, fake):
         assert "GainAuto" not in camera.settings()
 
 
-def test_a_write_the_camera_refuses_raises_command_rejected(camera, fake, monkeypatch):
-    def refuse(value):
-        raise SpinnakerException("refused")
-
+def test_a_write_the_camera_refuses_raises_command_rejected(camera, fake):
     camera.set_setting("GainAuto", "Off")
-    monkeypatch.setattr(fake.nodes["Gain"], "SetValue", refuse)
+    fake.failures["write Gain"] = FakeCameraError("range", "refused")
     with pytest.raises(CommandRejected, match="refused") as info:
         camera.set_setting(GAIN, 3.0)
     assert info.value.__context__ is None
@@ -329,19 +324,20 @@ def test_a_write_the_camera_refuses_raises_command_rejected(camera, fake, monkey
 # --- Acquisition --------------------------------------------------------------
 
 
-def test_open_starts_free_running_acquisition(camera, fake):
+def test_open_starts_free_running_acquisition(camera, fake, pyspin):
     assert fake.streaming
-    assert fake.nodes["AcquisitionMode"].symbolic == "Continuous"
-    assert fake.tl_stream_nodes["StreamBufferHandlingMode"].symbolic == "NewestOnly"
-    assert fake.trigger_mode.symbolic == "Off"
+    assert fake.get("AcquisitionMode") == "Continuous"
+    assert (
+        pyspin.transport(fake).stream.nodes["StreamBufferHandlingMode"].value
+        == "NewestOnly"
+    )
+    assert fake.get("TriggerMode") == "Off"
 
 
 def test_open_turns_off_a_trigger_mode_left_on(pyspin, fake):
-    fake.initialized = True
-    fake.trigger_mode.SetValue(pyspin.TriggerMode_On)
-    fake.initialized = False
+    fake.set("TriggerMode", "On")
     with SpinnakerCamera(MONO, pyspin=pyspin):
-        assert fake.trigger_mode.symbolic == "Off"
+        assert fake.get("TriggerMode") == "Off"
 
 
 def test_close_ends_acquisition_before_deinit(pyspin, fake):
@@ -367,17 +363,14 @@ def test_close_raises_if_ending_acquisition_fails(pyspin, monkeypatch):
 def test_pixel_format_change_pauses_acquisition(camera, fake):
     assert camera.setting(PIXEL_FORMAT).read_only is False
     camera.set_setting(PIXEL_FORMAT, "Mono16")
-    assert fake.pixel_format.symbolic == "Mono16"
+    assert fake.get("PixelFormat") == "Mono16"
     assert fake.streaming
 
 
 def test_failed_pixel_format_change_still_resumes_acquisition(
     camera, fake, monkeypatch
 ):
-    def refuse(value):
-        raise SpinnakerException("refused")
-
-    monkeypatch.setattr(fake.pixel_format, "SetIntValue", refuse)
+    fake.failures["write PixelFormat"] = FakeCameraError("range", "refused")
     with pytest.raises(CommandRejected):
         camera.set_setting(PIXEL_FORMAT, "Mono16")
     assert fake.streaming
@@ -472,8 +465,8 @@ def test_without_not_before_the_newest_frame_is_taken(camera, fake):
 def test_incomplete_frames_are_rejected_even_when_first(camera, fake):
     # pgs-scan #83: the check was skipped on the frame normally returned.
     fake.queue_frames(
-        FrameSpec(status=SPINNAKER_IMAGE_STATUS_DATA_INCOMPLETE),
-        FrameSpec(status=SPINNAKER_IMAGE_STATUS_MISSING_PACKETS),
+        FrameSpec(status=BufferStatus.INCOMPLETE),
+        FrameSpec(status=BufferStatus.INCOMPLETE),
     )
     frame = camera.capture_frame()
     assert frame.metadata["incomplete_frames"] == 2
@@ -481,7 +474,7 @@ def test_incomplete_frames_are_rejected_even_when_first(camera, fake):
 
 
 def test_missing_trailer_frames_are_accepted_and_flagged(camera, fake):
-    fake.queue_frames(FrameSpec(status=SPINNAKER_IMAGE_STATUS_MISSING_TRAILER))
+    fake.queue_frames(FrameSpec(status=BufferStatus.MISSING_TRAILER))
     frame = camera.capture_frame()
     assert frame.metadata["missing_trailer"] is True
     assert frame.metadata["incomplete_frames"] == 0
@@ -490,9 +483,7 @@ def test_missing_trailer_frames_are_accepted_and_flagged(camera, fake):
 def test_every_grabbed_buffer_is_released(camera, fake):
     # pgs-scan #83: discarded frames leaked their buffers.
     for _ in range(3):
-        fake.queue_frames(
-            stale(fake), FrameSpec(status=SPINNAKER_IMAGE_STATUS_DATA_INCOMPLETE)
-        )
+        fake.queue_frames(stale(fake), FrameSpec(status=BufferStatus.INCOMPLETE))
         camera.capture_frame(not_before=datetime.now(UTC))
     assert fake.frames_grabbed == 9
     assert fake.held == []
@@ -616,7 +607,7 @@ def test_preview_scales_sixteen_bit_frames_down(camera, fake):
 
 
 def test_preview_of_a_large_sensor_is_reduced():
-    pyspin = FakePySpin([FakeCamera(MONO, width=4000, height=3000)])
+    pyspin = FakePySpin([flir_camera(MONO, width=4000, height=3000)])
     with SpinnakerCamera(MONO, pyspin=pyspin) as camera:
         preview = camera.preview_frame()
     assert max(preview.shape) <= spinnaker.PREVIEW_MAX_SIZE
@@ -637,7 +628,7 @@ class TestSpinnakerCameraContract(FrameCameraContract):
 
     @pytest.fixture(autouse=True)
     def pyspin(self, monkeypatch):
-        camera = FakeCamera(MONO, color=True, auto=self.auto, **self.camera_options)
+        camera = flir_camera(MONO, color=True, auto=self.auto, **self.camera_options)
         pyspin = FakePySpin([camera])
         # discover() is a classmethod, so it reaches the fake through the loader.
         monkeypatch.setattr(spinnaker, "load_pyspin", lambda: pyspin)
@@ -710,14 +701,14 @@ def test_throughput_limit_is_in_megabytes_per_second(camera, fake):
 
 def test_throughput_limit_is_written_in_bytes_per_second(camera, fake):
     camera.set_setting(THROUGHPUT_LIMIT, 80)
-    assert fake.throughput_limit._value == 80 * MB
+    assert fake.get("DeviceLinkThroughputLimit") == 80 * MB
     assert camera.setting(THROUGHPUT_LIMIT).value == 80.0
 
 
 def test_throughput_limit_snaps_to_the_nodes_increment(camera, fake):
     # 80.0041 MB/s is 4100 B/s past 80 MB/s; the nearest step of 8000 B/s is up.
     camera.set_setting(THROUGHPUT_LIMIT, 80.0041)
-    assert fake.throughput_limit._value == 80 * MB + 8_000
+    assert fake.get("DeviceLinkThroughputLimit") == 80 * MB + 8_000
     limit = camera.setting(THROUGHPUT_LIMIT)
     assert limit.nearest(80.0041) == pytest.approx(limit.value)
 
@@ -730,34 +721,45 @@ def test_throughput_limit_outside_its_range_raises(camera, fake):
 
 
 def test_open_leaves_the_throughput_limit_alone(pyspin, fake):
-    fake.throughput_limit._value = 123 * MB
+    fake.set("DeviceLinkThroughputLimit", 123 * MB)
     with SpinnakerCamera(MONO, pyspin=pyspin) as camera:
         assert camera.setting(THROUGHPUT_LIMIT).value == 123.0
-    assert fake.throughput_limit._value == 123 * MB
+    assert fake.get("DeviceLinkThroughputLimit") == 123 * MB
 
 
 def test_throughput_limit_mode_off_reads_as_none_and_writing_turns_it_on():
-    pyspin = FakePySpin([FakeCamera(MONO, throughput_mode=True)])
+    pyspin = FakePySpin([flir_camera(MONO, throughput_mode=True)])
     fake = pyspin.system.cameras[0]
     with SpinnakerCamera(MONO, pyspin=pyspin) as camera:
         assert camera.setting(THROUGHPUT_LIMIT).value is None
         camera.set_setting(THROUGHPUT_LIMIT, 80)
-        assert fake.throughput_limit_mode.symbolic == "On"
+        assert fake.get("DeviceLinkThroughputLimitMode") == "On"
         assert camera.setting(THROUGHPUT_LIMIT).value == 80.0
 
 
 def test_throughput_limit_pauses_acquisition_if_it_must():
-    pyspin = FakePySpin([FakeCamera(MONO, throughput_while_streaming=False)])
+    pyspin = FakePySpin([flir_camera(MONO, throughput_while_streaming=False)])
     fake = pyspin.system.cameras[0]
     with SpinnakerCamera(MONO, pyspin=pyspin) as camera:
         camera.set_setting(THROUGHPUT_LIMIT, 80)
-        assert fake.throughput_limit._value == 80 * MB
+        assert fake.get("DeviceLinkThroughputLimit") == 80 * MB
         assert fake.streaming
         camera.capture_frame()
 
 
 def test_a_camera_without_a_throughput_limit_lists_none_of_it():
-    pyspin = FakePySpin([FakeCamera(MONO, throughput=False)])
+    pyspin = FakePySpin(
+        [
+            flir_camera(
+                MONO,
+                without=[
+                    "DeviceLinkThroughputLimit",
+                    "DeviceLinkCurrentThroughput",
+                    "AcquisitionResultingFrameRate",
+                ],
+            )
+        ]
+    )
     with SpinnakerCamera(MONO, pyspin=pyspin) as camera:
         names = set(camera.settings())
     assert not names & {THROUGHPUT_LIMIT, "current_throughput", "resulting_frame_rate"}
@@ -782,7 +784,6 @@ def triggered(camera, fake):
     # Leave out the frame and trigger used to prime the camera.
     fake.trigger_calls = 0
     fake.frames_grabbed = 0
-    fake.grab_timeouts.clear()
     return camera
 
 
@@ -793,23 +794,23 @@ def test_trigger_is_off_after_open(camera):
 
 
 def test_software_trigger_sets_the_trigger_nodes(triggered, fake):
-    assert fake.trigger_mode.symbolic == "On"
-    assert fake.trigger_source.symbolic == "Software"
-    assert fake.trigger_selector.symbolic == "FrameStart"
+    assert fake.get("TriggerMode") == "On"
+    assert fake.get("TriggerSource") == "Software"
+    assert fake.get("TriggerSelector") == "FrameStart"
     assert fake.streaming
     assert triggered.setting(TRIGGER).value == "Software"
 
 
 def test_a_trigger_left_on_a_hardware_line_reads_none(camera, fake, pyspin):
     with camera._acquisition_paused():
-        fake.trigger_source.SetValue(pyspin.TriggerSource_Line0)
-        fake.trigger_mode.SetValue(pyspin.TriggerMode_On)
+        fake.set("TriggerSource", "Line0")
+        fake.set("TriggerMode", "On")
     assert camera.setting(TRIGGER).value is None
 
 
 def test_trigger_off_free_runs_again(triggered, fake):
     triggered.set_setting(TRIGGER, "Off")
-    assert fake.trigger_mode.symbolic == "Off"
+    assert fake.get("TriggerMode") == "Off"
     triggered.capture_frame()
     assert fake.trigger_calls == 0
 
@@ -858,7 +859,7 @@ def test_a_stale_frame_arriving_after_the_trigger_is_not_returned(
 
 
 def test_an_incomplete_triggered_frame_is_triggered_again(triggered, fake):
-    fake.queue_frames(FrameSpec(status=SPINNAKER_IMAGE_STATUS_DATA_INCOMPLETE))
+    fake.queue_frames(FrameSpec(status=BufferStatus.INCOMPLETE))
     frame = triggered.capture_frame()
     assert frame.metadata["incomplete_frames"] == 1
     assert fake.trigger_calls == 2
@@ -911,11 +912,6 @@ def test_a_missed_trigger_is_fired_again(triggered, fake):
     frame = triggered.capture_frame(timeout=5.0)
     assert fake.trigger_calls == 2
     assert frame.metadata["retriggers"] == 1
-    # Each wait is the exposure plus a few trigger turnarounds, not the timeout.
-    exposure = triggered.setting(EXPOSURE_TIME).value
-    turnaround = triggered._trigger_turnaround
-    wait = exposure + _genicam._RETRIGGER_TURNAROUNDS * turnaround
-    assert fake.grab_timeouts[-2:] == [math.ceil(wait * 1000)] * 2
 
 
 def test_switching_to_software_trigger_fires_until_the_camera_answers(camera, fake):

@@ -1,8 +1,10 @@
-"""A fake ``PySpin`` module, for testing the Spinnaker driver without the SDK.
+"""A fake ``PySpin`` module over `fakes.genicam.FakeCamera`s.
 
-`FakePySpin()` builds a fresh module object with its own ``System``, so tests
-stay independent. Attach `FakeCamera`s to it and pass it to the driver in
-place of the real module.
+`FakePySpin(cameras)` builds a fresh module object with its own ``System``, so
+tests stay independent. The cameras are the shared simulation; this module is
+only PySpin's shape on top of it: node pointers, the ``System`` and its camera
+lists, error codes, and image statuses. `flir_camera()` makes a simulated
+camera with PySpin-flavoured defaults.
 
 The fake is strict where PySpin punishes mistakes, so driver bugs fail here
 rather than on a rig:
@@ -10,19 +12,14 @@ rather than on a rig:
 - ``System.ReleaseInstance()`` fails while a camera list is uncleared, a camera
   pointer is still referenced, or a camera is still initialized.
 - Iterating a ``CameraList`` stops early if the list is cleared mid-loop (#90).
-- In trigger mode, a fresh frame needs a ``TriggerSoftware``; without one,
-  ``GetNextImage()`` times out. ``TriggerSource`` is writable only while
-  ``TriggerMode`` is off.
-- Every ``GetNextImage()`` buffer must be released. Once a camera's buffers are
-  all held, ``GetNextImage()`` times out (#83). A released buffer's pixels are
-  overwritten, so arrays used without a copy show garbage.
+- Camera nodes read as ``NA`` until ``Init()``; transport-layer nodes don't.
+- Integer nodes take only ints.
 
 Behavior that hasn't been checked against real PySpin is marked "assumed" in
 ``docs/hardware/spinnaker.md``.
 """
 
 import weakref
-from collections import deque
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from types import ModuleType
@@ -30,17 +27,26 @@ from typing import Any
 
 import numpy as np
 
-from educelab.devices.cameras import _genicam
+from educelab.devices.cameras._genicam import BufferStatus
+from fakes.genicam import (
+    ENUMS,
+    LAYOUTS,
+    FakeCamera,
+    FakeCameraError,
+    FakeFrame,
+    FrameSpec,
+)
 
 __all__ = [
     "CameraList",
     "CameraPtr",
-    "FakeCamera",
     "FakeImage",
     "FakePySpin",
     "FakeSystem",
     "FrameSpec",
+    "LibraryVersion",
     "SpinnakerException",
+    "flir_camera",
 ]
 
 # Names and values below match PySpin 4.4.0 (tests/test_fake_pyspin.py checks
@@ -48,6 +54,7 @@ __all__ = [
 
 # GenApi access modes.
 NI, NA, WO, RO, RW = range(5)
+_ACCESS = {"NA": NA, "WO": WO, "RO": RO, "RW": RW}
 
 SPINNAKER_ERR_SUCCESS = 0
 SPINNAKER_ERR_ERROR = -1001
@@ -62,29 +69,24 @@ SPINNAKER_ERR_TIMEOUT = -1011
 EVENT_TIMEOUT_INFINITE = 0xFFFFFFFFFFFFFFFF
 EVENT_TIMEOUT_NONE = 0
 
+# The pixel formats PySpin names; others get values past these.
+_PYSPIN_FORMATS = ("Mono8", "Mono16", "RGB8", "BayerRG8", "BayerRG16", "Mono12Packed")
+_STREAM_BUFFER_MODES = (
+    "OldestFirst",
+    "OldestFirstOverwrite",
+    "NewestOnly",
+    "NewestFirst",
+)
+_EXPORTED_ENUMS = {
+    **ENUMS,
+    "PixelFormat": _PYSPIN_FORMATS,
+    "StreamBufferHandlingMode": _STREAM_BUFFER_MODES,
+}
 _ENUMS = {
+    **_EXPORTED_ENUMS,
     "PixelFormat": (
-        "Mono8",
-        "Mono16",
-        "RGB8",
-        "BayerRG8",
-        "BayerRG16",
-        "Mono12Packed",
-    ),
-    "PixelColorFilter": ("None", "BayerRG", "BayerGB", "BayerGR", "BayerBG"),
-    "ExposureAuto": ("Off", "Once", "Continuous"),
-    "GainAuto": ("Off", "Once", "Continuous"),
-    "ExposureMode": ("Timed", "TriggerWidth"),
-    "AcquisitionMode": ("Continuous", "SingleFrame", "MultiFrame"),
-    "TriggerMode": ("Off", "On"),
-    "DeviceLinkThroughputLimitMode": ("Off", "On"),
-    "TriggerSelector": ("FrameStart", "AcquisitionStart", "FrameBurstStart"),
-    "TriggerSource": ("Software", "Line0", "Line1", "Line2", "Line3"),
-    "StreamBufferHandlingMode": (
-        "OldestFirst",
-        "OldestFirstOverwrite",
-        "NewestOnly",
-        "NewestFirst",
+        *_PYSPIN_FORMATS,
+        *(f for f in LAYOUTS if f not in _PYSPIN_FORMATS),
     ),
 }
 
@@ -128,20 +130,36 @@ CONSTANTS: dict[str, int] = {
     **_IMAGE_STATUSES,
     **{
         f"{family}_{entry}": i
-        for family, entries in _ENUMS.items()
+        for family, entries in _EXPORTED_ENUMS.items()
         for i, entry in enumerate(entries)
     },
 }
 
-# (dtype, channels) of each pixel format's array.
-_LAYOUTS: dict[str, tuple[type[np.unsignedinteger[Any]], int]] = {
-    "Mono8": (np.uint8, 1),
-    "Mono16": (np.uint16, 1),
-    "RGB8": (np.uint8, 3),
-    "BayerRG8": (np.uint8, 1),
-    "BayerRG16": (np.uint16, 1),
-    "Mono12Packed": (np.uint8, 1),
+# How each FakeCamera failure surfaces through PySpin (assumed; hardware doc).
+_CODES = {
+    "not_found": SPINNAKER_ERR_ERROR,
+    "access": SPINNAKER_ERR_ACCESS_DENIED,
+    "range": SPINNAKER_ERR_INVALID_PARAMETER,
+    "timeout": SPINNAKER_ERR_TIMEOUT,
+    "state": SPINNAKER_ERR_ERROR,
+    "busy": SPINNAKER_ERR_ACCESS_DENIED,
 }
+
+
+def flir_camera(
+    serial: str = "20000001",
+    model: str = "Blackfly S BFS-U3-51S5M",
+    *,
+    color: bool = False,
+    **options: Any,
+) -> FakeCamera:
+    """A simulated camera as a FLIR one comes: vendor, firmware and formats."""
+    formats = ["Mono8", "Mono16"]
+    if color:
+        formats = ["RGB8", "BayerRG8", "BayerRG16", *formats]
+    options.setdefault("formats", formats)
+    options.setdefault("firmware", "1.0.0.0")
+    return FakeCamera(serial, model, vendor="FLIR", color=color, **options)
 
 
 class SpinnakerException(Exception):
@@ -154,158 +172,194 @@ class SpinnakerException(Exception):
         self.fullmessage = str(self)
 
 
+def _call(sim: FakeCamera, fn: Callable[[], Any], *, state: int | None = None) -> Any:
+    """Run ``fn`` on the simulation, raising its failure as PySpin would.
+
+    Args:
+        state: The code for a ``state`` failure on an initialized camera.
+    """
+    if not sim.attached:
+        raise SpinnakerException(f"camera {sim.serial} lost", SPINNAKER_ERR_IO)
+    try:
+        return fn()
+    except FakeCameraError as exc:
+        code = _CODES[exc.kind]
+        if exc.kind == "state":
+            code = state or code if sim.opened else SPINNAKER_ERR_NOT_INITIALIZED
+        error = SpinnakerException(str(exc), code)
+    # Raised outside the except block and dropped from this frame, so the
+    # traceback holds no cycle that would keep a camera pointer alive.
+    try:
+        raise error
+    finally:
+        del error
+
+
+def _enum_value(family: str, symbol: str) -> int:
+    return _ENUMS[family].index(symbol)
+
+
+def _enum_symbol(family: str, value: int) -> str | None:
+    entries = _ENUMS[family]
+    return entries[value] if 0 <= value < len(entries) else None
+
+
+# --- Node maps --------------------------------------------------------------
+
+
+class _CameraNodes:
+    """The camera's own node map, read through to the simulation."""
+
+    def __init__(self, sim: FakeCamera) -> None:
+        self.sim = sim
+
+    def has(self, name: str) -> bool:
+        return self.sim.has(name)
+
+    def kind(self, name: str) -> str:
+        return self.sim.kind(name)
+
+    def access(self, name: str) -> int:
+        return _ACCESS[self.sim.access(name)]
+
+    def read(self, name: str) -> Any:
+        return _call(self.sim, lambda: self.sim.read(name))
+
+    def write(self, name: str, value: Any) -> None:
+        _call(self.sim, lambda: self.sim.write(name, value))
+
+    def range(self, name: str) -> tuple[Any, ...]:
+        self._require_readable(name)
+        return tuple(self.sim.range(name))
+
+    def entries(self, name: str) -> tuple[str, ...]:
+        return self.sim.entries(name)
+
+    def execute(self, name: str) -> None:
+        _call(self.sim, lambda: self.sim.execute(name))
+
+    def _require_readable(self, name: str) -> None:
+        _call(self.sim, lambda: None)
+        if self.access(name) not in (RO, RW):
+            raise SpinnakerException(
+                f"{name} is not readable", SPINNAKER_ERR_ACCESS_DENIED
+            )
+
+
+@dataclass
+class _LocalNode:
+    kind: str
+    value: Any
+    access: int = RO
+    entries: tuple[str, ...] = ()
+
+
+class _TransportNodes:
+    """A transport-layer node map, which PySpin keeps itself.
+
+    Its nodes are readable before ``Init()``. Tests change a node's ``access``
+    or put an exception in ``failures`` to make reads of it fail.
+    """
+
+    def __init__(self, sim: FakeCamera, nodes: dict[str, _LocalNode]) -> None:
+        self.sim = sim
+        self.nodes = nodes
+        self.failures: dict[str, SpinnakerException] = {}
+
+    def has(self, name: str) -> bool:
+        return name in self.nodes
+
+    def kind(self, name: str) -> str:
+        return self.nodes[name].kind
+
+    def access(self, name: str) -> int:
+        return self.nodes[name].access
+
+    def read(self, name: str) -> Any:
+        self._check(name, (RO, RW), "readable")
+        return self.nodes[name].value
+
+    def write(self, name: str, value: Any) -> None:
+        self._check(name, (WO, RW), "writable")
+        node = self.nodes[name]
+        if node.kind == "enum" and value not in node.entries:
+            raise SpinnakerException(
+                f"{name}: no entry {value!r}", SPINNAKER_ERR_INVALID_PARAMETER
+            )
+        node.value = value
+
+    def entries(self, name: str) -> tuple[str, ...]:
+        return self.nodes[name].entries
+
+    def _check(self, name: str, modes: tuple[int, ...], verb: str) -> None:
+        _call(self.sim, lambda: None)
+        if name in self.failures:
+            failure = self.failures[name]
+            # A fresh exception each time: raising the stored one would keep
+            # its traceback, and the camera pointer in it, alive.
+            raise SpinnakerException(failure.message, failure.errorcode)
+        if self.access(name) not in modes:
+            raise SpinnakerException(
+                f"{name} is not {verb}", SPINNAKER_ERR_ACCESS_DENIED
+            )
+
+
+_NodeSource = _CameraNodes | _TransportNodes
+
+
 # --- Nodes ------------------------------------------------------------------
 
 
 class Node:
-    """A GenICam node.
+    """A GenICam node, read through its node map."""
 
-    Nodes on the camera's own node map read as ``NA`` until the camera is
-    initialized; transport-layer nodes are always available.
-    """
-
-    def __init__(
-        self,
-        camera: "FakeCamera",
-        name: str,
-        access: int | Callable[[], int] = RW,
-        requires_init: bool = True,
-    ) -> None:
-        self._camera = camera
+    def __init__(self, source: _NodeSource, name: str) -> None:
+        self._source = source
         self._name = name
-        self._access = access
-        self._requires_init = requires_init
 
     def GetName(self) -> str:
         return self._name
 
     def GetAccessMode(self) -> int:
-        if self._requires_init and not self._camera.initialized:
-            return NA
-        return self._access() if callable(self._access) else self._access
-
-    def _check(self, modes: tuple[int, ...], verb: str) -> None:
-        if not self._camera.attached:
-            raise SpinnakerException(f"{self._name}: device lost", SPINNAKER_ERR_IO)
-        if self.GetAccessMode() not in modes:
-            raise SpinnakerException(
-                f"{self._name} is not {verb}", SPINNAKER_ERR_ACCESS_DENIED
-            )
-
-    def _check_read(self) -> None:
-        self._check((RO, RW), "readable")
-
-    def _check_write(self) -> None:
-        self._check((WO, RW), "writable")
+        return self._source.access(self._name)
 
 
 class ValueNode(Node):
-    def __init__(self, camera: "FakeCamera", name: str, value: Any, **kw: Any):
-        super().__init__(camera, name, **kw)
-        self._value = value
-
     def GetValue(self) -> Any:
-        self._check_read()
-        return self._value
+        return self._source.read(self._name)
 
     def SetValue(self, value: Any) -> None:
-        self._check_write()
-        self._validate(value)
-        self._value = value
+        self._source.write(self._name, value)
 
     def ToString(self) -> str:
         return str(self.GetValue())
-
-    def _validate(self, value: Any) -> None:
-        return
 
 
 class StringNode(ValueNode):
     pass
 
 
-class BooleanNode(ValueNode):
-    pass
-
-
 class FloatNode(ValueNode):
-    def __init__(
-        self,
-        camera: "FakeCamera",
-        name: str,
-        value: float,
-        minimum: float,
-        maximum: float,
-        unit: str = "",
-        **kw: Any,
-    ) -> None:
-        super().__init__(camera, name, value, **kw)
-        self.minimum = minimum
-        self.maximum = maximum
-        self._unit = unit
-
     def GetMin(self) -> float:
-        self._check_read()
-        return self.minimum
+        return self._source.range(self._name)[0]  # type: ignore[union-attr]
 
     def GetMax(self) -> float:
-        self._check_read()
-        return self.maximum
-
-    def GetUnit(self) -> str:
-        return self._unit
-
-    def _validate(self, value: Any) -> None:
-        if not self.minimum <= value <= self.maximum:
-            raise SpinnakerException(
-                f"{self._name}: {value} is outside [{self.minimum}, {self.maximum}]",
-                SPINNAKER_ERR_INVALID_PARAMETER,
-            )
+        return self._source.range(self._name)[1]  # type: ignore[union-attr]
 
 
 class IntegerNode(FloatNode):
-    """An integer node. Like GenICam, it refuses values off its increment."""
-
-    def __init__(
-        self, camera: "FakeCamera", name: str, value: int, inc: int = 1, **kw: Any
-    ):
-        kw.setdefault("minimum", value)
-        kw.setdefault("maximum", value)
-        super().__init__(camera, name, value, **kw)
-        self.inc = inc
+    """An integer node. Like PySpin, it takes only ints."""
 
     def GetInc(self) -> int:
-        return self.inc
+        return self._source.range(self._name)[2]  # type: ignore[union-attr]
 
-    def _validate(self, value: Any) -> None:
+    def SetValue(self, value: Any) -> None:
         if not isinstance(value, int) or isinstance(value, bool):
             raise SpinnakerException(
                 f"{self._name} takes an int, not {type(value).__name__}",
                 SPINNAKER_ERR_INVALID_PARAMETER,
             )
-        super()._validate(value)
-        if (value - self.minimum) % self.inc:
-            raise SpinnakerException(
-                f"{self._name}: {value} is off the increment {self.inc}",
-                SPINNAKER_ERR_INVALID_PARAMETER,
-            )
-
-
-class ComputedNode(Node):
-    """A read-only node whose value the fake works out when read."""
-
-    def __init__(
-        self, camera: "FakeCamera", name: str, compute: Callable[[], Any], **kw: Any
-    ) -> None:
-        super().__init__(camera, name, access=RO, **kw)
-        self._compute = compute
-
-    def GetValue(self) -> Any:
-        self._check_read()
-        return self._compute()
-
-    def ToString(self) -> str:
-        return str(self.GetValue())
+        super().SetValue(value)
 
 
 @dataclass(frozen=True)
@@ -330,104 +384,99 @@ class EnumEntry:
 class EnumNode(ValueNode):
     """An enumeration, valued by the ``PySpin.<Family>_<Entry>`` constants."""
 
-    def __init__(
-        self,
-        camera: "FakeCamera",
-        name: str,
-        value: str,
-        entries: Iterable[str],
-        **kw: Any,
-    ) -> None:
-        self._entries = {
-            symbolic: EnumEntry(name, symbolic, _ENUMS[name].index(symbolic))
-            for symbolic in entries
-        }
-        super().__init__(camera, name, self._entries[value].value, **kw)
+    def _entry(self, symbol: str) -> EnumEntry:
+        return EnumEntry(self._name, symbol, _enum_value(self._name, symbol))
 
-    @property
-    def symbolic(self) -> str:
-        """The current entry's name, read without access checks."""
-        return _ENUMS[self._name][self._value]
+    def GetValue(self) -> int:
+        return _enum_value(self._name, self._source.read(self._name))
+
+    def SetValue(self, value: Any) -> None:
+        symbol = _enum_symbol(self._name, value)
+        if symbol not in self._source.entries(self._name):
+            raise SpinnakerException(
+                f"{self._name}: no entry with value {value}",
+                SPINNAKER_ERR_INVALID_PARAMETER,
+            )
+        self._source.write(self._name, symbol)
 
     def GetIntValue(self) -> int:
-        return int(self.GetValue())
+        return self.GetValue()
 
     def SetIntValue(self, value: int) -> None:
         self.SetValue(value)
 
     def GetCurrentEntry(self) -> EnumEntry:
-        self._check_read()
-        return self._entries[self.symbolic]
+        return self._entry(self._source.read(self._name))
 
     def GetEntries(self) -> list[EnumEntry]:
-        return list(self._entries.values())
+        return [self._entry(s) for s in self._source.entries(self._name)]
 
     def GetEntryByName(self, symbolic: str) -> EnumEntry | None:
-        return self._entries.get(symbolic)
+        if symbolic not in self._source.entries(self._name):
+            return None
+        return self._entry(symbolic)
 
     def ToString(self) -> str:
         return self.GetCurrentEntry().symbolic
 
-    def _validate(self, value: Any) -> None:
-        if value not in {entry.value for entry in self._entries.values()}:
-            raise SpinnakerException(
-                f"{self._name}: no entry with value {value}",
-                SPINNAKER_ERR_INVALID_PARAMETER,
-            )
-
 
 class CommandNode(Node):
-    def __init__(
-        self, camera: "FakeCamera", name: str, action: Callable[[], None], **kw: Any
-    ) -> None:
-        super().__init__(camera, name, access=WO, **kw)
-        self._action = action
-
     def Execute(self) -> None:
-        self._check_write()
-        self._action()
+        self._source.execute(self._name)  # type: ignore[union-attr]
 
     def IsDone(self) -> bool:
         return True
 
 
+_NODE_CLASSES: dict[str, type[Node]] = {
+    "float": FloatNode,
+    "int": IntegerNode,
+    "string": StringNode,
+    "enum": EnumNode,
+    "command": CommandNode,
+}
+
+
 class NodeMap:
-    def __init__(self, nodes: dict[str, Node]) -> None:
-        self._nodes = nodes
+    def __init__(self, source: _NodeSource, names: Callable[[], Iterable[str]]):
+        self._source = source
+        self._names = names
 
     def GetNode(self, name: str) -> Node | None:
-        return self._nodes.get(name)
+        if not self._source.has(name):
+            return None
+        return _NODE_CLASSES[self._source.kind(name)](self._source, name)
 
     def GetNodes(self) -> list[Node]:
-        return list(self._nodes.values())
+        return [node for name in self._names() if (node := self.GetNode(name))]
 
 
 class _NodeAttributes:
     """QuickSpin-style access, e.g. ``cam.TLDevice.DeviceSerialNumber``."""
 
-    def __init__(self, nodes: dict[str, Node]) -> None:
+    def __init__(self, nodes: NodeMap) -> None:
         self._nodes = nodes
 
     def __getattr__(self, name: str) -> Any:
-        try:
-            return self._nodes[name]
-        except KeyError:
-            raise AttributeError(name) from None
+        node = self._nodes.GetNode(name)
+        if node is None:
+            raise AttributeError(name)
+        return node
 
 
-def IsAvailable(node: Node | None) -> bool:
+def IsAvailable(node: Any) -> bool:
     return node is not None and node.GetAccessMode() not in (NI, NA)
 
 
-def IsImplemented(node: Node | None) -> bool:
+def IsImplemented(node: Any) -> bool:
     return node is not None and node.GetAccessMode() != NI
 
 
-def IsReadable(node: Node | None) -> bool:
+def IsReadable(node: Any) -> bool:
     return node is not None and node.GetAccessMode() in (RO, RW)
 
 
-def IsWritable(node: Node | None) -> bool:
+def IsWritable(node: Any) -> bool:
     return node is not None and node.GetAccessMode() in (WO, RW)
 
 
@@ -440,7 +489,7 @@ class EnumerationPtr:
     ``GetValue``/``SetValue`` that QuickSpin attributes (``cam.PixelFormat``) have.
     """
 
-    def __init__(self, node: "EnumNode") -> None:
+    def __init__(self, node: EnumNode) -> None:
         self._node = node
 
     def GetAccessMode(self) -> int:
@@ -455,13 +504,13 @@ class EnumerationPtr:
     def SetIntValue(self, value: int) -> None:
         self._node.SetIntValue(value)
 
-    def GetCurrentEntry(self) -> "EnumEntry":
+    def GetCurrentEntry(self) -> EnumEntry:
         return self._node.GetCurrentEntry()
 
-    def GetEntries(self) -> "list[EnumEntry]":
+    def GetEntries(self) -> list[EnumEntry]:
         return self._node.GetEntries()
 
-    def GetEntryByName(self, symbolic: str) -> "EnumEntry | None":
+    def GetEntryByName(self, symbolic: str) -> EnumEntry | None:
         return self._node.GetEntryByName(symbolic)
 
     def ToString(self) -> str:
@@ -476,6 +525,9 @@ def _enumeration(node: Node | None) -> EnumerationPtr | None:
     return EnumerationPtr(node)
 
 
+# --- Images -----------------------------------------------------------------
+
+
 class Image:
     """Stands in for ``PySpin.Image``, which holds the status descriptions."""
 
@@ -485,423 +537,79 @@ class Image:
         return name.removeprefix("SPINNAKER_IMAGE_STATUS_").replace("_", " ").lower()
 
 
-# --- Images -----------------------------------------------------------------
-
-
-@dataclass
-class FrameSpec:
-    """A frame to hand out from ``GetNextImage()``.
-
-    Attributes:
-        timestamp_ns: Device timestamp. A frame with one is already waiting in a
-            buffer and needs no trigger. ``None`` makes a fresh frame whose
-            exposure starts when it is triggered (or retrieved, outside trigger
-            mode), stamped at the end of that exposure, as real cameras do.
-        status: Image status; anything but ``SPINNAKER_IMAGE_STATUS_NO_ERROR`` is incomplete.
-    """
-
-    timestamp_ns: int | None = None
-    status: int = SPINNAKER_IMAGE_STATUS_NO_ERROR
-
-
 class FakeImage:
     """A grabbed buffer. It stays held until ``Release()``."""
 
-    # Written over a buffer's pixels when it is released.
-    RELEASED_FILL = 0xAB
+    RELEASED_FILL = FakeFrame.RELEASED_FILL
 
-    def __init__(
-        self,
-        camera: "FakeCamera",
-        frame_id: int,
-        timestamp_ns: int,
-        status: int,
-        pixel_format: str,
-    ) -> None:
-        dtype, channels = _LAYOUTS[pixel_format]
-        shape: tuple[int, ...] = (camera.height, camera.width)
-        if channels > 1:
-            shape += (channels,)
-        self._camera = camera
-        self._buffer = np.full(shape, frame_id % 200, dtype=dtype)
-        self._frame_id = frame_id
-        self._timestamp_ns = timestamp_ns
+    def __init__(self, frame: FakeFrame, status: int) -> None:
+        self._frame = frame
         self._status = status
-        self._pixel_format = pixel_format
-        self.released = False
 
-    def _check_held(self) -> None:
-        if self.released:
+    def _held(self) -> FakeFrame:
+        if self._frame.released:
             raise SpinnakerException("image was released", SPINNAKER_ERR_INVALID_HANDLE)
+        return self._frame
 
     def GetNDArray(self) -> np.ndarray[Any, Any]:
-        self._check_held()
-        return self._buffer.view()
+        return self._held().pixels.view()
 
     def GetTimeStamp(self) -> int:
-        self._check_held()
-        return self._timestamp_ns
+        return self._held().timestamp_ns
 
     def GetFrameID(self) -> int:
-        self._check_held()
-        return self._frame_id
+        return self._held().frame_id
 
     def GetImageStatus(self) -> int:
-        self._check_held()
+        self._held()
         return self._status
 
     def IsIncomplete(self) -> bool:
-        self._check_held()
+        self._held()
         return self._status != SPINNAKER_IMAGE_STATUS_NO_ERROR
 
     def GetPixelFormat(self) -> int:
-        return _ENUMS["PixelFormat"].index(self._pixel_format)
+        return _enum_value("PixelFormat", self._frame.pixel_format)
 
     def GetPixelFormatName(self) -> str:
-        return self._pixel_format
+        return self._frame.pixel_format
 
     def GetWidth(self) -> int:
-        return self._buffer.shape[1]
+        return self._frame.pixels.shape[1]
 
     def GetHeight(self) -> int:
-        return self._buffer.shape[0]
+        return self._frame.pixels.shape[0]
 
     def IsInUse(self) -> bool:
-        return not self.released
+        return not self._frame.released
 
     def Release(self) -> None:
-        self._check_held()
-        self.released = True
-        self._buffer.fill(self.RELEASED_FILL)
-        self._camera.held.remove(self)
+        self._held().release()
 
 
 # --- Cameras ----------------------------------------------------------------
 
 
-class FakeCamera:
-    """The hardware behind a ``CameraPtr``, with knobs and counters for tests.
+class _Transport:
+    """What PySpin keeps for one camera: its transport-layer node maps."""
 
-    Args:
-        serial: Serial number, as reported by the transport layer.
-        model: ``DeviceModelName``.
-        vendor: ``DeviceVendorName``.
-        color: Whether the sensor has a Bayer filter, which adds color formats.
-        width: Image width in pixels.
-        height: Image height in pixels.
-        buffer_count: Buffers in the stream; ``GetNextImage()`` times out once
-            all of them are held.
-        clock: Host clock, in seconds since the epoch. Defaults to the
-            core's `host_time()`, which is fine-grained on every platform.
-        uptime: Seconds the camera's timestamp counter has been running.
-        timestamp_node: ``"Timestamp"`` or the older ``"TimestampLatchValue"``.
-        firmware: ``DeviceFirmwareVersion``.
-        formats: ``PixelFormat`` entries, first one current. Defaults to the
-            usual mono or color set.
-        auto: Whether auto exposure and auto gain start on.
-        throughput: Whether the camera has ``DeviceLinkThroughputLimit``, with
-            ``DeviceLinkCurrentThroughput`` and ``AcquisitionResultingFrameRate``.
-        throughput_mode: Whether it also has ``DeviceLinkThroughputLimitMode``,
-            starting Off; the limit is read-only until the mode is On.
-        throughput_while_streaming: Whether the limit is writable while acquiring.
-    """
-
-    def __init__(
-        self,
-        serial: str = "20000001",
-        model: str = "Blackfly S BFS-U3-51S5M",
-        vendor: str = "FLIR",
-        *,
-        color: bool = False,
-        width: int = 8,
-        height: int = 6,
-        buffer_count: int = 10,
-        clock: Callable[[], float] | None = None,
-        uptime: float = 1000.0,
-        timestamp_node: str = "Timestamp",
-        firmware: str = "1.0.0.0",
-        formats: Iterable[str] | None = None,
-        auto: bool = True,
-        throughput: bool = True,
-        throughput_mode: bool = False,
-        throughput_while_streaming: bool = True,
-    ) -> None:
-        self.serial = serial
-        self.model = model
-        self.vendor = vendor
-        self.width = width
-        self.height = height
-        self.buffer_count = buffer_count
-        self.clock = clock or (lambda: _genicam.host_time())
-        self.device_epoch = self.clock() - uptime
-        self.attached = False
-        self.initialized = False
-        self.streaming = False
-        self.busy = False
-        self.queue: deque[FrameSpec] = deque()
-        self.held: list[FakeImage] = []
-        self.frames_grabbed = 0
-        self.init_calls = 0
-        self.deinit_calls = 0
-        self.latch_calls = 0
-        self.trigger_calls = 0
-        self.grab_timeouts: list[int] = []
-        self.pending_triggers: deque[int] = deque()
-        self.respond_to_triggers = True
-        # Triggers to ignore before answering again, as a real camera ignores
-        # one it isn't ready for.
-        self.ignore_triggers = 0
-        # Triggers to ignore by number, counting from 1.
-        self.ignored_trigger_calls: set[int] = set()
-
-        if formats is None:
-            formats = ["Mono8", "Mono16"]
-            if color:
-                formats = ["RGB8", "BayerRG8", "BayerRG16", *formats]
-        formats = list(formats)
-
-        def unless_streaming() -> int:
-            return RO if self.streaming else RW
-
-        def node_map(*nodes: Node) -> dict[str, Node]:
-            return {node.GetName(): node for node in nodes}
-
-        identity = (
-            StringNode(self, "DeviceSerialNumber", serial, access=RO),
-            StringNode(self, "DeviceModelName", model, access=RO),
-            StringNode(self, "DeviceVendorName", vendor, access=RO),
+    def __init__(self, sim: FakeCamera) -> None:
+        self.device = _TransportNodes(
+            sim,
+            {
+                "DeviceSerialNumber": _LocalNode("string", sim.serial),
+                "DeviceModelName": _LocalNode("string", sim.model),
+                "DeviceVendorName": _LocalNode("string", sim.vendor),
+            },
         )
-        self.tl_device_nodes = node_map(
-            *(
-                StringNode(self, n.GetName(), n._value, access=RO, requires_init=False)
-                for n in identity
-            )
-        )
-        self.tl_stream_nodes = node_map(
-            EnumNode(
-                self,
-                "StreamBufferHandlingMode",
-                "OldestFirst",
-                _ENUMS["StreamBufferHandlingMode"],
-                requires_init=False,
-            )
-        )
-        auto_mode = "Continuous" if auto else "Off"
-        self.exposure_auto = EnumNode(
-            self, "ExposureAuto", auto_mode, _ENUMS["ExposureAuto"]
-        )
-        self.gain_auto = EnumNode(self, "GainAuto", auto_mode, _ENUMS["GainAuto"])
-        self.exposure = exposure = FloatNode(
-            self,
-            "ExposureTime",
-            10_000.0,
-            minimum=6.0,
-            maximum=30_000_000.0,
-            unit="us",
-            access=lambda: RW if self.exposure_auto.symbolic == "Off" else RO,
-        )
-        gain = FloatNode(
-            self,
-            "Gain",
-            0.0,
-            minimum=0.0,
-            maximum=47.99,
-            unit="dB",
-            access=lambda: RW if self.gain_auto.symbolic == "Off" else RO,
-        )
-        self.trigger_mode = EnumNode(self, "TriggerMode", "Off", _ENUMS["TriggerMode"])
-        self.trigger_source = EnumNode(
-            self,
-            "TriggerSource",
-            "Line0",
-            _ENUMS["TriggerSource"],
-            access=lambda: RW if self.trigger_mode.symbolic == "Off" else RO,
-        )
-        self.trigger_selector = EnumNode(
-            self, "TriggerSelector", "FrameStart", _ENUMS["TriggerSelector"]
-        )
-        self.pixel_format = EnumNode(
-            self, "PixelFormat", formats[0], formats, access=unless_streaming
-        )
-        self.nodes = node_map(
-            *identity,
-            StringNode(self, "DeviceFirmwareVersion", firmware, access=RO),
-            IntegerNode(self, "Width", width, access=RO),
-            IntegerNode(self, "Height", height, access=RO),
-            IntegerNode(self, "SensorWidth", width, access=RO),
-            IntegerNode(self, "SensorHeight", height, access=RO),
-            self.pixel_format,
-            EnumNode(
-                self,
-                "PixelColorFilter",
-                "BayerRG" if color else "None",
-                _ENUMS["PixelColorFilter"],
-                access=RO,
-            ),
-            EnumNode(
-                self,
-                "AcquisitionMode",
-                "Continuous",
-                _ENUMS["AcquisitionMode"],
-                access=unless_streaming,
-            ),
-            EnumNode(self, "ExposureMode", "Timed", _ENUMS["ExposureMode"]),
-            self.exposure_auto,
-            exposure,
-            self.gain_auto,
-            gain,
-            self.trigger_selector,
-            self.trigger_mode,
-            self.trigger_source,
-            CommandNode(self, "TriggerSoftware", self._trigger),
-            CommandNode(self, "TimestampLatch", self._latch),
-            IntegerNode(
-                self,
-                timestamp_node,
-                0,
-                maximum=2**63 - 1,
-                access=RO,
-            ),
-        )
-        self._timestamp = self.nodes[timestamp_node]
-        if throughput:
-            self._add_throughput_nodes(throughput_mode, throughput_while_streaming)
-
-    # Made-up figures, roughly a USB3 camera; nothing tests them against hardware.
-    MAX_FRAME_RATE = 35.0
-    THROUGHPUT_MIN = 10_000_000
-    THROUGHPUT_MAX = 500_000_000
-    THROUGHPUT_INC = 8_000
-
-    def _add_throughput_nodes(self, with_mode: bool, while_streaming: bool) -> None:
-        mode = EnumNode(
-            self,
-            "DeviceLinkThroughputLimitMode",
-            "Off",
-            _ENUMS["DeviceLinkThroughputLimitMode"],
-        )
-
-        def limit_access() -> int:
-            if with_mode and mode.symbolic != "On":
-                return RO
-            if self.streaming and not while_streaming:
-                return RO
-            return RW
-
-        limit = IntegerNode(
-            self,
-            "DeviceLinkThroughputLimit",
-            self.THROUGHPUT_MAX,
-            minimum=self.THROUGHPUT_MIN,
-            maximum=self.THROUGHPUT_MAX,
-            inc=self.THROUGHPUT_INC,
-            unit="Bps",
-            access=limit_access,
-        )
-        frame_bytes = self.width * self.height
-
-        def current() -> int:
-            if not self.streaming:
-                return 0
-            active = not with_mode or mode.symbolic == "On"
-            cap = limit._value if active else self.THROUGHPUT_MAX
-            return min(cap, round(self.MAX_FRAME_RATE * frame_bytes))
-
-        def frame_rate() -> float:
-            active = not with_mode or mode.symbolic == "On"
-            cap = limit._value if active else self.THROUGHPUT_MAX
-            return min(self.MAX_FRAME_RATE, cap / frame_bytes)
-
-        self.throughput_limit = limit
-        self.throughput_limit_mode = mode if with_mode else None
-        nodes = [
-            limit,
-            ComputedNode(self, "DeviceLinkCurrentThroughput", current),
-            ComputedNode(self, "AcquisitionResultingFrameRate", frame_rate),
-        ]
-        if with_mode:
-            nodes.append(mode)
-        self.nodes.update({node.GetName(): node for node in nodes})
-
-    def device_time_ns(self) -> int:
-        """The camera's timestamp counter now, in nanoseconds."""
-        return round((self.clock() - self.device_epoch) * 1e9)
-
-    def queue_frames(self, *frames: FrameSpec) -> None:
-        """Hand out these frames, in order, before any fresh ones."""
-        self.queue.extend(frames)
-
-    def _latch(self) -> None:
-        self.latch_calls += 1
-        self._timestamp._value = self.device_time_ns()  # type: ignore[attr-defined]
-
-    @property
-    def triggered(self) -> bool:
-        """Whether frames wait for a software trigger."""
-        return (
-            self.trigger_mode.symbolic == "On"
-            and self.trigger_source.symbolic == "Software"
-        )
-
-    def _trigger(self) -> None:
-        if not (self.streaming and self.triggered):
-            raise SpinnakerException(
-                f"camera {self.serial} isn't acquiring in software-trigger mode",
-                SPINNAKER_ERR_ACCESS_DENIED,
-            )
-        self.trigger_calls += 1
-        if self.ignore_triggers:
-            self.ignore_triggers -= 1
-        elif self.trigger_calls in self.ignored_trigger_calls:
-            pass
-        elif self.respond_to_triggers:
-            self.pending_triggers.append(self.device_time_ns())
-
-    def _require(self, initialized: bool = True) -> None:
-        if not self.attached:
-            raise SpinnakerException(f"camera {self.serial} lost", SPINNAKER_ERR_IO)
-        if initialized and not self.initialized:
-            raise SpinnakerException(
-                f"camera {self.serial} is not initialized",
-                SPINNAKER_ERR_NOT_INITIALIZED,
-            )
-
-    def _next_image(self) -> FakeImage:
-        self._require()
-        if not self.streaming:
-            raise SpinnakerException(
-                f"camera {self.serial} is not acquiring", SPINNAKER_ERR_ERROR
-            )
-        # Real PySpin blocks until the grab timeout; failing at once keeps
-        # tests fast.
-        if len(self.held) >= self.buffer_count:
-            raise SpinnakerException(
-                f"camera {self.serial}: no free buffers", SPINNAKER_ERR_TIMEOUT
-            )
-        waiting = self.queue and self.queue[0].timestamp_ns is not None
-        if self.triggered and not waiting:
-            if not self.pending_triggers:
-                raise SpinnakerException(
-                    f"camera {self.serial}: no frame was triggered",
-                    SPINNAKER_ERR_TIMEOUT,
+        self.stream = _TransportNodes(
+            sim,
+            {
+                "StreamBufferHandlingMode": _LocalNode(
+                    "enum", "OldestFirst", RW, _STREAM_BUFFER_MODES
                 )
-            fresh_timestamp = self.pending_triggers.popleft()
-        else:
-            fresh_timestamp = self.device_time_ns()
-        spec = self.queue.popleft() if self.queue else FrameSpec()
-        timestamp = spec.timestamp_ns
-        if timestamp is None:
-            timestamp = fresh_timestamp + round(self.exposure._value * 1000)
-        self.frames_grabbed += 1
-        image = FakeImage(
-            self,
-            self.frames_grabbed,
-            timestamp,
-            spec.status,
-            self.pixel_format.symbolic,
+            },
         )
-        self.held.append(image)
-        return image
 
 
 class CameraPtr:
@@ -911,89 +619,72 @@ class CameraPtr:
     leftover loop variable) cannot release the system.
     """
 
-    def __init__(self, camera: FakeCamera | None, system: "FakeSystem") -> None:
-        self._camera = camera
-        if camera is not None:
-            self.TLDevice = _NodeAttributes(camera.tl_device_nodes)
-            self.TLStream = _NodeAttributes(camera.tl_stream_nodes)
+    def __init__(self, sim: FakeCamera | None, system: "FakeSystem") -> None:
+        self._sim = sim
+        self._system = system
+        if sim is not None:
+            self.TLDevice = _NodeAttributes(self.GetTLDeviceNodeMap())
+            self.TLStream = _NodeAttributes(self.GetTLStreamNodeMap())
         system._live_pointers.add(self)
 
     def __getattr__(self, name: str) -> Any:
-        camera = self.__dict__.get("_camera")
-        if camera is None or name not in camera.nodes:
+        sim = self.__dict__.get("_sim")
+        if sim is None or not sim.has(name):
             raise AttributeError(name)
-        return camera.nodes[name]
+        return self.GetNodeMap().GetNode(name)
 
     def _cam(self) -> FakeCamera:
-        if self._camera is None:
+        if self._sim is None:
             raise SpinnakerException(
                 "invalid camera pointer", SPINNAKER_ERR_INVALID_HANDLE
             )
-        return self._camera
+        return self._sim
 
     def IsValid(self) -> bool:
-        return self._camera is not None
+        return self._sim is not None
 
     def GetUniqueID(self) -> str:
         return self._cam().serial
 
     def Init(self) -> None:
-        cam = self._cam()
-        cam._require(initialized=False)
-        if cam.busy:
-            raise SpinnakerException(
-                f"camera {cam.serial} is in use by another process",
-                SPINNAKER_ERR_ACCESS_DENIED,
-            )
-        cam.init_calls += 1
-        cam.initialized = True
+        sim = self._cam()
+        _call(sim, sim.open)
 
     def DeInit(self) -> None:
-        cam = self._cam()
-        if cam.streaming:
-            raise SpinnakerException(
-                f"camera {cam.serial} is still acquiring", SPINNAKER_ERR_RESOURCE_IN_USE
-            )
-        cam.deinit_calls += 1
-        cam.initialized = False
+        sim = self._cam()
+        _call(sim, sim.close, state=SPINNAKER_ERR_RESOURCE_IN_USE)
 
     def IsInitialized(self) -> bool:
-        return self._cam().initialized
+        return self._cam().opened
 
     def IsStreaming(self) -> bool:
         return self._cam().streaming
 
     def BeginAcquisition(self) -> None:
-        cam = self._cam()
-        cam._require()
-        if cam.streaming:
-            raise SpinnakerException(
-                f"camera {cam.serial} is already acquiring",
-                SPINNAKER_ERR_RESOURCE_IN_USE,
-            )
-        cam.streaming = True
+        sim = self._cam()
+        _call(sim, sim.start, state=SPINNAKER_ERR_RESOURCE_IN_USE)
 
     def EndAcquisition(self) -> None:
-        cam = self._cam()
-        if not cam.streaming:
-            raise SpinnakerException(
-                f"camera {cam.serial} is not acquiring", SPINNAKER_ERR_ERROR
-            )
-        cam.streaming = False
+        sim = self._cam()
+        _call(sim, sim.stop)
 
     def GetNextImage(self, grabTimeout: int = EVENT_TIMEOUT_INFINITE) -> FakeImage:
-        cam = self._cam()
-        cam.grab_timeouts.append(grabTimeout)
-        return cam._next_image()
+        # Real PySpin blocks until the grab timeout; the simulation fails at once.
+        sim = self._cam()
+        frame = _call(sim, sim.next_frame)
+        return FakeImage(frame, self._system.module.image_status[frame.status])
 
     def GetNodeMap(self) -> NodeMap:
-        return NodeMap(self._cam().nodes)
+        sim = self._cam()
+        return NodeMap(_CameraNodes(sim), lambda: list(sim.nodes))
 
     def GetTLDeviceNodeMap(self) -> NodeMap:
-        return NodeMap(self._cam().tl_device_nodes)
+        nodes = self._system.module.transport(self._cam()).device
+        return NodeMap(nodes, lambda: list(nodes.nodes))
 
     def GetTLStreamNodeMap(self) -> NodeMap:
-        return NodeMap(self._cam().tl_stream_nodes)
+        nodes = self._system.module.transport(self._cam()).stream
+        return NodeMap(nodes, lambda: list(nodes.nodes))
 
 
 class CameraList:
@@ -1051,7 +742,8 @@ class FakeSystem:
     the driver takes and releases the system exactly once.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, module: "FakePySpin") -> None:
+        self.module = module
         self.cameras: list[FakeCamera] = []
         self.version = LibraryVersion(4, 4, 0, 0)
         self.instances = 0
@@ -1101,7 +793,7 @@ class FakeSystem:
             held.append(f"{self.uncleared_lists} camera list(s) not cleared")
         if self._live_pointers:
             held.append(f"{self.live_pointers} camera reference(s) still held")
-        initialized = [c.serial for c in self.cameras if c.initialized]
+        initialized = [c.serial for c in self.cameras if c.opened]
         if initialized:
             held.append(f"camera(s) {', '.join(initialized)} still initialized")
         if held:
@@ -1117,6 +809,10 @@ class FakePySpin(ModuleType):
 
     Args:
         cameras: Cameras attached from the start.
+
+    Attributes:
+        image_status: The image status each `BufferStatus` is reported as.
+            Change it to report a different reason for an incomplete frame.
     """
 
     SpinnakerException = SpinnakerException
@@ -1133,14 +829,25 @@ class FakePySpin(ModuleType):
         super().__init__("PySpin")
         for name, value in CONSTANTS.items():
             setattr(self, name, value)
-        self.system = FakeSystem()
+        self.image_status = {
+            BufferStatus.COMPLETE: SPINNAKER_IMAGE_STATUS_NO_ERROR,
+            BufferStatus.MISSING_TRAILER: SPINNAKER_IMAGE_STATUS_MISSING_TRAILER,
+            BufferStatus.INCOMPLETE: SPINNAKER_IMAGE_STATUS_DATA_INCOMPLETE,
+        }
+        self._transports: dict[int, _Transport] = {}
+        self.system = FakeSystem(self)
         self.System = self.system
         for camera in cameras:
             self.attach(camera)
 
+    def transport(self, sim: FakeCamera) -> _Transport:
+        """The transport-layer node maps PySpin keeps for a camera."""
+        return self._transports.setdefault(id(sim), _Transport(sim))
+
     def attach(self, camera: FakeCamera) -> FakeCamera:
         """Plug a camera in."""
         camera.attached = True
+        self.transport(camera)
         self.system.cameras.append(camera)
         return camera
 
@@ -1148,7 +855,7 @@ class FakePySpin(ModuleType):
         """Unplug a camera. Existing pointers to it start failing."""
         camera = next(c for c in self.system.cameras if c.serial == serial)
         camera.attached = False
-        camera.initialized = False
+        camera.opened = False
         camera.streaming = False
         self.system.cameras.remove(camera)
         return camera

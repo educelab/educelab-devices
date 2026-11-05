@@ -692,6 +692,8 @@ class FakeConnection:
         self.grab_timeouts: list[float | None] = []
         # Every node whose access, value, range or entries the core asked for.
         self.node_reads: list[str] = []
+        # The exposure_time given to each stop_acquisition() and close().
+        self.stop_exposure_times: list[float] = []
 
     @property
     def times_arrivals(self) -> bool:
@@ -759,7 +761,8 @@ class FakeConnection:
     def start_acquisition(self) -> None:
         self._do(self.camera.start)
 
-    def stop_acquisition(self) -> None:
+    def stop_acquisition(self, exposure_time: float = 0.0) -> None:
+        self.stop_exposure_times.append(exposure_time)
         if self.camera.streaming:
             self._do(self.camera.stop)
 
@@ -767,12 +770,16 @@ class FakeConnection:
         self.grab_timeouts.append(timeout)
         return FakeBuffer(self._do(self.camera.next_frame))
 
-    def close(self) -> None:
+    def close(self, exposure_time: float = 0.0) -> None:
         if self.closed:
             return
         self.closed = True
         problems = []
-        for step in (self.stop_acquisition, lambda: self._do(self.camera.close)):
+        steps = (
+            lambda: self.stop_acquisition(exposure_time),
+            lambda: self._do(self.camera.close),
+        )
+        for step in steps:
             try:
                 step()
             except DeviceError as exc:

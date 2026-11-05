@@ -391,12 +391,12 @@ SETTING_NODES = {
     "resulting_frame_rate": {"AcquisitionResultingFrameRate", "AcquisitionFrameRate"},
 }
 
-# A write may also raise a self-slowing camera's frame rate, and priming a
-# software trigger waits out an exposure.
+# A write may also raise a self-slowing camera's frame rate, and one that pauses
+# acquisition reads the exposure the backend may wait out.
 WRITE_NODES = {
     EXPOSURE_TIME: {"AcquisitionFrameRate"},
-    PIXEL_FORMAT: {"AcquisitionFrameRate"},
-    THROUGHPUT_LIMIT: {"AcquisitionFrameRate"},
+    PIXEL_FORMAT: {"AcquisitionFrameRate", "ExposureTime"},
+    THROUGHPUT_LIMIT: {"AcquisitionFrameRate", "ExposureTime"},
     TRIGGER: {"ExposureTime"},
 }
 
@@ -476,6 +476,18 @@ def test_exposure_time_is_written_in_microseconds(camera, fake):
     camera.set_setting(EXPOSURE_TIME, 0.02)
     assert fake.get("ExposureTime") == pytest.approx(20_000.0)
     assert camera.setting(EXPOSURE_TIME).value == pytest.approx(0.02)
+
+
+def test_stopping_and_closing_pass_the_exposure_time(backend):
+    # A backend may wait for the frame being exposed before dropping its stream.
+    with GenICamCamera(MONO, backend) as camera:
+        camera.set_setting("ExposureAuto", "Off")
+        camera.set_setting(EXPOSURE_TIME, 0.02)
+        camera.set_setting(PIXEL_FORMAT, "Mono16")
+        conn = connection(backend)
+        assert conn.stop_exposure_times[-1] == pytest.approx(0.02)
+        camera.set_setting(EXPOSURE_TIME, 0.03)
+    assert conn.stop_exposure_times[-1] == pytest.approx(0.03)
 
 
 def test_exposure_time_limits_survive_the_unit_conversion(camera, fake):

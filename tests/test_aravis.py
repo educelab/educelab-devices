@@ -41,8 +41,8 @@ COLOR = "4108000002"
 
 @pytest.fixture(autouse=True)
 def quick_drain(monkeypatch):
-    # A fake stream stops receiving the moment its camera stops sending.
-    monkeypatch.setattr(aravis, "_DRAIN_QUIET_S", 0.0)
+    # A fake stream receives the frames still in flight within a few polls.
+    monkeypatch.setattr(aravis, "_DRAIN_QUIET_S", 0.01)
 
 
 @pytest.fixture
@@ -391,6 +391,19 @@ def test_a_restart_waits_for_the_frame_still_arriving(repository):
         frame = camera.capture_frame()
     assert not arv_camera.wedged
     assert frame.pixel_format == "Mono16"
+
+
+def test_draining_waits_out_the_exposure_time_it_is_given(repository):
+    # A frame being exposed at the stop is sent once its exposure ends.
+    with AravisCamera(MONO, repository=repository) as camera:
+        conn = connection_of(camera)
+        started = time.perf_counter()
+        conn.stop_acquisition(exposure_time=0.2)
+        assert time.perf_counter() - started >= 0.2
+        started = time.perf_counter()
+        conn.start_acquisition()
+        conn.stop_acquisition()
+        assert time.perf_counter() - started < 0.1
 
 
 def test_draining_gives_up_on_a_camera_that_keeps_sending(

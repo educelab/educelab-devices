@@ -518,7 +518,7 @@ class _PySpinConnection:
     def start_acquisition(self) -> None:
         self._do(lambda: self._cam.BeginAcquisition())
 
-    def stop_acquisition(self) -> None:
+    def stop_acquisition(self, exposure_time: float = 0.0) -> None:
         self._do(self._end_acquisition)
 
     def _end_acquisition(self) -> None:
@@ -535,7 +535,7 @@ class _PySpinConnection:
         image = self._do(functools.partial(self._cam.GetNextImage, grab_ms))
         return _PySpinBuffer(self, image)
 
-    def close(self) -> None:
+    def close(self, exposure_time: float = 0.0) -> None:
         if self._cam is None:
             return
         problems = []

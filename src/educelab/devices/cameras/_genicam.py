@@ -15,6 +15,7 @@ with the library's own message. The core adds which camera and what it was
 doing.
 """
 
+import contextlib
 import enum
 import functools
 import logging
@@ -175,8 +176,13 @@ class Connection(Protocol):
 
     def start_acquisition(self) -> None: ...
 
-    def stop_acquisition(self) -> None:
-        """Stop acquiring. Does nothing if already stopped."""
+    def stop_acquisition(self, exposure_time: float = 0.0) -> None:
+        """Stop acquiring. Does nothing if already stopped.
+
+        ``exposure_time`` is the camera's exposure in seconds: a frame being
+        exposed at the stop is sent once it ends, which a backend that waits
+        for the camera to finish sending must allow for.
+        """
         ...
 
     def grab(self, timeout: float | None) -> Buffer:
@@ -190,8 +196,9 @@ class Connection(Protocol):
         """
         ...
 
-    def close(self) -> None:
-        """Stop acquiring and let go of the camera. Does nothing if closed.
+    def close(self, exposure_time: float = 0.0) -> None:
+        """Stop acquiring (see `stop_acquisition`) and let go of the camera.
+        Does nothing if closed.
 
         Everything is released even if a step fails.
 
@@ -537,10 +544,16 @@ class GenICamCamera(FrameCamera):
     def _release(self) -> list[str]:
         """Let go of the camera, collecting what went wrong."""
         problems = []
+        exposure = 0.0
+        if self._conn is not None:
+            # Best effort: an unplugged camera can't say, and must still close.
+            with contextlib.suppress(DeviceError):
+                exposure = self._exposure() or 0.0
         conn, self._conn = self._conn, None
+        self._descriptors = {}
         if conn is not None:
             try:
-                conn.close()
+                conn.close(exposure)
             except DeviceError as exc:
                 problems.append(str(exc))
         self._timestamp_offset = None
@@ -584,7 +597,8 @@ class GenICamCamera(FrameCamera):
     @contextmanager
     def _acquisition_paused(self) -> Iterator[None]:
         conn = self._connection
-        self._call("end acquisition", conn.stop_acquisition)
+        exposure = self._exposure() or 0.0
+        self._call("end acquisition", lambda: conn.stop_acquisition(exposure))
         try:
             yield
         finally:

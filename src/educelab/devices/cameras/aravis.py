@@ -21,7 +21,6 @@ from typing import Any, TypeVar
 import numpy.typing as npt
 
 from educelab.devices.cameras._genicam import (
-    _EXPOSURE_NODES,
     BufferStatus,
     GenICamCamera,
     pfnc_name,
@@ -212,6 +211,8 @@ class _AravisConnection:
         self._stream: Any = None
         self._acquiring = False
         self._async = False
+        # The exposure the core last stopped with, for draining after a failed start.
+        self._exposure_time = 0.0
         # Refuse writes to read-only nodes before they reach the camera. Range
         # checks stay off: the core checks ranges itself, and Aravis's check
         # refuses Mono16 on the CM3-U3-50S5M (usb3-vision.md, Hardware runs).
@@ -341,7 +342,8 @@ class _AravisConnection:
             raise
         self._acquiring = True
 
-    def stop_acquisition(self) -> None:
+    def stop_acquisition(self, exposure_time: float = 0.0) -> None:
+        self._exposure_time = exposure_time
         if not self._acquiring:
             return
         self._acquiring = False
@@ -374,7 +376,8 @@ class _AravisConnection:
         stream = self._stream
         if not self._async or stream is None:
             return
-        exposure = self._exposure_s()
+        # A frame being exposed at the stop is sent once its exposure ends.
+        exposure = self._exposure_time
         quiet_s = _DRAIN_QUIET_S + exposure
         now = started = time.perf_counter()
         deadline = now + _DRAIN_LIMIT_S + exposure
@@ -403,16 +406,6 @@ class _AravisConnection:
             self._do(lambda: stream.get_info_uint64_by_name("n_transferred_bytes"))
         )
 
-    def _exposure_s(self) -> float:
-        # A frame being exposed at the stop is sent once its exposure ends.
-        for name in _EXPOSURE_NODES:
-            try:
-                if self.is_readable(name):
-                    return self.get_float(name) / 1e6
-            except DeviceError:
-                pass
-        return 0.0
-
     def grab(self, timeout: float | None) -> "_AravisBuffer":
         if not self._acquiring:
             raise DeviceError("the camera isn't acquiring")
@@ -431,12 +424,12 @@ class _AravisConnection:
             buffer = newer
         return _AravisBuffer(self, buffer)
 
-    def close(self) -> None:
+    def close(self, exposure_time: float = 0.0) -> None:
         if self._camera is None:
             return
         problem = None
         try:
-            self.stop_acquisition()
+            self.stop_acquisition(exposure_time)
         except DeviceError as exc:
             problem = f"stop acquisition: {exc}"
         # Aravis lets go of the camera when the last reference to it goes.

@@ -452,6 +452,7 @@ and writable again under `Off`, and every listed pixel format captures (hardware
   |---|---|
   | `SPINNAKER_ERR_TIMEOUT` (-1011) | `DeviceTimeout`; before the camera's first frame, the message adds that another program (e.g. SpinView) may be streaming from it |
   | `SPINNAKER_ERR_ACCESS_DENIED` (-1005) from `Init()` | `DeviceBusy` |
+  | a camera already initialized in this process | `DeviceBusy`, before `Init()` ([Hazards](#hazards)) |
   | any error writing a setting | `CommandRejected` |
   | no camera with the serial | `DeviceNotFound`, listing the attached serials |
   | anything else | `DeviceError` |
@@ -544,6 +545,12 @@ and writable again under `Off`, and every listed pixel format captures (hardware
   them to `DeviceError`s raised outside the `except` block, so they carry no
   `__cause__` or `__context__`. The problem has been seen with the fake PySpin in the
   test suite, not on a rig.
+- **Opening a camera twice in one process** (verified 2026-11-05 on CM3 20305122):
+  pointers from separate `GetCameras()` lists share one camera, so the second `Init()`
+  succeeds and only `BeginAcquisition()` fails, with `-1004` ("Camera is already
+  streaming"). Cleaning up after that failure ended acquisition and de-initialized the
+  camera under the first open, whose next read failed with `-2006`. The driver checks
+  `IsInitialized()` first and raises `DeviceBusy` without touching the camera.
 - **Unreleased image buffers** (`pgs-scan` #83): `pgs-scan` released only the last
   frame of its stale-frame loop. With `NewestOnly` buffering the pool is small, so leaked
   buffers pile up until `GetNextImage()` blocks, which shows up as intermittent capture

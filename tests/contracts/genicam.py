@@ -61,6 +61,18 @@ class BackendContract:
             backend.open(SERIAL)
         assert not sim.opened
 
+    def test_open_a_camera_already_open_raises_device_busy(self, backend, sim):
+        # The failed open mustn't stop or close the camera under the first one.
+        first = backend.open(SERIAL)
+        first.start_acquisition()
+        with pytest.raises(DeviceBusy):
+            backend.open(SERIAL)
+        assert sim.opened and sim.streaming
+        first.get_float("ExposureTime")
+        first.grab(1.0).release()
+        first.close()
+        assert not sim.opened
+
     def test_close_lets_go_of_the_camera(self, backend, sim):
         conn = backend.open(SERIAL)
         assert sim.opened

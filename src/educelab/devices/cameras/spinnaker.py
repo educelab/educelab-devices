@@ -356,9 +356,17 @@ class _PySpinBackend:
         system.open()
         try:
             cam = system._camera(serial)
+            # Init() again would succeed on the camera this program already
+            # has, and cleaning up after the failure would close that one.
+            in_use = cam is not None and cam.IsInitialized()
         except BaseException:
+            cam = None
             system.close()
             raise
+        if in_use:
+            del cam
+            system.close()
+            raise DeviceBusy(f"camera {serial} is already open in this program")
         if cam is None:
             system.close()
             return None

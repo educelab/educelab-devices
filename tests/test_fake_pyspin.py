@@ -124,6 +124,19 @@ def test_a_camera_held_elsewhere_refuses_init(pyspin):
     assert info.value.errorcode == pyspin.SPINNAKER_ERR_ACCESS_DENIED
 
 
+def test_init_again_in_the_same_program_is_allowed(pyspin):
+    # As on a CM3: the pointers share one camera, so only the second
+    # BeginAcquisition() fails.
+    cam, again = first(pyspin), first(pyspin)
+    cam.Init()
+    cam.BeginAcquisition()
+    again.Init()
+    with pytest.raises(pyspin.SpinnakerException) as info:
+        again.BeginAcquisition()
+    assert info.value.errorcode == pyspin.SPINNAKER_ERR_RESOURCE_IN_USE
+    assert again.IsStreaming()
+
+
 def test_released_images_are_overwritten_under_their_arrays(pyspin):
     cam = first(pyspin)
     cam.Init()

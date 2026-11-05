@@ -647,7 +647,10 @@ class CameraPtr:
         return self._cam().serial
 
     def Init(self) -> None:
+        # Initializing a camera this program already has does nothing.
         sim = self._cam()
+        if sim.opened and sim.attached:
+            return
         _call(sim, sim.open)
 
     def DeInit(self) -> None:

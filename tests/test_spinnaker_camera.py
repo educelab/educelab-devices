@@ -11,6 +11,7 @@ import numpy as np
 import pytest
 
 from contracts import FrameCameraContract
+from contracts.genicam import BackendContract
 from educelab.devices import DeviceInfo
 from educelab.devices.app.cli import main
 from educelab.devices.cameras import (
@@ -620,6 +621,12 @@ def test_preview_releases_its_buffer(camera, fake):
 
 
 # --- Contracts ----------------------------------------------------------------
+
+
+class TestPySpinBackend(BackendContract):
+    @pytest.fixture
+    def make_backend(self):
+        return lambda cameras: spinnaker._PySpinBackend(FakePySpin(cameras))
 
 
 class TestSpinnakerCameraContract(FrameCameraContract):

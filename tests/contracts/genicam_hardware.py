@@ -282,7 +282,17 @@ class GenICamHardwareTests:
         try:
             camera.set_setting(THROUGHPUT_LIMIT, target)
             assert camera.setting(THROUGHPUT_LIMIT).value == pytest.approx(target)
-            camera.capture_frame(not_before=self.fresh(camera), timeout=5.0)
+            frame = camera.capture_frame(not_before=self.fresh(camera), timeout=5.0)
+            rate = camera.settings().get("resulting_frame_rate")
+            if rate is not None and rate.value:
+                # Bytes per second allows ~target / frame size frames/s; bits
+                # would allow an eighth of that. This settles the limit's unit.
+                expected = target * 1e6 / frame.pixels.nbytes
+                print(
+                    f"resulting {rate.value:.2f} frames/s; bytes would allow "
+                    f"{expected:.2f}"
+                )
+                assert expected / 4 < rate.value <= expected * 1.1
         finally:
             if before.value is not None:
                 camera.set_setting(THROUGHPUT_LIMIT, before.value)

@@ -3,7 +3,7 @@
 **Track ID:** genicam-deepening_20261104
 **Type:** Refactor
 **Created:** 2026-11-04
-**Status:** Pending
+**Status:** In Progress (hardware runs owed; see plan.md)
 
 ## Summary
 
@@ -37,17 +37,17 @@ ADR 0006 put the GenICam behaviour in one core behind a backend seam: a node map
 
 ## Acceptance Criteria
 
-- [ ] `tests/fakes/pyspin.py` is a PySpin-shaped skin over `fakes.genicam.FakeCamera` and holds no camera simulation of its own.
-- [ ] `TestPySpinBackend(BackendContract)` passes.
-- [ ] `test_spinnaker_camera.py` keeps only PySpin-specific behaviour: `System` sharing and refcounting, the SDK version check, error-code and timeout translation, the image-status mapping, no-chaining, and `discover`. The duplicated tests are deleted, not kept as a smoke subset.
-- [ ] `test_spinnaker_hardware.py` subclasses `GenICamHardwareTests`, keeps only Spinnaker-specific checks, and passes on the CM3.
-- [ ] Each GenICam setting is one descriptor that reads and writes it. `_settings()`, `_setting(name)` and `_set_setting()` are lookups.
-- [ ] `setting(name)` and `set_setting(name, …)` read only the nodes that setting needs. A test on the fake backend counts node reads. `setting(name)` equals `settings()[name]` for every canonical and native setting.
-- [ ] The time of a `set_setting` on the CM3 and the IDS, before and after, is recorded in their hardware docs.
-- [ ] `educelab.devices.cameras` exports `GenICamCamera`, `TRIGGER`, `THROUGHPUT_LIMIT` and `host_time`. `_capture.py` imports only public names. `_genicam` stays private.
-- [ ] `docs/guide.md` documents the GenICam frame metadata keys.
-- [ ] `Setting.nearest()` can refuse values more than half a step past either end, and `_capture.py` uses it.
-- [ ] `aravis.py` no longer imports from `_genicam` past the backend seam.
+- [x] `tests/fakes/pyspin.py` is a PySpin-shaped skin over `fakes.genicam.FakeCamera` and holds no camera simulation of its own.
+- [x] `TestPySpinBackend(BackendContract)` passes.
+- [x] `test_spinnaker_camera.py` keeps only PySpin-specific behaviour: `System` sharing and refcounting, the SDK version check, error-code and timeout translation, the image-status mapping, no-chaining, and `discover`. The duplicated tests are deleted, not kept as a smoke subset.
+- [x] `test_spinnaker_hardware.py` subclasses `GenICamHardwareTests`, keeps only Spinnaker-specific checks, and passes on the CM3.
+- [x] Each GenICam setting is one descriptor that reads and writes it. `_settings()`, `_setting(name)` and `_set_setting()` are lookups.
+- [x] `setting(name)` and `set_setting(name, …)` read only the nodes that setting needs. A test on the fake backend counts node reads. `setting(name)` equals `settings()[name]` for every canonical and native setting.
+- [x] The time of a `set_setting` on the CM3 and the IDS, before and after, is recorded in their hardware docs.
+- [x] `educelab.devices.cameras` exports `GenICamCamera`, `TRIGGER`, `THROUGHPUT_LIMIT` and `host_time`. `_capture.py` imports only public names. `_genicam` stays private.
+- [x] `docs/guide.md` documents the GenICam frame metadata keys.
+- [x] `Setting.nearest()` can refuse values more than half a step past either end, and `_capture.py` uses it.
+- [x] `aravis.py` no longer imports from `_genicam` past the backend seam.
 
 ## Dependencies
 

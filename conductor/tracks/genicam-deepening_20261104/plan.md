@@ -76,7 +76,7 @@ Move the Spinnaker tests onto the shared fake first, so the descriptor work in P
   - `_settings()` reads every descriptor, `_setting(name)` reads one (`KeyError` for an unknown name or a missing feature), and `_set_setting()` writes one. `ExposureAuto` and `GainAuto` are entries of their own, so there's no fallthrough.
   - Rejected: a table of (reader, writer) method pairs on the camera. Fewer types, but the vendor branches would stay inside the methods.
 - [x] Task 2.2: Measure a `set_setting` on the CM3 and the IDS, as the baseline.
-  - `GenICamHardwareTests.test_time_to_read_and_write_one_setting` prints the median of 20 for `exposure_time`; the tag `genicam-settings-baseline` marks the code before descriptors. On 2026-11-05:
+  - `GenICamHardwareTests.test_time_to_read_and_write_one_setting` prints the median of 20 for `exposure_time`; commit `e4200a4` is the code before descriptors. On 2026-11-05:
 
     | Camera | Backend | `settings()` | `setting()` | `set_setting()` |
     |---|---|---|---|---|

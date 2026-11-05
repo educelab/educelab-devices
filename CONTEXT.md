@@ -16,6 +16,10 @@ _Avoid_: Client, app
 A device implementation with no hardware behind it that behaves like the real one for testing and development.
 _Avoid_: Mock, fake, virtual device
 
+**Lab board**:
+A controller board whose firmware is maintained in this repository and follows the lab firmware protocol (ADR 0004), whatever role it offers and whoever designed the hardware. Today the MISHA panels and the XLC2, both lights.
+_Avoid_: Controller, Arduino, serial device
+
 ### Roles
 
 **Camera**:

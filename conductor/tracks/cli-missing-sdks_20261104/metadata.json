@@ -1,0 +1,19 @@
+{
+  "id": "cli-missing-sdks_20261104",
+  "title": "CLI Errors and Missing SDKs",
+  "type": "refactor",
+  "status": "pending",
+  "created": "2026-11-04T00:00:00Z",
+  "updated": "2026-11-04T00:00:00Z",
+  "phases": {
+    "total": 0,
+    "completed": 0
+  },
+  "tasks": {
+    "total": 0,
+    "completed": 0
+  },
+  "current_phase": null,
+  "current_task": null,
+  "commits": []
+}

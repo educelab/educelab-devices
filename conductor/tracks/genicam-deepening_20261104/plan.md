@@ -3,7 +3,7 @@
 **Track ID:** genicam-deepening_20261104
 **Spec:** [spec.md](./spec.md)
 **Created:** 2026-11-04
-**Status:** [~] In Progress
+**Status:** [x] Complete
 
 ## Overview
 
@@ -122,18 +122,18 @@ Move the Spinnaker tests onto the shared fake first, so the descriptor work in P
 
 ### Hardware runs owed
 
-Run together at the end of the track, with the cameras attached (`venv/`, Python 3.12, `-s`):
+Run together at the end of the track, with the cameras attached (`venv/`, Python 3.12, `-s`). All passed on 2026-11-06:
 
-- [ ] Aravis on the IDS: `ARAVIS_SERIAL=4110091493 venv/bin/python -m pytest -m hardware tests/test_aravis_hardware.py -s`. Checks the drain with the exposure passed through the seam (3.4).
-- [ ] Aravis on a CM3: the same with `ARAVIS_SERIAL=0135BAD4`. The CM3 is the camera whose endpoint wedged when its stream was dropped mid-frame.
-- [ ] Spinnaker and GenTL on a CM3 (`SPINNAKER_SERIAL` / `GENTL_SERIAL=20305122`), for the seam's new signatures (3.4).
-- [ ] `el-devices genicam --backend aravis --serial 4110091493 --frames 5 --gain 6` rounds to 6.021 dB, and `--gain 30` is refused (3.3).
+- [x] Aravis on the IDS: `ARAVIS_SERIAL=4110091493 venv/bin/python -m pytest -m hardware tests/test_aravis_hardware.py -s`. Checks the drain with the exposure passed through the seam (3.4). 25 passed, 2 skipped (no `ExposureAuto`; frames timed by arrival).
+- [x] Aravis on a CM3: the same with `ARAVIS_SERIAL=0135BAD4`. The CM3 is the camera whose endpoint wedged when its stream was dropped mid-frame. 26 passed, 1 skipped (frames timed by latch).
+- [x] Spinnaker and GenTL on a CM3 (`SPINNAKER_SERIAL` / `GENTL_SERIAL=20305122`), for the seam's new signatures (3.4). 27 passed, 1 skipped; 26 passed, 1 skipped.
+- [x] `el-devices genicam --backend aravis --serial 4110091493 --frames 5 --gain 6` rounds to 6.021 dB, and `--gain 30` is refused (3.3): "gain 30 dB is outside 0 to 18.06 dB", exit 1.
 
 
-- [ ] All acceptance criteria met
-- [ ] Tests passing
-- [ ] Documentation updated
-- [ ] Ready for review
+- [x] All acceptance criteria met
+- [x] Tests passing
+- [x] Documentation updated
+- [x] Ready for review (PR #31)
 
 ---
 

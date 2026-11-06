@@ -3,7 +3,7 @@
 **Track ID:** genicam-deepening_20261104
 **Type:** Refactor
 **Created:** 2026-11-04
-**Status:** In Progress (hardware runs owed; see plan.md)
+**Status:** Complete
 
 ## Summary
 

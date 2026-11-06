@@ -2,9 +2,9 @@
   "id": "genicam-deepening_20261104",
   "title": "GenICam Deepening",
   "type": "refactor",
-  "status": "in_progress",
+  "status": "complete",
   "created": "2026-11-04T00:00:00Z",
-  "updated": "2026-11-05T00:00:00Z",
+  "updated": "2026-11-06T00:00:00Z",
   "phases": {
     "total": 3,
     "completed": 3
@@ -14,7 +14,6 @@
     "completed": 15
   },
   "current_phase": 3,
-  "current_task": "final verification",
   "commits": [
     "e1672f0",
     "6729aeb",
@@ -33,6 +32,8 @@
     "0e999a8",
     "ef3ec55",
     "d8554e9",
-    "29d04d2"
+    "29d04d2",
+    "4071ae2",
+    "3922f85"
   ]
 }

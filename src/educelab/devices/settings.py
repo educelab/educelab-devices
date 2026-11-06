@@ -150,6 +150,9 @@ class Setting:
     ) -> None:
         """Raise if ``value`` is more than ``below`` under ``low`` or ``above``
         over ``high``."""
+        if math.isnan(value):
+            # Every comparison with NaN is false, so it would pass the checks below.
+            raise ValueError(f"{self.name} can't be NaN")
 
         def past(limit: float) -> bool:
             return not math.isclose(value, limit, rel_tol=1e-9, abs_tol=1e-12)

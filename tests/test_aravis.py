@@ -447,6 +447,18 @@ def test_a_failed_start_stops_and_drains(repository, sim):
         assert not arv_camera.wedged
 
 
+def test_a_failed_start_waits_out_the_exposure_time_it_is_given(repository, sim):
+    with AravisCamera(MONO, repository=repository) as camera:
+        conn = connection_of(camera)
+        conn.stop_acquisition()
+        sim.failures["start"] = FakeCameraError("timeout", "no answer")
+        started = time.perf_counter()
+        with pytest.raises(DeviceTimeout):
+            conn.start_acquisition(exposure_time=0.2)
+        assert time.perf_counter() - started >= 0.2
+        del sim.failures["start"]
+
+
 def test_a_drain_that_errors_still_closes(repository, monkeypatch, caplog):
     def fail(self, name):
         raise GLibError("lost", DEVICE_DOMAIN, int(ArvDeviceError.TRANSFER_ERROR))

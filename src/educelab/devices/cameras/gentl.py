@@ -584,6 +584,7 @@ class _GenTLConnection(_Features):
     """A `Connection` onto one open GenTL device and its first data stream."""
 
     times_arrivals = False
+    drains_on_stop = False
 
     def __init__(
         self, genicam: Any, producer: _Producer, device: Any, serial: str
@@ -625,7 +626,7 @@ class _GenTLConnection(_Features):
 
     # --- Stream -----------------------------------------------------------------
 
-    def start_acquisition(self) -> None:
+    def start_acquisition(self, exposure_time: float = 0.0) -> None:
         gentl, stream = self._gentl, self._stream
         payload = self._do(
             lambda: (

@@ -201,6 +201,7 @@ class _AravisConnection:
     """A `Connection` onto one open Aravis camera."""
 
     times_arrivals = True
+    drains_on_stop = True
 
     def __init__(self, arv: Any, glib: Any, camera: Any, key: tuple[int, str]) -> None:
         self._key = key
@@ -211,8 +212,6 @@ class _AravisConnection:
         self._stream: Any = None
         self._acquiring = False
         self._async = False
-        # The exposure the core last stopped with, for draining after a failed start.
-        self._exposure_time = 0.0
         # Refuse writes to read-only nodes before they reach the camera. Range
         # checks stay off: the core checks ranges itself, and Aravis's check
         # refuses Mono16 on the CM3-U3-50S5M (usb3-vision.md, Hardware runs).
@@ -326,7 +325,7 @@ class _AravisConnection:
 
     # --- Stream -----------------------------------------------------------------
 
-    def start_acquisition(self) -> None:
+    def start_acquisition(self, exposure_time: float = 0.0) -> None:
         # TLParamsLocked is left alone, as Aravis's own tools do: with it set,
         # the U3-36PxXCP-M streams nothing (ids-u3-36p0xcp.md, Hazards).
         # A stream only while acquiring, sized to the current payload.
@@ -338,12 +337,11 @@ class _AravisConnection:
             # frame finish. A stream left behind keeps its channel on.
             with contextlib.suppress(DeviceError):
                 self._do(self._camera.stop_acquisition)
-            self._drop_stream()
+            self._drop_stream(exposure_time)
             raise
         self._acquiring = True
 
     def stop_acquisition(self, exposure_time: float = 0.0) -> None:
-        self._exposure_time = exposure_time
         if not self._acquiring:
             return
         self._acquiring = False
@@ -351,9 +349,9 @@ class _AravisConnection:
             self._do(self._camera.stop_acquisition)
         finally:
             # Even after a failed stop, since the camera may still be sending.
-            self._drop_stream()
+            self._drop_stream(exposure_time)
 
-    def _drop_stream(self) -> None:
+    def _drop_stream(self, exposure_time: float) -> None:
         """Drop the stream once the camera has finished sending.
 
         Dropping it disables its channel (the U3-36PxXCP-M refuses PixelFormat
@@ -361,11 +359,11 @@ class _AravisConnection:
         (ids-u3-36p0xcp.md, Pixel formats).
         """
         try:
-            self._drain()
+            self._drain(exposure_time)
         finally:
             self._stream = None
 
-    def _drain(self) -> None:
+    def _drain(self, exposure_time: float) -> None:
         """Wait until the camera has finished sending, after AcquisitionStop.
 
         Dropping an async stream mid-frame cancels its transfers part-way, which
@@ -377,10 +375,9 @@ class _AravisConnection:
         if not self._async or stream is None:
             return
         # A frame being exposed at the stop is sent once its exposure ends.
-        exposure = self._exposure_time
-        quiet_s = _DRAIN_QUIET_S + exposure
+        quiet_s = _DRAIN_QUIET_S + exposure_time
         now = started = time.perf_counter()
-        deadline = now + _DRAIN_LIMIT_S + exposure
+        deadline = now + _DRAIN_LIMIT_S + exposure_time
         try:
             received = self._transferred(stream)
             quiet_since = now

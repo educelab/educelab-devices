@@ -490,6 +490,46 @@ def test_stopping_and_closing_pass_the_exposure_time(backend):
     assert conn.stop_exposure_times[-1] == pytest.approx(0.03)
 
 
+def test_the_first_start_is_given_the_exposure_time(backend, fake):
+    # So a start that fails at open waits out a long exposure before giving up.
+    fake.set("ExposureAuto", "Off")
+    fake.set("ExposureTime", 250_000.0)
+    with GenICamCamera(MONO, backend):
+        assert connection(backend).start_exposure_times[0] == pytest.approx(0.25)
+
+
+def test_a_failed_exposure_read_does_not_block_a_paused_write(camera, backend, fake):
+    fake.failures["read ExposureTime"] = FakeCameraError("io", "link busy")
+    camera.set_setting(PIXEL_FORMAT, "Mono16")
+    assert fake.get("PixelFormat") == "Mono16"
+    assert connection(backend).stop_exposure_times[-1] == 0.0
+
+
+def test_close_lets_go_even_if_the_exposure_read_raises_anything(backend, monkeypatch):
+    camera = GenICamCamera(MONO, backend)
+    camera.open()
+
+    def unplugged(name):
+        raise RuntimeError("raw library error")
+
+    monkeypatch.setattr(connection(backend), "is_readable", unplugged)
+    camera.close()
+    assert connection(backend).closed
+    assert_released(backend)
+
+
+def test_a_connection_that_does_not_drain_is_not_asked_for_the_exposure(
+    camera, backend
+):
+    conn = connection(backend)
+    conn.drains_on_stop = False
+    conn.node_reads.clear()
+    camera.set_setting(PIXEL_FORMAT, "Mono16")
+    camera.close()
+    assert "ExposureTime" not in conn.node_reads
+    assert conn.stop_exposure_times[-2:] == [0.0, 0.0]
+
+
 def test_exposure_time_limits_survive_the_unit_conversion(camera, fake):
     camera.set_setting("ExposureAuto", "Off")
     for limit in ("minimum", "maximum"):

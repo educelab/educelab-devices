@@ -298,6 +298,18 @@ def test_strict_nearest_checks_only_the_ends_a_setting_has():
         open_top.nearest(-1, strict=True)
 
 
+@pytest.mark.parametrize(
+    "setting",
+    [
+        Setting("gain", 0.0, choices=(0.0, 6.0206, 12.0412), unit="dB"),
+        Setting("gain", 0.0, minimum=0.0, maximum=18.0, unit="dB"),
+    ],
+)
+def test_strict_nearest_refuses_nan(setting):
+    with pytest.raises(ValueError, match="NaN"):
+        setting.nearest(math.nan, strict=True)
+
+
 def test_setting_without_a_value_still_offers_its_choices():
     bulb = Setting(EXPOSURE_TIME, None, choices=(1 / 250, 1 / 60, 1.0), unit="s")
     assert bulb.nearest(0.02) == 1 / 60

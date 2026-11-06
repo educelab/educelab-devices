@@ -299,10 +299,17 @@ class GenICamHardwareTests:
             assert frame.pixels.dtype == (np.uint8 if depth == 8 else np.uint16)
             assert int(frame.pixels.max()) < 2**depth
 
-    def test_throughput_limit_round_trips_and_is_restored(self, camera):
+    def test_throughput_limit_round_trips_and_is_restored(self, restore):
+        camera = restore
         settings = camera.settings()
         if THROUGHPUT_LIMIT not in settings:
             pytest.skip("this camera has no DeviceLinkThroughputLimit")
+        # The shortest exposure, so the limit and not the exposure sets the rate.
+        if "ExposureAuto" in settings:
+            camera.set_setting("ExposureAuto", "Off")
+        shortest = camera.setting(EXPOSURE_TIME).minimum
+        if shortest is not None:
+            camera.set_setting(EXPOSURE_TIME, shortest)
         before = settings[THROUGHPUT_LIMIT]
         print(
             f"throughput limit {before.value} MB/s, range {before.minimum}-"

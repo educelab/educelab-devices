@@ -692,7 +692,10 @@ class FakeConnection:
         self.grab_timeouts: list[float | None] = []
         # Every node whose access, value, range or entries the core asked for.
         self.node_reads: list[str] = []
-        # The exposure_time given to each stop_acquisition() and close().
+        # Whether the core should hand over the exposure time, as for Aravis.
+        self.drains_on_stop = True
+        # The exposure_time given to each start, and to each stop and close.
+        self.start_exposure_times: list[float] = []
         self.stop_exposure_times: list[float] = []
 
     @property
@@ -758,7 +761,8 @@ class FakeConnection:
     def execute(self, name: str) -> None:
         self._do(lambda: self.camera.execute(name))
 
-    def start_acquisition(self) -> None:
+    def start_acquisition(self, exposure_time: float = 0.0) -> None:
+        self.start_exposure_times.append(exposure_time)
         self._do(self.camera.start)
 
     def stop_acquisition(self, exposure_time: float = 0.0) -> None:

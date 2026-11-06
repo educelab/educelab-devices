@@ -208,7 +208,7 @@ def _set_up(camera: "GenICamCamera", args: argparse.Namespace) -> str | None:
 
     serial = camera.info.serial_number
     if args.trigger == "software":
-        if TRIGGER not in camera.settings():
+        if _find(camera, TRIGGER) is None:
             return f"{serial} has no software trigger"
         if problem := _apply(camera, TRIGGER, "Software"):
             return problem
@@ -217,34 +217,34 @@ def _set_up(camera: "GenICamCamera", args: argparse.Namespace) -> str | None:
     ):
         return problem
     if args.throughput_limit is not None:
-        if THROUGHPUT_LIMIT not in camera.settings():
+        if _find(camera, THROUGHPUT_LIMIT) is None:
             return f"{serial} has no DeviceLinkThroughputLimit, so it can't be capped"
         if problem := _apply(camera, THROUGHPUT_LIMIT, args.throughput_limit):
             return problem
     if args.exposure is not None:
-        settings = camera.settings()
-        if EXPOSURE_TIME not in settings:
+        if _find(camera, EXPOSURE_TIME) is None:
             return f"{serial} has no exposure time"
-        if "ExposureAuto" in settings:
+        if _find(camera, "ExposureAuto") is not None:
             camera.set_setting("ExposureAuto", "Off")
         exposure = args.exposure
         if exposure == "min":
-            exposure = camera.settings()[EXPOSURE_TIME].minimum
+            # Read after auto exposure is off, which can change the range.
+            exposure = camera.setting(EXPOSURE_TIME).minimum
             if exposure is None:
                 return f"{serial} reports no minimum exposure"
         if problem := _apply(camera, EXPOSURE_TIME, exposure):
             return problem
     if args.gain is not None:
-        settings = camera.settings()
-        if GAIN not in settings:
+        gain_setting = _find(camera, GAIN)
+        if gain_setting is None:
             return f"{serial} has no gain"
-        if "GainAuto" in settings:
+        if _find(camera, "GainAuto") is not None:
             camera.set_setting("GainAuto", "Off")
         gain = args.gain
-        if settings[GAIN].choices:
+        if gain_setting.choices:
             # Some cameras keep only certain gains (the IDS U3-36PxXCP): round to one.
             try:
-                gain = settings[GAIN].nearest(gain, strict=True)
+                gain = gain_setting.nearest(gain, strict=True)
             except ValueError as exc:
                 return f"{serial}: {exc}"
         if problem := _apply(camera, GAIN, gain):
@@ -252,12 +252,20 @@ def _set_up(camera: "GenICamCamera", args: argparse.Namespace) -> str | None:
     return None
 
 
+def _find(camera: "GenICamCamera", name: str) -> "Setting | None":
+    """One setting, or None if the camera lacks it; cheaper than `settings()`."""
+    try:
+        return camera.setting(name)
+    except KeyError:
+        return None
+
+
 def _apply(camera: "GenICamCamera", name: str, value: "SettingValue") -> str | None:
     """Write one setting; on a bad value, say which camera and what it accepts."""
     try:
         camera.set_setting(name, value)
     except ValueError as exc:
-        setting = camera.settings().get(name)
+        setting = _find(camera, name)
         problem = f"{camera.info.serial_number}: {exc}"
         if setting and setting.minimum is not None and setting.maximum is not None:
             unit = f" {setting.unit}" if setting.unit else ""

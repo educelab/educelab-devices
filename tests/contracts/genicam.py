@@ -177,13 +177,14 @@ class BackendContract:
         assert not sim.streaming
         conn.stop_acquisition()
 
-    def test_stop_and_close_take_the_exposure_time(self, backend, sim):
+    def test_start_stop_and_close_take_the_exposure_time(self, backend, sim):
         # So a backend that waits out the frame being exposed knows how long.
         conn = backend.open(SERIAL)
-        conn.start_acquisition()
+        assert isinstance(conn.drains_on_stop, bool)
+        conn.start_acquisition(exposure_time=0.01)
         conn.stop_acquisition(exposure_time=0.01)
         assert not sim.streaming
-        conn.start_acquisition()
+        conn.start_acquisition(exposure_time=0.01)
         conn.close(exposure_time=0.01)
         assert not sim.opened
 

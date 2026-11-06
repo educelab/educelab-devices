@@ -165,6 +165,31 @@ def test_close_after_captures_releases_the_system(pyspin, fake):
 # --- Errors -------------------------------------------------------------------
 
 
+def test_a_failed_in_use_check_raises_device_error(pyspin, monkeypatch):
+    def stale_pointer(self):
+        raise SpinnakerException("invalid camera pointer")
+
+    monkeypatch.setattr(CameraPtr, "IsInitialized", stale_pointer)
+    camera = SpinnakerCamera(MONO, pyspin=pyspin)
+    with pytest.raises(DeviceError, match="invalid camera pointer") as info:
+        camera.open()
+    assert info.value.__context__ is None
+    assert_released(pyspin)
+
+
+def test_a_failed_node_lookup_raises_device_error(camera, monkeypatch):
+    def gone(self):
+        raise SpinnakerException("camera not initialized")
+
+    monkeypatch.setattr(CameraPtr, "GetNodeMap", gone)
+    conn = camera._connection
+    with pytest.raises(DeviceError, match="not initialized"):
+        conn.is_readable("ExposureTime")
+    with pytest.raises(DeviceError, match="not initialized"):
+        conn.has("ExposureTime")
+    monkeypatch.undo()
+
+
 def test_camera_held_elsewhere_raises_device_busy(pyspin, fake):
     fake.busy = True
     camera = SpinnakerCamera(MONO, pyspin=pyspin)

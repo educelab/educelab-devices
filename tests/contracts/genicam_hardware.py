@@ -10,6 +10,7 @@ with ``-s``.
 """
 
 import os
+import statistics
 import threading
 import time
 from datetime import UTC, datetime, timedelta
@@ -18,13 +19,16 @@ from typing import ClassVar
 import numpy as np
 import pytest
 
-from educelab.devices.cameras import EXPOSURE_TIME, HEIGHT, PIXEL_FORMAT, WIDTH
-from educelab.devices.cameras._genicam import (
-    RETRIES_BEFORE_REMEASURE,
+from educelab.devices.cameras import (
+    EXPOSURE_TIME,
+    HEIGHT,
+    PIXEL_FORMAT,
     THROUGHPUT_LIMIT,
     TRIGGER,
+    WIDTH,
     GenICamCamera,
 )
+from educelab.devices.cameras._genicam import RETRIES_BEFORE_REMEASURE
 from educelab.devices.errors import DeviceBusy, DeviceError, DeviceTimeout
 
 # Loose on purpose: these catch a broken offset or a wedged stream, not jitter.
@@ -124,6 +128,32 @@ class GenICamHardwareTests:
         print(f"discovered: {found.vendor!r} {found.model!r}")
         print(f"opened: {opened.vendor!r} {opened.model!r}")
         assert (opened.vendor, opened.model) == (found.vendor, found.model)
+
+    def test_time_to_read_and_write_one_setting(self, restore):
+        # Prints the times the hardware docs record (Settings).
+        camera = restore
+        if "ExposureAuto" in camera.settings():
+            camera.set_setting("ExposureAuto", "Off")
+        exposure = camera.setting(EXPOSURE_TIME)
+        low = max(exposure.minimum or 0.0, exposure.value * 0.9)
+        values = (exposure.value, low)
+
+        def median_ms(fn) -> float:
+            times = []
+            for i in range(20):
+                started = time.perf_counter()
+                fn(i)
+                times.append(time.perf_counter() - started)
+            return statistics.median(times) * 1000
+
+        every = median_ms(lambda i: camera.settings())
+        one = median_ms(lambda i: camera.setting(EXPOSURE_TIME))
+        write = median_ms(lambda i: camera.set_setting(EXPOSURE_TIME, values[i % 2]))
+        print(
+            f"median of 20: settings() {every:.1f} ms, setting() {one:.1f} ms, "
+            f"set_setting() {write:.1f} ms"
+        )
+        assert camera.setting(EXPOSURE_TIME).value == pytest.approx(low, rel=0.01)
 
     def test_settings_the_camera_offers(self, camera):
         # Records which optional features this model has (usb3-vision.md).
@@ -269,10 +299,17 @@ class GenICamHardwareTests:
             assert frame.pixels.dtype == (np.uint8 if depth == 8 else np.uint16)
             assert int(frame.pixels.max()) < 2**depth
 
-    def test_throughput_limit_round_trips_and_is_restored(self, camera):
+    def test_throughput_limit_round_trips_and_is_restored(self, restore):
+        camera = restore
         settings = camera.settings()
         if THROUGHPUT_LIMIT not in settings:
             pytest.skip("this camera has no DeviceLinkThroughputLimit")
+        # The shortest exposure, so the limit and not the exposure sets the rate.
+        if "ExposureAuto" in settings:
+            camera.set_setting("ExposureAuto", "Off")
+        shortest = camera.setting(EXPOSURE_TIME).minimum
+        if shortest is not None:
+            camera.set_setting(EXPOSURE_TIME, shortest)
         before = settings[THROUGHPUT_LIMIT]
         print(
             f"throughput limit {before.value} MB/s, range {before.minimum}-"
@@ -282,7 +319,17 @@ class GenICamHardwareTests:
         try:
             camera.set_setting(THROUGHPUT_LIMIT, target)
             assert camera.setting(THROUGHPUT_LIMIT).value == pytest.approx(target)
-            camera.capture_frame(not_before=self.fresh(camera), timeout=5.0)
+            frame = camera.capture_frame(not_before=self.fresh(camera), timeout=5.0)
+            rate = camera.settings().get("resulting_frame_rate")
+            if rate is not None and rate.value:
+                # Bytes per second allows ~target / frame size frames/s; bits
+                # would allow an eighth of that. This settles the limit's unit.
+                expected = target * 1e6 / frame.pixels.nbytes
+                print(
+                    f"resulting {rate.value:.2f} frames/s; bytes would allow "
+                    f"{expected:.2f}"
+                )
+                assert expected / 4 < rate.value <= expected * 1.1
         finally:
             if before.value is not None:
                 camera.set_setting(THROUGHPUT_LIMIT, before.value)

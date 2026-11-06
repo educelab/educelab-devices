@@ -269,6 +269,8 @@ class FakeCamera:
         # Triggers to ignore before answering again, as a real camera ignores
         # one it isn't ready for.
         self.ignore_triggers = 0
+        # Triggers to ignore by number, counting from 1.
+        self.ignored_trigger_calls: set[int] = set()
         self.ignored_while_busy = 0
         self.respond_to_triggers = True
         # Operations to fail, e.g. {"write Gain": FakeCameraError(...)}. Keys are
@@ -624,6 +626,8 @@ class FakeCamera:
             self.ignored_while_busy += 1
         elif self.ignore_triggers:
             self.ignore_triggers -= 1
+        elif self.trigger_calls in self.ignored_trigger_calls:
+            pass
         elif self.respond_to_triggers:
             self.pending_triggers.append(self.device_time_ns())
 
@@ -686,6 +690,13 @@ class FakeConnection:
         self.camera = camera
         self.closed = False
         self.grab_timeouts: list[float | None] = []
+        # Every node whose access, value, range or entries the core asked for.
+        self.node_reads: list[str] = []
+        # Whether the core should hand over the exposure time, as for Aravis.
+        self.drains_on_stop = True
+        # The exposure_time given to each start, and to each stop and close.
+        self.start_exposure_times: list[float] = []
+        self.stop_exposure_times: list[float] = []
 
     @property
     def times_arrivals(self) -> bool:
@@ -701,32 +712,41 @@ class FakeConnection:
         return self.camera.has(name)
 
     def is_readable(self, name: str) -> bool:
+        self.node_reads.append(name)
         return self.camera.access(name) in ("RW", "RO")
 
     def is_writable(self, name: str) -> bool:
+        self.node_reads.append(name)
         return self.camera.access(name) in ("RW", "WO")
 
+    def _read(self, name: str) -> Any:
+        self.node_reads.append(name)
+        return self._do(lambda: self.camera.read(name))
+
     def get_float(self, name: str) -> float:
-        return float(self._do(lambda: self.camera.read(name)))
+        return float(self._read(name))
 
     def get_int(self, name: str) -> int:
-        return int(self._do(lambda: self.camera.read(name)))
+        return int(self._read(name))
 
     def get_string(self, name: str) -> str:
-        return str(self._do(lambda: self.camera.read(name)))
+        return str(self._read(name))
 
     def get_enum(self, name: str) -> str:
-        return str(self._do(lambda: self.camera.read(name)))
+        return str(self._read(name))
 
     def float_range(self, name: str) -> tuple[float, float]:
+        self.node_reads.append(name)
         low, high = self._do(lambda: self.camera.range(name))
         return float(low), float(high)
 
     def int_range(self, name: str) -> tuple[int, int, int]:
+        self.node_reads.append(name)
         low, high, inc = self._do(lambda: self.camera.range(name))
         return int(low), int(high), int(inc)
 
     def enum_entries(self, name: str) -> tuple[str, ...]:
+        self.node_reads.append(name)
         return tuple(self._do(lambda: self.camera.entries(name)))
 
     def set_float(self, name: str, value: float) -> None:
@@ -741,10 +761,12 @@ class FakeConnection:
     def execute(self, name: str) -> None:
         self._do(lambda: self.camera.execute(name))
 
-    def start_acquisition(self) -> None:
+    def start_acquisition(self, exposure_time: float = 0.0) -> None:
+        self.start_exposure_times.append(exposure_time)
         self._do(self.camera.start)
 
-    def stop_acquisition(self) -> None:
+    def stop_acquisition(self, exposure_time: float = 0.0) -> None:
+        self.stop_exposure_times.append(exposure_time)
         if self.camera.streaming:
             self._do(self.camera.stop)
 
@@ -752,12 +774,16 @@ class FakeConnection:
         self.grab_timeouts.append(timeout)
         return FakeBuffer(self._do(self.camera.next_frame))
 
-    def close(self) -> None:
+    def close(self, exposure_time: float = 0.0) -> None:
         if self.closed:
             return
         self.closed = True
         problems = []
-        for step in (self.stop_acquisition, lambda: self._do(self.camera.close)):
+        steps = (
+            lambda: self.stop_acquisition(exposure_time),
+            lambda: self._do(self.camera.close),
+        )
+        for step in steps:
             try:
                 step()
             except DeviceError as exc:

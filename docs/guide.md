@@ -239,6 +239,33 @@ On Windows before Python 3.13, `datetime.now()` and `time.time()` tick every 15.
 so a `not_before` taken from them can be up to 15.6 ms early, letting through a frame
 exposed that much before the request. Python 3.13 and later don't have this problem.
 
+### GenICam cameras
+
+`SpinnakerCamera`, `AravisCamera` and `GenTLCamera` are all `GenICamCamera`s, which
+`educelab.devices.cameras` exports for type hints and `isinstance` checks. Besides the
+canonical settings they offer `TRIGGER` (`"Off"` or `"Software"`, where each capture
+fires a software trigger), `THROUGHPUT_LIMIT` in MB/s (`None` while the camera's limit is
+off), the camera's auto modes by their native names (`ExposureAuto`, `GainAuto`), and
+the read-only `current_throughput` and `resulting_frame_rate`, each only where the
+camera has the feature. Frame timestamps are measured against `host_time()`, a
+fine-grained `time.time()`; use it to time a capture against its frame.
+
+A frame's `metadata` holds:
+
+| Key | Meaning |
+|---|---|
+| `exposure_time`, `gain` | The settings when the frame was taken, in seconds and dB; `None` if the camera has no such node |
+| `bit_depth` | Bits per pixel value |
+| `device_timestamp_ns` | The camera's own timestamp counter, which marks the end of exposure; `frame.timestamp` is the start, in host time |
+| `frame_id` | The camera's frame counter |
+| `timestamp_source` | How `frame.timestamp` was found: `"latch"` (the camera's timestamp latch), `"arrival"` (when frames reach the host, about a millisecond less exact), `"trigger"` (the software trigger that exposed it), or `None` |
+| `stale_frames` | Frames skipped for being older than `not_before` |
+| `incomplete_frames` | Frames skipped for arriving incomplete |
+| `retries` | `stale_frames + incomplete_frames` |
+| `retriggers` | Software triggers fired again because no frame came |
+| `missing_trailer` | The frame arrived without its trailer; it's used as complete, but flagged |
+| `timestamp_remeasured` | Too many stale frames made the capture measure the timestamp offset again |
+
 ### Focus drives
 
 `focus_steps` counts steps from `last_limit`. A move that fails partway for any reason
@@ -270,6 +297,8 @@ Code that searches for a value, like automatic exposure calibration, should use
 allowed value, breaking ties toward the lower one. `direction="down"` picks the largest
 allowed value not above `value`, and `direction="up"` the smallest not below it. A value
 outside the allowed range gives the closest allowed value at that end of the range.
+With `strict=True`, a value more than half a step past either end raises `ValueError`
+instead, for rounding a value someone typed without quietly replacing one far off.
 
 A `Setting` is a snapshot. What one setting accepts can depend on others (maximum exposure
 on frame rate, shutter speeds on the exposure mode), so read it again after changing

@@ -3,6 +3,7 @@
 import math
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import ClassVar
 
 import numpy as np
@@ -17,15 +18,13 @@ from educelab.devices.cameras import (
     PIXEL_FORMAT,
     SENSOR_HEIGHT,
     SENSOR_WIDTH,
-    WIDTH,
-    _genicam,
-)
-from educelab.devices.cameras._genicam import (
     THROUGHPUT_LIMIT,
     TRIGGER,
-    BufferStatus,
+    WIDTH,
     GenICamCamera,
+    _genicam,
 )
+from educelab.devices.cameras._genicam import BufferStatus
 from educelab.devices.errors import (
     CommandRejected,
     DeviceBusy,
@@ -375,6 +374,88 @@ def test_settings_cover_exposure_gain_format_auto_modes_and_throughput(camera):
     }
 
 
+# The nodes each setting needs. Reading or writing one setting reads nothing else.
+SETTING_NODES = {
+    EXPOSURE_TIME: {"ExposureTime"},
+    "ExposureAuto": {"ExposureAuto"},
+    GAIN: {"Gain"},
+    "GainAuto": {"GainAuto"},
+    PIXEL_FORMAT: {"PixelFormat"},
+    WIDTH: {"Width"},
+    HEIGHT: {"Height"},
+    SENSOR_WIDTH: {"SensorWidth"},
+    SENSOR_HEIGHT: {"SensorHeight"},
+    THROUGHPUT_LIMIT: {"DeviceLinkThroughputLimit", "DeviceLinkThroughputLimitMode"},
+    TRIGGER: {"TriggerMode", "TriggerSource", "TriggerSelector"},
+    "current_throughput": {"DeviceLinkCurrentThroughput"},
+    "resulting_frame_rate": {"AcquisitionResultingFrameRate", "AcquisitionFrameRate"},
+}
+
+# A write may also raise a self-slowing camera's frame rate, and one that pauses
+# acquisition reads the exposure the backend may wait out.
+WRITE_NODES = {
+    EXPOSURE_TIME: {"AcquisitionFrameRate"},
+    PIXEL_FORMAT: {"AcquisitionFrameRate", "ExposureTime"},
+    THROUGHPUT_LIMIT: {"AcquisitionFrameRate", "ExposureTime"},
+    TRIGGER: {"ExposureTime"},
+}
+
+
+@pytest.fixture(params=["sfnc", "ids"])
+def any_camera(request, backend):
+    camera = ids_camera() if request.param == "ids" else GenICamCamera(MONO, backend)
+    with camera:
+        camera.set_setting("ExposureAuto", "Off")
+        camera.set_setting("GainAuto", "Off")
+        yield camera
+
+
+def test_every_setting_has_its_nodes_listed(any_camera):
+    assert set(any_camera.settings()) <= set(SETTING_NODES)
+
+
+@pytest.mark.parametrize("name", SETTING_NODES)
+def test_one_setting_equals_its_entry_in_all_settings(any_camera, name):
+    every = any_camera.settings()
+    if name not in every:
+        with pytest.raises(KeyError):
+            any_camera.setting(name)
+    else:
+        assert any_camera.setting(name) == every[name]
+
+
+@pytest.mark.parametrize("name", SETTING_NODES)
+def test_reading_one_setting_reads_only_its_nodes(any_camera, name):
+    if name not in any_camera.settings():
+        pytest.skip(f"no {name}")
+    reads = connection(any_camera._backend).node_reads
+    reads.clear()
+    any_camera.setting(name)
+    assert set(reads) <= SETTING_NODES[name]
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        n
+        for n in SETTING_NODES
+        if n not in (WIDTH, HEIGHT, SENSOR_WIDTH, SENSOR_HEIGHT)
+        and n not in ("current_throughput", "resulting_frame_rate")
+    ],
+)
+def test_writing_one_setting_reads_only_its_nodes(any_camera, name):
+    if name not in any_camera.settings():
+        pytest.skip(f"no {name}")
+    current = any_camera.setting(name)
+    value = "Software" if name == TRIGGER else current.value
+    if value is None:
+        value = current.minimum
+    reads = connection(any_camera._backend).node_reads
+    reads.clear()
+    any_camera.set_setting(name, value)
+    assert set(reads) <= SETTING_NODES[name] | WRITE_NODES.get(name, set())
+
+
 def test_exposure_time_is_in_seconds(camera):
     exposure = camera.setting(EXPOSURE_TIME)
     assert exposure.value == pytest.approx(0.01)
@@ -395,6 +476,58 @@ def test_exposure_time_is_written_in_microseconds(camera, fake):
     camera.set_setting(EXPOSURE_TIME, 0.02)
     assert fake.get("ExposureTime") == pytest.approx(20_000.0)
     assert camera.setting(EXPOSURE_TIME).value == pytest.approx(0.02)
+
+
+def test_stopping_and_closing_pass_the_exposure_time(backend):
+    # A backend may wait for the frame being exposed before dropping its stream.
+    with GenICamCamera(MONO, backend) as camera:
+        camera.set_setting("ExposureAuto", "Off")
+        camera.set_setting(EXPOSURE_TIME, 0.02)
+        camera.set_setting(PIXEL_FORMAT, "Mono16")
+        conn = connection(backend)
+        assert conn.stop_exposure_times[-1] == pytest.approx(0.02)
+        camera.set_setting(EXPOSURE_TIME, 0.03)
+    assert conn.stop_exposure_times[-1] == pytest.approx(0.03)
+
+
+def test_the_first_start_is_given_the_exposure_time(backend, fake):
+    # So a start that fails at open waits out a long exposure before giving up.
+    fake.set("ExposureAuto", "Off")
+    fake.set("ExposureTime", 250_000.0)
+    with GenICamCamera(MONO, backend):
+        assert connection(backend).start_exposure_times[0] == pytest.approx(0.25)
+
+
+def test_a_failed_exposure_read_does_not_block_a_paused_write(camera, backend, fake):
+    fake.failures["read ExposureTime"] = FakeCameraError("io", "link busy")
+    camera.set_setting(PIXEL_FORMAT, "Mono16")
+    assert fake.get("PixelFormat") == "Mono16"
+    assert connection(backend).stop_exposure_times[-1] == 0.0
+
+
+def test_close_lets_go_even_if_the_exposure_read_raises_anything(backend, monkeypatch):
+    camera = GenICamCamera(MONO, backend)
+    camera.open()
+
+    def unplugged(name):
+        raise RuntimeError("raw library error")
+
+    monkeypatch.setattr(connection(backend), "is_readable", unplugged)
+    camera.close()
+    assert connection(backend).closed
+    assert_released(backend)
+
+
+def test_a_connection_that_does_not_drain_is_not_asked_for_the_exposure(
+    camera, backend
+):
+    conn = connection(backend)
+    conn.drains_on_stop = False
+    conn.node_reads.clear()
+    camera.set_setting(PIXEL_FORMAT, "Mono16")
+    camera.close()
+    assert "ExposureTime" not in conn.node_reads
+    assert conn.stop_exposure_times[-2:] == [0.0, 0.0]
 
 
 def test_exposure_time_limits_survive_the_unit_conversion(camera, fake):
@@ -1295,3 +1428,21 @@ class TestGenICamCameraContractSoftwareTrigger(TestGenICamCameraContract):
         with make_device() as camera:
             camera.set_setting(TRIGGER, "Software")
             yield camera
+
+
+# --- Public names -------------------------------------------------------------
+
+
+def test_the_genicam_names_callers_need_are_public():
+    from educelab.devices import cameras
+
+    for name in ("GenICamCamera", "TRIGGER", "THROUGHPUT_LIMIT", "host_time"):
+        assert name in cameras.__all__
+        assert getattr(cameras, name) is getattr(_genicam, name)
+
+
+def test_the_cli_reaches_genicam_cameras_through_public_names():
+    from educelab.devices import app
+
+    for module in Path(app.__path__[0]).glob("*.py"):
+        assert "cameras._genicam" not in module.read_text(), module.name

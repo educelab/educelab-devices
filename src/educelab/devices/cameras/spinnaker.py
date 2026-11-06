@@ -288,6 +288,16 @@ def _describe(pyspin: Any, cam: Any) -> DeviceInfo | None:
     )
 
 
+def _is_initialized(pyspin: Any, cam: Any) -> bool:
+    try:
+        return bool(cam.IsInitialized())
+    except pyspin.SpinnakerException as exc:
+        error = DeviceError(f"could not check whether the camera is open: {exc}")
+    # Raised unchained and without `cam` in this frame, so nothing keeps it.
+    del cam
+    raise error
+
+
 def _get_by_serial(pyspin: Any, cameras: Any, serial: str) -> Any | None:
     try:
         cam = cameras.GetBySerial(serial)
@@ -356,9 +366,17 @@ class _PySpinBackend:
         system.open()
         try:
             cam = system._camera(serial)
+            # Init() again would succeed on the camera this program already
+            # has, and cleaning up after the failure would close that one.
+            in_use = cam is not None and _is_initialized(system._module, cam)
         except BaseException:
+            cam = None
             system.close()
             raise
+        if in_use:
+            del cam
+            system.close()
+            raise DeviceBusy(f"camera {serial} is already open in this program")
         if cam is None:
             system.close()
             return None
@@ -387,6 +405,7 @@ class _PySpinConnection:
     """
 
     times_arrivals = False
+    drains_on_stop = False
 
     def __init__(self, system: SpinnakerSystem, cam: Any) -> None:
         self._system = system
@@ -419,9 +438,14 @@ class _PySpinConnection:
     # --- Node map ---------------------------------------------------------------
 
     def _raw_node(self, name: str, *, stream: bool = False) -> Any:
-        cam = self._cam
-        nodemap = cam.GetTLStreamNodeMap() if stream else cam.GetNodeMap()
-        return nodemap.GetNode(name)
+        # The camera pointer stays inside lookup(), whose frame an error's
+        # traceback doesn't keep; held there, it would block releasing the SDK.
+        def lookup() -> Any:
+            cam = self._cam
+            nodemap = cam.GetTLStreamNodeMap() if stream else cam.GetNodeMap()
+            return nodemap.GetNode(name)
+
+        return self._do(lookup)
 
     def _node(self, name: str, cast: str, *, stream: bool = False) -> Any:
         node = self._raw_node(name, stream=stream)
@@ -507,10 +531,10 @@ class _PySpinConnection:
 
     # --- Stream -----------------------------------------------------------------
 
-    def start_acquisition(self) -> None:
+    def start_acquisition(self, exposure_time: float = 0.0) -> None:
         self._do(lambda: self._cam.BeginAcquisition())
 
-    def stop_acquisition(self) -> None:
+    def stop_acquisition(self, exposure_time: float = 0.0) -> None:
         self._do(self._end_acquisition)
 
     def _end_acquisition(self) -> None:
@@ -527,7 +551,7 @@ class _PySpinConnection:
         image = self._do(functools.partial(self._cam.GetNextImage, grab_ms))
         return _PySpinBuffer(self, image)
 
-    def close(self) -> None:
+    def close(self, exposure_time: float = 0.0) -> None:
         if self._cam is None:
             return
         problems = []

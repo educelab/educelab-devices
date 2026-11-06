@@ -1,14 +1,23 @@
-"""The fake PySpin punishes the mistakes the real SDK punishes."""
+"""The fake PySpin punishes the mistakes the real SDK punishes.
+
+The camera behind it is `fakes.genicam.FakeCamera`, tested on its own; these
+tests cover only what PySpin adds.
+"""
 
 import pytest
 
+from educelab.devices.cameras._genicam import BufferStatus
 from fakes import pyspin as fake
-from fakes.pyspin import FakeCamera, FakeImage, FakePySpin, FrameSpec
+from fakes.pyspin import FakeImage, FakePySpin, FrameSpec, flir_camera
 
 
 @pytest.fixture
 def pyspin():
-    return FakePySpin([FakeCamera("1"), FakeCamera("2"), FakeCamera("3")])
+    return FakePySpin([flir_camera("1"), flir_camera("2"), flir_camera("3")])
+
+
+def first(pyspin):
+    return pyspin.System.GetInstance().GetCameras().GetByIndex(0)
 
 
 def test_release_instance_succeeds_after_clean_teardown(pyspin):
@@ -61,7 +70,7 @@ def test_clearing_a_list_mid_iteration_skips_the_rest(pyspin):
 
 
 def test_nodes_need_init_but_transport_layer_nodes_do_not(pyspin):
-    cam = pyspin.System.GetInstance().GetCameras().GetByIndex(0)
+    cam = first(pyspin)
     assert pyspin.IsReadable(cam.TLDevice.DeviceSerialNumber)
     assert cam.TLDevice.DeviceSerialNumber.ToString() == "1"
     assert not pyspin.IsReadable(cam.ExposureTime)
@@ -69,54 +78,67 @@ def test_nodes_need_init_but_transport_layer_nodes_do_not(pyspin):
     assert pyspin.IsReadable(cam.ExposureTime)
 
 
-def test_auto_exposure_makes_exposure_time_read_only(pyspin):
-    cam = pyspin.System.GetInstance().GetCameras().GetByIndex(0)
+def test_enums_are_valued_by_the_module_constants(pyspin):
+    cam = first(pyspin)
     cam.Init()
-    cam.ExposureAuto.SetValue(pyspin.ExposureAuto_Continuous)
-    assert not pyspin.IsWritable(cam.ExposureTime)
     cam.ExposureAuto.SetValue(pyspin.ExposureAuto_Off)
-    cam.ExposureTime.SetValue(5000.0)
-    assert cam.ExposureTime.GetValue() == 5000.0
-    with pytest.raises(pyspin.SpinnakerException):
-        cam.ExposureTime.SetValue(cam.ExposureTime.GetMax() + 1)
+    assert cam.ExposureAuto.GetValue() == pyspin.ExposureAuto_Off
+    assert cam.ExposureAuto.ToString() == "Off"
+    entry = pyspin.CEnumerationPtr(cam.PixelFormat).GetEntryByName("Mono16")
+    assert entry.GetValue() == pyspin.PixelFormat_Mono16
+    assert pyspin.CEnumerationPtr(cam.PixelFormat).GetEntryByName("RGB8") is None
 
 
-def test_pixel_format_is_read_only_while_acquiring(pyspin):
-    cam = pyspin.System.GetInstance().GetCameras().GetByIndex(0)
+def test_integer_nodes_take_only_ints(pyspin):
+    cam = first(pyspin)
     cam.Init()
-    cam.BeginAcquisition()
-    assert not pyspin.IsWritable(cam.PixelFormat)
-    cam.EndAcquisition()
-    cam.PixelFormat.SetValue(pyspin.PixelFormat_Mono16)
-    assert cam.PixelFormat.GetCurrentEntry().GetSymbolic() == "Mono16"
+    limit = cam.DeviceLinkThroughputLimit
+    with pytest.raises(pyspin.SpinnakerException) as info:
+        limit.SetValue(float(limit.GetMax()))
+    assert info.value.errorcode == pyspin.SPINNAKER_ERR_INVALID_PARAMETER
 
 
-def test_end_acquisition_twice_raises(pyspin):
-    cam = pyspin.System.GetInstance().GetCameras().GetByIndex(0)
+def test_camera_failures_carry_spinnaker_error_codes(pyspin):
+    cam = first(pyspin)
+    with pytest.raises(pyspin.SpinnakerException) as info:
+        cam.BeginAcquisition()
+    assert info.value.errorcode == pyspin.SPINNAKER_ERR_NOT_INITIALIZED
     cam.Init()
+    with pytest.raises(pyspin.SpinnakerException) as info:
+        cam.ExposureTime.SetValue(1.0)  # locked by auto exposure
+    assert info.value.errorcode == pyspin.SPINNAKER_ERR_ACCESS_DENIED
     cam.BeginAcquisition()
-    cam.EndAcquisition()
-    with pytest.raises(pyspin.SpinnakerException):
-        cam.EndAcquisition()
-
-
-def test_unreleased_buffers_exhaust_the_pool():
-    camera = FakeCamera(buffer_count=2)
-    pyspin = FakePySpin([camera])
-    cam = pyspin.System.GetInstance().GetCameras().GetByIndex(0)
-    cam.Init()
-    cam.BeginAcquisition()
-    cam.GetNextImage(1000)
-    image = cam.GetNextImage(1000)
-    with pytest.raises(pyspin.SpinnakerException, match="no free buffers"):
+    with pytest.raises(pyspin.SpinnakerException) as info:
+        cam.DeInit()
+    assert info.value.errorcode == pyspin.SPINNAKER_ERR_RESOURCE_IN_USE
+    pyspin.system.cameras[0].buffer_count = 0
+    with pytest.raises(pyspin.SpinnakerException) as info:
         cam.GetNextImage(1000)
-    image.Release()
-    cam.GetNextImage(1000)
-    assert len(camera.held) == 2
+    assert info.value.errorcode == pyspin.SPINNAKER_ERR_TIMEOUT
 
 
-def test_released_buffers_are_overwritten(pyspin):
-    cam = pyspin.System.GetInstance().GetCameras().GetByIndex(0)
+def test_a_camera_held_elsewhere_refuses_init(pyspin):
+    pyspin.system.cameras[0].busy = True
+    with pytest.raises(pyspin.SpinnakerException) as info:
+        first(pyspin).Init()
+    assert info.value.errorcode == pyspin.SPINNAKER_ERR_ACCESS_DENIED
+
+
+def test_init_again_in_the_same_program_is_allowed(pyspin):
+    # As on a CM3: the pointers share one camera, so only the second
+    # BeginAcquisition() fails.
+    cam, again = first(pyspin), first(pyspin)
+    cam.Init()
+    cam.BeginAcquisition()
+    again.Init()
+    with pytest.raises(pyspin.SpinnakerException) as info:
+        again.BeginAcquisition()
+    assert info.value.errorcode == pyspin.SPINNAKER_ERR_RESOURCE_IN_USE
+    assert again.IsStreaming()
+
+
+def test_released_images_are_overwritten_under_their_arrays(pyspin):
+    cam = first(pyspin)
     cam.Init()
     cam.BeginAcquisition()
     image = cam.GetNextImage()
@@ -129,51 +151,47 @@ def test_released_buffers_are_overwritten(pyspin):
         image.GetNDArray()
 
 
-def test_queued_frames_come_first_and_carry_status(pyspin):
-    camera = pyspin.system.cameras[0]
-    camera.queue_frames(
-        FrameSpec(timestamp_ns=5, status=pyspin.SPINNAKER_IMAGE_STATUS_DATA_INCOMPLETE),
+def test_image_status_follows_the_frame(pyspin):
+    pyspin.system.cameras[0].queue_frames(
+        FrameSpec(timestamp_ns=5, status=BufferStatus.INCOMPLETE),
+        FrameSpec(status=BufferStatus.MISSING_TRAILER),
         FrameSpec(),
     )
-    cam = pyspin.System.GetInstance().GetCameras().GetByIndex(0)
+    pyspin.image_status[BufferStatus.INCOMPLETE] = (
+        pyspin.SPINNAKER_IMAGE_STATUS_MISSING_PACKETS
+    )
+    cam = first(pyspin)
     cam.Init()
     cam.BeginAcquisition()
-    stale = cam.GetNextImage()
-    assert stale.GetTimeStamp() == 5
-    assert stale.IsIncomplete()
-    fresh = cam.GetNextImage()
-    assert not fresh.IsIncomplete()
-    assert fresh.GetTimeStamp() > 5
+    statuses = []
+    for _ in range(3):
+        image = cam.GetNextImage()
+        statuses.append((image.GetImageStatus(), image.IsIncomplete()))
+        image.Release()
+    assert statuses == [
+        (pyspin.SPINNAKER_IMAGE_STATUS_MISSING_PACKETS, True),
+        (pyspin.SPINNAKER_IMAGE_STATUS_MISSING_TRAILER, True),
+        (pyspin.SPINNAKER_IMAGE_STATUS_NO_ERROR, False),
+    ]
 
 
-def test_timestamp_latch_follows_the_host_clock():
-    now = [1_000_000.0]
-    camera = FakeCamera(clock=lambda: now[0], uptime=50.0)
-    cam = FakePySpin([camera]).System.GetInstance().GetCameras().GetByIndex(0)
-    cam.Init()
-    cam.TimestampLatch.Execute()
-    assert cam.Timestamp.GetValue() == 50_000_000_000
-    now[0] += 1.5
-    cam.TimestampLatch.Execute()
-    assert cam.Timestamp.GetValue() == 51_500_000_000
-
-
-def test_color_cameras_produce_rgb_arrays():
-    camera = FakeCamera(color=True, width=4, height=3)
-    pyspin = FakePySpin([camera])
-    cam = pyspin.System.GetInstance().GetCameras().GetByIndex(0)
-    cam.Init()
-    assert cam.PixelColorFilter.GetValue() == pyspin.PixelColorFilter_BayerRG
-    cam.PixelFormat.SetValue(pyspin.PixelFormat_RGB8)
-    cam.BeginAcquisition()
-    assert cam.GetNextImage().GetNDArray().shape == (3, 4, 3)
+def test_stream_buffer_handling_is_a_transport_layer_setting(pyspin):
+    cam = first(pyspin)
+    node = pyspin.CEnumerationPtr(
+        cam.GetTLStreamNodeMap().GetNode("StreamBufferHandlingMode")
+    )
+    assert pyspin.IsWritable(node)
+    node.SetIntValue(pyspin.StreamBufferHandlingMode_NewestOnly)
+    stream = pyspin.transport(pyspin.system.cameras[0]).stream
+    assert stream.nodes["StreamBufferHandlingMode"].value == "NewestOnly"
 
 
 def test_detached_cameras_fail(pyspin):
-    cam = pyspin.System.GetInstance().GetCameras().GetByIndex(0)
+    cam = first(pyspin)
     pyspin.detach("1")
-    with pytest.raises(pyspin.SpinnakerException, match="lost"):
+    with pytest.raises(pyspin.SpinnakerException, match="lost") as info:
         cam.TLDevice.DeviceSerialNumber.GetValue()
+    assert info.value.errorcode == pyspin.SPINNAKER_ERR_IO
     with pytest.raises(pyspin.SpinnakerException, match="lost"):
         cam.Init()
 
@@ -182,30 +200,6 @@ def test_get_by_serial_for_a_missing_camera_is_invalid(pyspin):
     cameras = pyspin.System.GetInstance().GetCameras()
     assert cameras.GetBySerial("2").IsValid()
     assert not cameras.GetBySerial("nope").IsValid()
-
-
-def test_trigger_mode_needs_a_trigger_per_fresh_frame(pyspin):
-    camera = pyspin.system.cameras[0]
-    camera.queue_frames(FrameSpec(timestamp_ns=5))
-    cam = pyspin.System.GetInstance().GetCameras().GetByIndex(0)
-    cam.Init()
-    cam.TriggerMode.SetValue(pyspin.TriggerMode_Off)
-    cam.TriggerSource.SetValue(pyspin.TriggerSource_Software)
-    cam.TriggerMode.SetValue(pyspin.TriggerMode_On)
-    assert not pyspin.IsWritable(cam.TriggerSource)
-    cam.BeginAcquisition()
-    cam.GetNextImage().Release()  # already waiting, no trigger needed
-    with pytest.raises(pyspin.SpinnakerException, match="no frame was triggered"):
-        cam.GetNextImage()
-    before = camera.device_time_ns()
-    cam.TriggerSoftware.Execute()
-    image = cam.GetNextImage()
-    assert image.GetTimeStamp() >= before
-    image.Release()
-    camera.respond_to_triggers = False
-    cam.TriggerSoftware.Execute()
-    with pytest.raises(pyspin.SpinnakerException):
-        cam.GetNextImage()
 
 
 # --- Against the real PySpin --------------------------------------------------
@@ -225,9 +219,7 @@ _STAND_INS = {
     fake.FloatNode: ("CFloatPtr",),
     fake.IntegerNode: ("CIntegerPtr",),
     fake.StringNode: ("CStringPtr",),
-    fake.BooleanNode: ("CBooleanPtr",),
     fake.CommandNode: ("CCommandPtr",),
-    fake.ComputedNode: ("CIntegerPtr", "CFloatPtr"),
 }
 
 
@@ -246,11 +238,12 @@ def test_fake_module_names_exist_in_pyspin(real):
 
 
 def test_fake_node_names_exist_in_pyspin(real):
-    camera = FakeCamera(color=True, throughput_mode=True)
+    camera = flir_camera(color=True, throughput_mode=True)
+    transport = FakePySpin([camera]).transport(camera)
     for nodes, owner in (
         (camera.nodes, real.CameraPtr),
-        (camera.tl_device_nodes, real.TransportLayerDevice),
-        (camera.tl_stream_nodes, real.TransportLayerStream),
+        (transport.device.nodes, real.TransportLayerDevice),
+        (transport.stream.nodes, real.TransportLayerStream),
     ):
         assert [n for n in nodes if not hasattr(owner, n)] == []
 

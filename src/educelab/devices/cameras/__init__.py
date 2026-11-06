@@ -1,5 +1,11 @@
 """Cameras: devices that capture frames or camera files."""
 
+from educelab.devices.cameras._genicam import (
+    THROUGHPUT_LIMIT,
+    TRIGGER,
+    GenICamCamera,
+    host_time,
+)
 from educelab.devices.cameras.aravis import AravisCamera
 from educelab.devices.cameras.base import (
     APERTURE,
@@ -40,6 +46,8 @@ __all__ = [
     "PIXEL_FORMAT",
     "SENSOR_HEIGHT",
     "SENSOR_WIDTH",
+    "THROUGHPUT_LIMIT",
+    "TRIGGER",
     "WIDTH",
     "AravisCamera",
     "Camera",
@@ -49,6 +57,7 @@ __all__ = [
     "FocusLimit",
     "Frame",
     "FrameCamera",
+    "GenICamCamera",
     "GenTLCamera",
     "Rounding",
     "Setting",
@@ -58,4 +67,5 @@ __all__ = [
     "SimulatedFocusDrive",
     "SpinnakerCamera",
     "SpinnakerSystem",
+    "host_time",
 ]

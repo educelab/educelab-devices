@@ -11,8 +11,7 @@ from datetime import UTC, datetime
 import numpy as np
 import pytest
 
-from educelab.devices.cameras import EXPOSURE_TIME, PIXEL_FORMAT, aravis
-from educelab.devices.cameras._genicam import TRIGGER
+from educelab.devices.cameras import EXPOSURE_TIME, PIXEL_FORMAT, TRIGGER, aravis
 from educelab.devices.cameras.aravis import AravisCamera
 
 SERIAL = "1"

@@ -22,7 +22,9 @@ def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") 
         "GENICAM_GENTL64_PATH can find, then open them all at once (so they all "
         "stream, as on a rig) and capture frames from every camera together, each "
         "no older than the moment it was requested. Reports capture latency, when "
-        "exposure started, dropped frames, and the bandwidth each camera streams.",
+        "exposure started, dropped frames, the bandwidth each camera streams, and "
+        "its link speed and counters (diagnostics()), which a camera's first "
+        "failed capture also prints at once.",
     )
     parser.add_argument(
         "--backend",

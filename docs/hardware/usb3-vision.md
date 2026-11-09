@@ -109,7 +109,7 @@ Spinnaker agrees: on the same rig, an 80 MB/s cap removed the missing trailers t
 
 ## Manual check
 
-`el-devices genicam --backend aravis|gentl` lists cameras through the chosen backend, then captures from them all at once and reports latency, exposure start (for cameras that can be timed; others are captured without `not_before`), dropped frames, bit depth, how frames were timed, and USB bandwidth. It takes the same options as `el-devices spinnaker` (`--serial`, `--frames`, `--exposure`, `--gain`, `--pixel-format`, `--throughput-limit`, `--trigger software`, `--save-missing-trailer`). With `--frames 0` it only lists. With `--backend gentl`, `--producer PATH` uses only that `.cti` file.
+`el-devices genicam --backend aravis|gentl` lists cameras through the chosen backend, then captures from them all at once and reports latency, exposure start (for cameras that can be timed; others are captured without `not_before`), dropped frames, bit depth, how frames were timed, and USB bandwidth. Each camera's line gives its `link_speed`, and its report ends with its `diagnostics()` counters; through GenTL it also gives the frame rate the producer received (`frames_started` over the run), to check the frame-ID streaming rate against. A camera's first failed capture prints its counters at once, so a stall shows its state when it began. It takes the same options as `el-devices spinnaker` (`--serial`, `--frames`, `--exposure`, `--gain`, `--pixel-format`, `--throughput-limit`, `--trigger software`, `--save-missing-trailer`). With `--frames 0` it only lists. With `--backend gentl`, `--producer PATH` uses only that `.cti` file.
 
 The hardware tests share one suite (`tests/contracts/genicam_hardware.py`):
 

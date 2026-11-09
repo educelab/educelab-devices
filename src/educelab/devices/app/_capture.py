@@ -132,6 +132,11 @@ class _Results:
     retriggers: int = 0
     missing_trailer: int = 0
     failures: list[str] = field(default_factory=list)
+    # diagnostics() before the first capture and after the last, and the seconds
+    # between the two reads.
+    counters_before: dict[str, int] = field(default_factory=dict)
+    counters_after: dict[str, int] = field(default_factory=dict)
+    counted_s: float = 0.0
 
 
 def run_benchmark(cameras: Sequence["GenICamCamera"], args: argparse.Namespace) -> int:
@@ -320,6 +325,13 @@ def _benchmark(
             # Anything, even a driver bug: an uncaught exception would only print
             # a traceback from this thread and drop the capture from the report.
             result.failures.append(f"{type(exc).__name__}: {exc}")
+            if len(result.failures) == 1:
+                # Printed now: a stalled camera can fail for minutes.
+                print(
+                    f"{camera.info.serial_number}: first failure, at capture "
+                    f"{index + 1}: {type(exc).__name__}: {exc}; counters: "
+                    f"{_counters_text(_diagnostics(camera))}"
+                )
             return
         result.latencies_ms.append((time.perf_counter() - start) * 1000)
         if timed:
@@ -346,6 +358,9 @@ def _benchmark(
     from educelab.devices.cameras import host_time
 
     print(f"Capturing {frames} frame(s) from {len(cameras)} camera(s) at once...")
+    counted_from = time.perf_counter()
+    for camera in cameras:
+        results[camera].counters_before = _diagnostics(camera)
     trial_ms = []
     for index in range(frames):
         # Not datetime.now(): on Windows before Python 3.13 it ticks every 15.6 ms.
@@ -368,7 +383,25 @@ def _benchmark(
             thread.join()
         trial_ms.append((time.perf_counter() - start) * 1000)
     print(f"all cameras per capture: {_stats(trial_ms)}")
+    counted_s = time.perf_counter() - counted_from
+    for camera in cameras:
+        results[camera].counters_after = _diagnostics(camera)
+        results[camera].counted_s = counted_s
     return results
+
+
+def _diagnostics(camera: "GenICamCamera") -> dict[str, int]:
+    """The camera's `diagnostics()`, or nothing if they can't be read."""
+    try:
+        return camera.diagnostics()
+    except Exception as exc:  # noqa: BLE001
+        # Only for the report, so it never fails a run.
+        print(f"{camera.info.serial_number}: no diagnostics: {exc}")
+        return {}
+
+
+def _counters_text(counters: Mapping[str, int]) -> str:
+    return ", ".join(f"{k} {v}" for k, v in counters.items()) or "none"
 
 
 def _report(camera: "GenICamCamera", result: _Results, frames: int) -> int:
@@ -397,9 +430,27 @@ def _report(camera: "GenICamCamera", result: _Results, frames: int) -> int:
     if streamed:
         fps, mb_per_s = streamed
         print(f"  streaming ~{fps:.1f} frames/s, ~{mb_per_s:.1f} MB/s over USB")
+    received = _received_rate(result)
+    if received is not None:
+        # Checks the frame-ID rate's assumption that IDs count every frame sent.
+        print(f"  host received ~{received:.1f} frames/s (frames_started)")
+    if result.counters_after:
+        print(f"  counters: {_counters_text(result.counters_after)}")
     for failure in result.failures:
         print(f"  failed: {failure}")
     return len(result.failures)
+
+
+def _received_rate(result: _Results) -> float | None:
+    """Frames per second the host's library received during the run, or None
+    without a ``frames_started`` counter."""
+    key = "frames_started"
+    if key not in result.counters_before or key not in result.counters_after:
+        return None
+    if result.counted_s <= 0:
+        return None
+    received = result.counters_after[key] - result.counters_before[key]
+    return received / result.counted_s
 
 
 def _streaming_rate(

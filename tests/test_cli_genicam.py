@@ -1,6 +1,7 @@
 """``el-devices genicam``, against the fake Aravis and ``genicam`` libraries."""
 
 import builtins
+import re
 import sys
 import zlib
 
@@ -96,6 +97,33 @@ def test_reports_each_cameras_link_speed(monkeypatch, capsys):
     }
     assert "link 625 MB/s, throughput limit" in lines[MONO]
     assert "link 60 MB/s, throughput limit" in lines[COLOR]
+
+
+def test_reports_each_cameras_counters_after_the_run(genicam, capsys):
+    assert main(["genicam", "--backend", "gentl", "--frames", "3"]) == 0
+    out = capsys.readouterr().out
+    report = out.split(f"{MONO}: 3/3 captured")[1].split(f"{COLOR}:")[0]
+    assert "counters: frames_started " in report
+    assert "transmit_failures 0" in report
+    assert re.search(r"host received ~[\d.]+ frames/s", report)
+
+
+def test_a_camera_without_stream_counters_shows_its_own(repository, capsys):
+    assert main(["genicam", "--backend", "aravis", "--frames", "1"]) == 0
+    out = capsys.readouterr().out
+    assert "counters: transmit_failures 0, link_recoveries 0" in out
+    assert "host received" not in out
+
+
+def test_a_cameras_first_failure_shows_its_counters_then(genicam, capsys):
+    genicam.cameras[0].buffer_count = 0  # every grab times out
+    args = ["--serial", MONO, "--frames", "3"]
+    assert main(["genicam", "--backend", "gentl", *args]) == 1
+    out = capsys.readouterr().out
+    assert out.count(f"{MONO}: first failure, at capture 1") == 1
+    line = next(line for line in out.splitlines() if "first failure" in line)
+    assert "DeviceTimeout" in line and "buffers_queued" in line
+    assert out.count("failed:") == 3
 
 
 def test_reports_bit_depth_and_timestamp_source(monkeypatch, capsys):

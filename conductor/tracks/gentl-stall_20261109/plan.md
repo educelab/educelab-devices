@@ -46,16 +46,20 @@ Each run is `el-devices genicam --backend gentl --pixel-format Mono8 --exposure 
   - The producer listed and opened the cameras in the same order every run: 20305114, 20305122, 20298479, 20298452, 20305113. So 20305113 was last each time, as in the original stall, and didn't stall.
   - The received rate (`frames_started`) matched the frame-ID rate on every camera in every run (within 0.1 frames/s), so the frame-ID rate holds on Windows too.
   - **The link is oversubscribed in this configuration.** The five cameras ask for 5 × 80.4 = 402 MB/s but streamed 286–344 MB/s together (median about 331). 20298479 and 20305113 held the cap (78–80 MB/s) in most runs; 20305122 (43–73) and 20298452 (40–55) got less. The original stall's four working cameras streamed 4 × 80.4 = 322 MB/s, about the same total, so the stalled camera got none of the shared link rather than a share. This weakens the spec's argument against oversubscription: Mono16 at the same cap was oversubscribed too, so its not stalling shows only that oversubscription doesn't always stall. Evidence for 2.5.
+  - **More runs (logs `PNY:/gentl-stall-re/`):** 10 more (`20261109-165759`) and 50 more (`20261109-173924`) in default order, all ok. From these on, the producer listed 20305113 first (order 20305113, 20298452, 20298479, 20305122, 20305114), so it was opened first in all 60. Totals 322–345 MB/s; the squeezed cameras moved to 20305113 (41–69 MB/s) and 20305114 (42–67). 6,000 captures per camera, no failures, every error counter 0, received rate within 0.3 frames/s of the frame-ID rate throughout.
 - [ ] Task 2.2: On a stalled camera, stop and restart acquisition (a scratch script, or a `pixel_format` write, which pauses acquisition). Record whether frames come back without a power cycle.
-  - Waits for a stall: none in 2.1.
-- [ ] Task 2.3: Repeat 2.1 with 20305113 opened first (`--serial` in that order; check the CLI opens cameras in the order given). Does the stall follow the camera or the last position?
+  - Waits for a stall: none in 2.1. Not done: none of the 90 Phase 2 runs stalled. Recovery by restarting acquisition is untested on hardware.
+- [x] Task 2.3: Repeat 2.1 with 20305113 opened first (`--serial` in that order; check the CLI opens cameras in the order given). Does the stall follow the camera or the last position?
+  - **Runs (`PNY:/gentl-stall-re/20261109-172901-*`):** 10 of 10 ok with `--serial 20305113 20305122 20305114 20298452 20298479`, opened in that order. Totals 322–336 MB/s. With the 60 default-order runs above, 20305113 was opened first in 70 runs and last in 10, and never stalled, so the stall followed neither the camera nor the last position.
   - Checked in code: `--serial` opens cameras in the order given (`app/genicam.py`); without it they open in the producer's listing order, which differed between two runs on the Mac. So to put 20305113 first, give every serial: `--serial 20305113 --serial ...`.
-- [ ] Task 2.4: Run the same configuration through Spinnaker (`el-devices spinnaker`) on the same machine, as many times as 2.1 took. Separates FLIR's GenTL producer and `genicam` from the camera and link.
+- [x] Task 2.4: Run the same configuration through Spinnaker (`el-devices spinnaker`) on the same machine, as many times as 2.1 took. Separates FLIR's GenTL producer and `genicam` from the camera and link.
+  - **Runs (`PNY:/gentl-stall-re/20261109-173502-spinnaker-*`):** 10 of 10 ok through Spinnaker. Totals 331–341 MB/s, the same ceiling as GenTL; no transmit failures or link recoveries. No difference between FLIR's GenTL producer and Spinnaker.
 - [ ] Task 2.5: Classify the cause from 2.1–2.4: the camera or link, the host's buffers, or something else. Record the evidence for and against each candidate in the spec.
+  - **Draft in the spec (Evidence):** camera or link most likely, not proven; host buffers ruled out; producer vs Spinnaker no difference. Not reproducible on demand: 0 stalls in 80 GenTL runs, against the original 1 in 8. Awaiting the maintainer's agreement.
 
 ### Verification
 
-- [ ] Every run is recorded here.
+- [x] Every run is recorded here.
 - [ ] Maintainer agrees on the cause; Phase 3's tasks are refined to match.
 
 ## Phase 3: Fix and record

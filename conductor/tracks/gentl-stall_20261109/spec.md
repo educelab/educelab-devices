@@ -37,6 +37,16 @@ el-devices genicam --backend gentl --pixel-format Mono8 --exposure min --through
 
 `genicam` also holds the GIL while waiting for a buffer, in 100 ms slices, so capture threads take turns. That skews per-thread latency in the report and may slow buffer handling.
 
+**Evidence (Phase 2, 2026-11-09; draft for the maintainer's check):** 90 GenTL runs of the stall configuration on the Windows rig (80) and the lab Mac (2), and 10 through Spinnaker, all on the same five cameras. No stall: 100/100 from every camera in every run. 20305113 was opened last in 10 Windows runs and first in 70.
+
+1. **The camera or link stopped sending: not ruled out, and the most likely.**
+   - *For:* the five cameras ask for 5 × 80.4 = 402 MB/s, but the rig carries 322–345 MB/s in total, through GenTL and Spinnaker alike. The original stall's four working cameras carried 4 × 80.4 = 322 MB/s, the same ceiling, so the link was oversubscribed when the stall happened. 20305113 had enumerated at USB 2 and been replugged just before the original runs, a state none of the 90 later runs had.
+   - *Against:* no later run stalled, and no camera counted a transmit failure or a link recovery during a run. The original run predates those counters, so they can't say what 20305113 did then.
+2. **The host ran out of buffers: ruled out.** `EventManagerNewBuffer.buffer` is a fresh wrapper bound to its own buffer (Task 1.1), so `grab()` requeues the buffer it means to. Under FLIR's `NewestOnly`, at most one frame waits, and every run ended with all four buffers queued and no underruns.
+3. **FLIR's GenTL producer or `genicam` versus Spinnaker: no difference seen.** Neither stalled, and both carried the same total.
+
+The stall rate is now far below the original 1 in 8: with that rate, 80 GenTL runs without one would happen about once in 40,000 tries. So something about the original session (most likely 20305113's USB 2 enumeration and replug) mattered, and the stall can't be reproduced on demand.
+
 **Affected:** `cameras/gentl.py` (stream and buffer handling), `app/_capture.py` (the report), `docs/hardware/usb3-vision.md`. Possibly the core, if a silent stream should be recovered there.
 
 ## Acceptance Criteria

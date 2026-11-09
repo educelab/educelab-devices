@@ -15,6 +15,8 @@ import time
 
 from educelab.devices.errors import StreamStalled
 
+MAX_LATE_FRAMES = 3
+
 
 def camera_for(backend: str, serial: str | None):
     if backend == "gentl":
@@ -43,21 +45,31 @@ def main() -> int:
         camera.capture_frame()
         print(f"before: {camera.diagnostics()}")
 
-        # Behind the driver's back: the camera stops, the host stream doesn't.
+        # Behind the driver's back: the camera stops, the host stream doesn't. The
+        # frame it's sending, and one already waiting, still arrive.
         camera._connection.execute("AcquisitionStop")
+        late = 0
         start = time.perf_counter()
-        try:
-            camera.capture_frame()
-        except StreamStalled as exc:
-            print(f"stalled after {time.perf_counter() - start:.1f} s, as expected:")
-            print(f"  {exc}")
-            print(f"  counters: {exc.counters}")
-        except Exception as exc:  # noqa: BLE001
-            print(f"UNEXPECTED {type(exc).__name__}: {exc}")
-            ok = False
-        else:
-            print("UNEXPECTED: a frame came after AcquisitionStop")
-            ok = False
+        while True:
+            try:
+                camera.capture_frame()
+            except StreamStalled as exc:
+                print(
+                    f"stalled after {late} late frame(s), "
+                    f"{time.perf_counter() - start:.1f} s, as expected:"
+                )
+                print(f"  {exc}")
+                print(f"  counters: {exc.counters}")
+                break
+            except Exception as exc:  # noqa: BLE001
+                print(f"UNEXPECTED {type(exc).__name__}: {exc}")
+                ok = False
+                break
+            late += 1
+            if late > MAX_LATE_FRAMES:
+                print(f"UNEXPECTED: {late} frames came after AcquisitionStop")
+                ok = False
+                break
 
         camera.restart_acquisition()
         try:

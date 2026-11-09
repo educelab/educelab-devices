@@ -32,6 +32,7 @@ from educelab.devices.errors import (
     DeviceNotFound,
     DeviceTimeout,
     NotConnected,
+    StreamStalled,
 )
 from fakes.genicam import FakeBackend, FakeCamera, FakeCameraError, FakeFrame, FrameSpec
 
@@ -1225,6 +1226,93 @@ def test_a_counter_that_cant_be_read_is_left_out(camera, fake):
 def test_diagnostics_need_an_open_camera(backend):
     with pytest.raises(NotConnected):
         GenICamCamera(MONO, backend).diagnostics()
+
+
+# --- Stalled stream -----------------------------------------------------------
+
+
+def test_a_camera_that_stops_sending_raises_stream_stalled(camera, fake, backend):
+    camera.capture_frame()
+    fake.sending = False
+    fake.set("USB3LinkRecoveryCount", 3)
+    connection(backend).stream_counters_now = {"frames_started": 40}
+    with pytest.raises(StreamStalled, match="stopped sending") as info:
+        camera.capture_frame()
+    assert isinstance(info.value, DeviceTimeout)
+    assert info.value.counters == {
+        "frames_started": 40,
+        "transmit_failures": 0,
+        "link_recoveries": 3,
+    }
+    assert "link_recoveries 3" in str(info.value)
+    assert info.value.__context__ is None
+
+
+def test_a_camera_that_never_sent_a_frame_has_stalled_too(camera, fake):
+    fake.sending = False
+    with pytest.raises(StreamStalled, match=r"\(another program"):
+        camera.capture_frame()
+
+
+def test_a_capture_that_saw_frames_hasnt_stalled(camera, fake):
+    fake.queue_frames(*(stale(fake) for _ in range(100_000)))
+    with pytest.raises(DeviceTimeout) as info:
+        camera.capture_frame(not_before=datetime.now(UTC), timeout=0.05)
+    assert not isinstance(info.value, StreamStalled)
+
+
+def test_a_stall_still_raises_if_its_counters_cant_be_read(
+    camera, fake, backend, monkeypatch
+):
+    fake.sending = False
+
+    def unreadable():
+        raise DeviceError("gone")
+
+    monkeypatch.setattr(connection(backend), "stream_counters", unreadable)
+    with pytest.raises(StreamStalled) as info:
+        camera.capture_frame()
+    assert info.value.counters == {}
+
+
+def test_restarting_acquisition_brings_frames_back(camera, fake, caplog):
+    fake.sending = False
+    with pytest.raises(StreamStalled):
+        camera.capture_frame()
+    caplog.set_level("INFO")
+    camera.restart_acquisition()
+    assert camera.capture_frame().pixels.shape == (6, 8)
+    assert "restarted acquisition" in caplog.text
+    assert "link_recoveries" in caplog.text
+
+
+def test_restarting_acquisition_in_software_trigger_mode_keeps_it(camera, fake):
+    camera.set_setting(TRIGGER, "Software")
+    camera.restart_acquisition()
+    assert camera.setting(TRIGGER).value == "Software"
+    before = fake.trigger_calls
+    camera.capture_frame()
+    assert fake.trigger_calls > before
+
+
+def test_restarting_acquisition_needs_an_open_camera(backend):
+    with pytest.raises(NotConnected):
+        GenICamCamera(MONO, backend).restart_acquisition()
+
+
+@pytest.mark.parametrize("entry", ["HighSpeed", "FullSpeed"])
+def test_a_camera_linked_below_usb_3_warns_at_open(entry, caplog):
+    backend = only(usb_speed=entry)
+    with GenICamCamera(MONO, backend):
+        pass
+    assert f"linked at {entry}" in caplog.text
+    assert "USB 3" in caplog.text
+
+
+def test_a_camera_linked_at_usb_3_doesnt_warn(caplog):
+    with GenICamCamera(MONO, only(usb_speed="SuperSpeed")):
+        pass
+    assert "linked at" not in caplog.text
 
 
 # --- Software trigger ---------------------------------------------------------

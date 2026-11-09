@@ -7,6 +7,7 @@ out-of-range value.
 """
 
 import importlib
+from collections.abc import Mapping
 from types import ModuleType
 from typing import Literal
 
@@ -19,6 +20,7 @@ __all__ = [
     "FocusLimitReached",
     "NotConnected",
     "PositionError",
+    "StreamStalled",
     "import_optional",
 ]
 
@@ -37,6 +39,19 @@ class NotConnected(DeviceError):
 
 class DeviceTimeout(DeviceError, TimeoutError):
     """The device did not respond or finish within the allowed time."""
+
+
+class StreamStalled(DeviceTimeout):
+    """A camera stopped sending frames while it was free-running.
+
+    ``counters`` holds what the camera and its library counted when the stall
+    was found (for a GenICam camera, its ``diagnostics()``), or is empty if
+    they couldn't be read.
+    """
+
+    def __init__(self, message: str, counters: Mapping[str, int] | None = None):
+        super().__init__(message)
+        self.counters = dict(counters or {})
 
 
 class CommandRejected(DeviceError):

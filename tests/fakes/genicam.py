@@ -277,6 +277,9 @@ class FakeCamera:
         self.ignored_trigger_calls: set[int] = set()
         self.ignored_while_busy = 0
         self.respond_to_triggers = True
+        # False stops frames while still acquiring, as a stalled camera does, or
+        # one stopped behind the driver's back; the next start sends again.
+        self.sending = True
         # Operations to fail, e.g. {"write Gain": FakeCameraError(...)}. Keys are
         # "read <node>", "write <node>", "execute <node>", "start", "stop", "close".
         self.failures: dict[str, FakeCameraError] = {}
@@ -531,6 +534,7 @@ class FakeCamera:
         if self.streaming:
             raise FakeCameraError("state", f"camera {self.serial} is already acquiring")
         self.streaming = True
+        self.sending = True
 
     def stop(self) -> None:
         self._maybe_fail("stop")
@@ -540,7 +544,7 @@ class FakeCamera:
 
     def frame_waiting(self) -> bool:
         """Whether `next_frame()` would return without waiting."""
-        if not self.streaming or len(self.held) >= self.buffer_count:
+        if not (self.streaming and self.sending) or len(self.held) >= self.buffer_count:
             return False
         if self.queue and self.queue[0].timestamp_ns is not None:
             return True

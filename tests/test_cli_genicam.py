@@ -10,7 +10,8 @@ import pytest
 
 from educelab.devices.app.cli import main
 from educelab.devices.cameras import aravis, gentl
-from educelab.devices.cameras._genicam import BufferStatus
+from educelab.devices.cameras._genicam import BufferStatus, GenICamCamera
+from educelab.devices.errors import DeviceError
 from fakes.aravis import FakeRepository
 from fakes.genicam import FakeCamera, FrameSpec
 from fakes.gentl import PRODUCER, FakeGenicam
@@ -141,8 +142,23 @@ def test_a_cameras_first_failure_shows_its_counters_then(genicam, capsys):
     out = capsys.readouterr().out
     assert out.count(f"{MONO}: first failure, at capture 1") == 1
     line = next(line for line in out.splitlines() if "first failure" in line)
-    assert "DeviceTimeout" in line and "buffers_queued" in line
+    assert "StreamStalled" in line and line.count("buffers_queued") == 1
     assert out.count("failed:") == 3
+
+
+def test_a_first_failure_other_than_a_stall_shows_the_counters(
+    genicam, capsys, monkeypatch
+):
+    def broken(*args):
+        raise DeviceError("unreadable")
+
+    monkeypatch.setattr(GenICamCamera, "_take", broken)
+    args = ["--serial", MONO, "--frames", "1"]
+    assert main(["genicam", "--backend", "gentl", *args]) == 1
+    line = next(
+        line for line in capsys.readouterr().out.splitlines() if "first failure" in line
+    )
+    assert "counters: " in line and "buffers_queued" in line
 
 
 def test_reports_bit_depth_and_timestamp_source(monkeypatch, capsys):

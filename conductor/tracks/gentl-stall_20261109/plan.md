@@ -54,23 +54,24 @@ Each run is `el-devices genicam --backend gentl --pixel-format Mono8 --exposure 
   - Checked in code: `--serial` opens cameras in the order given (`app/genicam.py`); without it they open in the producer's listing order, which differed between two runs on the Mac. So to put 20305113 first, give every serial: `--serial 20305113 --serial ...`.
 - [x] Task 2.4: Run the same configuration through Spinnaker (`el-devices spinnaker`) on the same machine, as many times as 2.1 took. Separates FLIR's GenTL producer and `genicam` from the camera and link.
   - **Runs (`PNY:/gentl-stall-re/20261109-173502-spinnaker-*`):** 10 of 10 ok through Spinnaker. Totals 331–341 MB/s, the same ceiling as GenTL; no transmit failures or link recoveries. No difference between FLIR's GenTL producer and Spinnaker.
-- [ ] Task 2.5: Classify the cause from 2.1–2.4: the camera or link, the host's buffers, or something else. Record the evidence for and against each candidate in the spec.
-  - **Draft in the spec (Evidence):** camera or link most likely, not proven; host buffers ruled out; producer vs Spinnaker no difference. Not reproducible on demand: 0 stalls in 80 GenTL runs, against the original 1 in 8. Awaiting the maintainer's agreement.
+- [x] Task 2.5: Classify the cause from 2.1–2.4: the camera or link, the host's buffers, or something else. Record the evidence for and against each candidate in the spec.
+  - **Draft in the spec (Evidence):** camera or link most likely, not proven; host buffers ruled out; producer vs Spinnaker no difference. Not reproducible on demand: 0 stalls in 80 GenTL runs, against the original 1 in 8. Agreed with the maintainer (2026-11-09).
 
 ### Verification
 
 - [x] Every run is recorded here.
-- [ ] Maintainer agrees on the cause; Phase 3's tasks are refined to match.
+- [x] Maintainer agrees on the cause; Phase 3's tasks are refined to match (2026-11-09).
 
 ## Phase 3: Fix and record
 
 ### Tasks
 
-- [ ] Task 3.1: Agree the API with the maintainer. Chosen shape (2026-11-09): the driver detects a stall and reports it, and gives apps a tested way to restart the stream; it doesn't retry on its own, since no restart has been seen to clear a real stall. To agree:
+- [x] Task 3.1: Agree the API with the maintainer. Chosen shape (2026-11-09): the driver detects a stall and reports it, and gives apps a tested way to restart the stream; it doesn't retry on its own, since no restart has been seen to clear a real stall. To agree:
   - A `StreamStalled(DeviceTimeout)` error in `errors.py` (shared, so it needs approval), raised when a free-running camera's capture times out while acquiring. Its message says the camera stopped sending and includes `diagnostics()`. Triggered capture keeps raising `DeviceTimeout`, since a missing trigger looks the same.
   - A public `GenICamCamera.restart_acquisition()` that stops and starts acquisition and logs the counters before and after.
   - A warning at open when `link_speed` is below USB 3 (SuperSpeed).
-- [ ] Task 3.2: Implement 3.1 test-first on the fakes: a fake stream that stops delivering, the error and its counters, a restart bringing frames back, and the USB 2 warning.
+- [x] Task 3.2: Implement 3.1 test-first on the fakes: a fake stream that stops delivering, the error and its counters, a restart bringing frames back, and the USB 2 warning.
+  - **Result:** a free-running capture that gets no frame at all raises `StreamStalled`; one that saw stale or incomplete frames, or a software-triggered one, still raises `DeviceTimeout`. With newest-only buffering a waiting frame is always taken at once, so no frame in a capture means nothing came since the previous one. The fake camera has a `sending` switch, cleared by the next start. The report's first-failure line no longer adds counters to a `StreamStalled`, whose message has them.
 - [ ] Task 3.3: On the Windows rig: rerun Phase 2's stall configuration 10 times with the new code; then force a stall by executing `AcquisitionStop` behind the driver's back (a scratch script in the track directory), and check that capture raises `StreamStalled` with the counters and that `restart_acquisition()` brings frames back.
 - [ ] Task 3.4: Update `docs/hardware/usb3-vision.md`: the five-camera Windows GenTL runs (Hardware runs), the stall and what's known of its cause (Hazards), what 1.1 found about `genicam`'s buffers, and the link-sharing guidance: this rig carries about 330 MB/s in total, so five cameras need a cap of about 64 MB/s, not 80. Flag the cap for pgs-scan's link budget (outside this track).
 - [ ] Task 3.5: Give downstream apps (e.g. pgs-scan) a documented way to deal with a stalled stream in `docs/guide.md`: how a stall shows up (`StreamStalled`, after the capture timeout), what the driver does (detects and reports, no retry), and what the app should try, in order, with an example: `restart_acquisition()`, then close and reopen, then power-cycle the camera's port through the hub, then fail the scan. (Maintainer's note, 2026-11-09.)

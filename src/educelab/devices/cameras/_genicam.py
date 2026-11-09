@@ -51,6 +51,7 @@ from educelab.devices.errors import (
     DeviceNotFound,
     DeviceTimeout,
     NotConnected,
+    StreamStalled,
 )
 
 __all__ = [
@@ -397,6 +398,10 @@ class _HostClock:
 _HOST_CLOCK = _HostClock()
 
 
+def _counters_text(counters: Mapping[str, int]) -> str:
+    return ", ".join(f"{name} {value}" for name, value in counters.items())
+
+
 def host_time() -> float:
     """The host's wall-clock time in seconds, as ``time.time()`` but fine-grained
     on every platform. Frame timestamps are measured against it."""
@@ -533,6 +538,26 @@ class GenICamCamera(FrameCamera):
         counters, e.g. GenTL's ``frames_delivered``. Keys differ between
         cameras and backends; a counter that can't be read is left out.
         """
+        return self._diagnostics()
+
+    @synchronized
+    def restart_acquisition(self) -> None:
+        """Stop and start acquisition: the first thing to try on a stalled stream.
+
+        Logs the camera's `diagnostics` before and after. A capture afterwards
+        shows whether frames are back; if not, close and reopen the camera.
+        """
+        before = self._diagnostics()
+        with self._acquisition_paused():
+            pass
+        logger.warning(
+            "%r: restarted acquisition; counters before: %s; after: %s",
+            self,
+            _counters_text(before),
+            _counters_text(self._diagnostics()),
+        )
+
+    def _diagnostics(self) -> dict[str, int]:
         conn = self._connection
         found = dict(conn.stream_counters())
         for node, key in _CAMERA_COUNTERS:
@@ -563,6 +588,7 @@ class GenICamCamera(FrameCamera):
             self._firmware = self._read_string("DeviceFirmwareVersion")
             self._own_serial = self._read_string("DeviceSerialNumber")
             self._configure()
+            self._warn_of_a_slow_link()
             self._delivered = False
             self._software_trigger = False
             self._fired_at = None
@@ -627,6 +653,24 @@ class GenICamCamera(FrameCamera):
         self._descriptors = self._describe_settings()
         # Another program may have left the camera slowed down.
         self._raise_frame_rate()
+
+    def _warn_of_a_slow_link(self) -> None:
+        # The CM3 that stalled had come up at USB 2 before (gentl-stall track).
+        node = "U3VCurrentSpeed"
+        if not self._connection.is_readable(node):
+            return
+        try:
+            speed = self._read_enum(node)
+        except DeviceError as exc:
+            logger.debug("%r: no %s: %s", self, node, exc)
+            return
+        if _USB_SPEEDS.get(speed, math.inf) < _USB_SPEEDS["SuperSpeed"]:
+            logger.warning(
+                "%r is linked at %s, slower than USB 3: replug it into a USB 3 "
+                "port, or expect fewer frames",
+                self,
+                speed,
+            )
 
     @contextmanager
     def _acquisition_paused(self) -> Iterator[None]:
@@ -927,6 +971,7 @@ class GenICamCamera(FrameCamera):
                 floor = datetime.fromtimestamp(fired_at, UTC) - tolerance
                 not_before = floor if not_before is None else max(not_before, floor)
         stale = incomplete = retriggers = 0
+        stalled: StreamStalled | None
         remeasured = False
         while True:
             remaining = deadline - time.perf_counter()
@@ -939,13 +984,21 @@ class GenICamCamera(FrameCamera):
             wait = min(remaining, retrigger_s)
             try:
                 buffer = self._next_buffer(None if math.isinf(wait) else wait)
-            except DeviceTimeout:
-                if wait >= remaining:
+            except DeviceTimeout as exc:
+                if wait < remaining:
+                    logger.info("%r: no frame from the trigger; firing again", self)
+                    self._fire()
+                    retriggers += 1
+                    continue
+                if self._software_trigger or stale or incomplete:
                     raise
-                logger.info("%r: no frame from the trigger; firing again", self)
-                self._fire()
-                retriggers += 1
-                continue
+                # Free-running keeps the newest frame waiting, so no frame at all
+                # means nothing came since the last capture. Raised below, unchained.
+                stalled = self._stalled(exc)
+            else:
+                stalled = None
+            if stalled is not None:
+                raise stalled
             try:
                 taken = self._call(
                     "read a frame",
@@ -985,6 +1038,19 @@ class GenICamCamera(FrameCamera):
                 logger.info("%r: %d stale frames; re-measuring offset", self, stale)
                 self._measure_timestamp_offset()
                 remeasured = True
+
+    def _stalled(self, timeout: DeviceTimeout) -> StreamStalled:
+        """The error for a free-running capture that got no frame at all."""
+        try:
+            counters = self._diagnostics()
+        except DeviceError as exc:
+            logger.debug("%r: no counters for the stall: %s", self, exc)
+            counters = {}
+        return StreamStalled(
+            f"{timeout}; the camera stopped sending frames while free-running "
+            f"(counters: {_counters_text(counters) or 'none'})",
+            counters,
+        )
 
     def _next_buffer(self, timeout: float | None) -> Buffer:
         conn = self._connection

@@ -18,6 +18,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from educelab.devices.errors import StreamStalled
+
 # Imported where it's used, so other subcommands don't load the drivers.
 if TYPE_CHECKING:
     from educelab.devices.cameras import Frame, GenICamCamera, Setting
@@ -327,10 +329,12 @@ def _benchmark(
             result.failures.append(f"{type(exc).__name__}: {exc}")
             if len(result.failures) == 1:
                 # Printed now: a stalled camera can fail for minutes.
+                counters = ""
+                if not isinstance(exc, StreamStalled):  # it names its own
+                    counters = f"; counters: {_counters_text(_diagnostics(camera))}"
                 print(
                     f"{camera.info.serial_number}: first failure, at capture "
-                    f"{index + 1}: {type(exc).__name__}: {exc}; counters: "
-                    f"{_counters_text(_diagnostics(camera))}"
+                    f"{index + 1}: {type(exc).__name__}: {exc}{counters}"
                 )
             return
         result.latencies_ms.append((time.perf_counter() - start) * 1000)

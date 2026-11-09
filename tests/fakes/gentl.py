@@ -396,6 +396,21 @@ class FakeGenTLBuffer:
             self.frame = None
 
 
+class _BufferView:
+    """What genicam's new-buffer event gives: a fresh wrapper over an announced
+    buffer on every read (verified on FLIR's producer, usb3-vision.md)."""
+
+    def __init__(self, buffer: FakeGenTLBuffer) -> None:
+        self._buffer = buffer
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._buffer, name)
+
+
+def _unwrap(buffer: "FakeGenTLBuffer | _BufferView") -> FakeGenTLBuffer:
+    return buffer._buffer if isinstance(buffer, _BufferView) else buffer
+
+
 class BufferToken:
     def __init__(self, raw_buffer: bytearray, context: Any) -> None:
         self.raw_buffer = raw_buffer
@@ -450,13 +465,15 @@ class FakeDataStream(_Module):
         self.announced.append(buffer)
         return buffer
 
-    def queue_buffer(self, buffer: FakeGenTLBuffer) -> None:
+    def queue_buffer(self, buffer: FakeGenTLBuffer | _BufferView) -> None:
+        buffer = _unwrap(buffer)
         if buffer not in self.announced:
             raise InvalidParameterException("buffer wasn't announced")
         buffer._empty()
         self.input.append(buffer)
 
-    def revoke_buffer(self, buffer: FakeGenTLBuffer) -> None:
+    def revoke_buffer(self, buffer: FakeGenTLBuffer | _BufferView) -> None:
+        buffer = _unwrap(buffer)
         if buffer in self.input or buffer in self.output:
             raise ResourceInUseException("buffer is still queued")
         buffer._empty()
@@ -507,7 +524,11 @@ class EventManagerNewBuffer:
 
     def __init__(self, stream: FakeDataStream) -> None:
         self._stream = stream
-        self.buffer: FakeGenTLBuffer | None = None
+        self._latest: FakeGenTLBuffer | None = None
+
+    @property
+    def buffer(self) -> _BufferView | None:
+        return None if self._latest is None else _BufferView(self._latest)
 
     def update_event_data(self, timeout_ms: int) -> None:
         stream = self._stream
@@ -519,7 +540,7 @@ class EventManagerNewBuffer:
                 stream.arrive(len(stream.sim.pending_triggers) + len(stream.sim.queue))
         if not stream.output:
             raise TimeoutException(f"no buffer in {timeout_ms} ms")
-        self.buffer = stream.output.popleft()
+        self._latest = stream.output.popleft()
 
     def flush_event_queue(self) -> None:
         while self._stream.output:

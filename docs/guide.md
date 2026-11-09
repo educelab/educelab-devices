@@ -132,6 +132,7 @@ problem.
 | `DeviceNotFound` | Nothing answered at the configured address |
 | `NotConnected` | The device isn't open, or its connection was lost |
 | `DeviceTimeout` | The device didn't respond or finish in time (also a `TimeoutError`) |
+| `StreamStalled` | A free-running camera stopped sending frames (also a `DeviceTimeout`); `.counters` holds what it counted. See [A stalled stream](#a-stalled-stream) |
 | `CommandRejected` | The device received a command and refused it |
 | `DeviceBusy` | Another process holds the device, or it's busy with another operation |
 | `PositionError` | A stage target is outside its axis's limits, the stage needs homing, or `stop()` interrupted a move |
@@ -255,8 +256,63 @@ on cameras that only name it.
 camera and backend have them: the camera's `transmit_failures` and `link_recoveries`,
 and, through GenTL, the stream's `frames_started`, `frames_delivered`, `underruns`,
 `buffers_announced`, `buffers_queued` and `buffers_awaiting_delivery`. Keys differ
-between cameras and backends, and a counter that can't be read is left out. Frame timestamps are measured against `host_time()`, a
-fine-grained `time.time()`; use it to time a capture against its frame.
+between cameras and backends, and a counter that can't be read is left out.
+
+Frame timestamps are measured against `host_time()`, a fine-grained `time.time()`; use
+it to time a capture against its frame.
+
+A USB camera linked slower than USB 3 logs a warning at open, where it reports its USB
+speed (`U3VCurrentSpeed`). Replug it; a USB 2 link can't carry what the camera sends.
+
+#### A stalled stream
+
+A free-running camera can stop sending frames while it's still acquiring. On the lab's
+Windows rig, one of five CM3s on a shared hub did once, and stayed silent until it was
+closed (`docs/hardware/usb3-vision.md`, Hazards). The cause wasn't found, and it couldn't
+be made to happen again.
+
+The capture then waits out its timeout and raises `StreamStalled`, a `DeviceTimeout`
+whose message and `.counters` hold the camera's `diagnostics()` at that moment. A capture
+that received any frame, even a stale or incomplete one, raises a plain `DeviceTimeout`
+instead, and so does a software-triggered capture, where a lost trigger looks the same.
+The driver doesn't retry (see section 8): whether a scan can wait for a recovery is the
+app's call. Log the counters, then try these in order, each followed by a capture:
+
+1. `camera.restart_acquisition()` stops and starts the stream, logging the counters before
+   and after. Settings are kept.
+2. `camera.close()` and `camera.open()`. Opening sets `trigger` back to `"Off"`, so
+   apply your settings again.
+3. Power-cycle the camera's hub port (`Hub.power_cycle(port)`), wait for it to come back
+   (`open()` raises `DeviceNotFound` until it does), then open it and apply your
+   settings: the camera starts from its defaults.
+4. Give up and fail the scan, with the counters from each step.
+
+```python
+import logging
+
+from educelab.devices.errors import StreamStalled
+
+log = logging.getLogger(__name__)
+
+
+def capture(camera, apply_settings):
+    try:
+        return camera.capture_frame()
+    except StreamStalled as exc:
+        log.warning("%s; restarting acquisition", exc)
+    camera.restart_acquisition()
+    try:
+        return camera.capture_frame()
+    except StreamStalled as exc:
+        log.warning("%s; reopening the camera", exc)
+    camera.close()
+    camera.open()
+    apply_settings(camera)
+    return camera.capture_frame()  # a third StreamStalled goes to the caller
+```
+
+Whether step 1 clears a stall like the one on the rig is unknown. When a stall happens,
+record which step cleared it in `usb3-vision.md`.
 
 A frame's `metadata` holds:
 

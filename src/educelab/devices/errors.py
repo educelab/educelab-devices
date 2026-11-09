@@ -53,6 +53,10 @@ class StreamStalled(DeviceTimeout):
         super().__init__(message)
         self.counters = dict(counters or {})
 
+    def __reduce__(self) -> tuple[type, tuple[str, dict[str, int]]]:
+        # Keeps the counters through pickling, e.g. across a process pool.
+        return type(self), (str(self), self.counters)
+
 
 class CommandRejected(DeviceError):
     """The device received a command and refused it."""

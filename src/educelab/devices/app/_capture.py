@@ -362,8 +362,10 @@ def _benchmark(
     from educelab.devices.cameras import host_time
 
     print(f"Capturing {frames} frame(s) from {len(cameras)} camera(s) at once...")
-    counted_from = time.perf_counter()
+    counted_from = {}
     for camera in cameras:
+        # Timed per camera: reading every camera's counters takes a while.
+        counted_from[camera] = time.perf_counter()
         results[camera].counters_before = _diagnostics(camera)
     trial_ms = []
     for index in range(frames):
@@ -387,10 +389,9 @@ def _benchmark(
             thread.join()
         trial_ms.append((time.perf_counter() - start) * 1000)
     print(f"all cameras per capture: {_stats(trial_ms)}")
-    counted_s = time.perf_counter() - counted_from
     for camera in cameras:
+        results[camera].counted_s = time.perf_counter() - counted_from[camera]
         results[camera].counters_after = _diagnostics(camera)
-        results[camera].counted_s = counted_s
     return results
 
 

@@ -1,6 +1,7 @@
 """The shared GenICam camera core, tested against the in-memory fake backend."""
 
 import math
+import pickle
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1261,6 +1262,21 @@ def test_a_capture_that_saw_frames_hasnt_stalled(camera, fake):
     assert not isinstance(info.value, StreamStalled)
 
 
+def test_a_timeout_within_one_exposure_isnt_a_stall(camera, fake):
+    camera.set_setting("ExposureAuto", "Off")
+    camera.set_setting(EXPOSURE_TIME, 0.1)
+    fake.sending = False
+    with pytest.raises(DeviceTimeout) as info:
+        camera.capture_frame(timeout=0.05)
+    assert not isinstance(info.value, StreamStalled)
+
+
+def test_a_stall_keeps_its_counters_through_pickling():
+    error = StreamStalled("stopped", {"link_recoveries": 3})
+    copy = pickle.loads(pickle.dumps(error))
+    assert (str(copy), copy.counters) == ("stopped", {"link_recoveries": 3})
+
+
 def test_a_stall_still_raises_if_its_counters_cant_be_read(
     camera, fake, backend, monkeypatch
 ):
@@ -1272,7 +1288,8 @@ def test_a_stall_still_raises_if_its_counters_cant_be_read(
     monkeypatch.setattr(connection(backend), "stream_counters", unreadable)
     with pytest.raises(StreamStalled) as info:
         camera.capture_frame()
-    assert info.value.counters == {}
+    # The camera's own counters still come through.
+    assert info.value.counters == {"transmit_failures": 0, "link_recoveries": 0}
 
 
 def test_restarting_acquisition_brings_frames_back(camera, fake, caplog):

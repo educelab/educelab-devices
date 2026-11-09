@@ -274,7 +274,8 @@ be made to happen again.
 The capture then waits out its timeout and raises `StreamStalled`, a `DeviceTimeout`
 whose message and `.counters` hold the camera's `diagnostics()` at that moment. A capture
 that received any frame, even a stale or incomplete one, raises a plain `DeviceTimeout`
-instead, and so does a software-triggered capture, where a lost trigger looks the same.
+instead, and so does a software-triggered capture, where a lost trigger looks the same,
+and one whose timeout is no longer than the exposure time.
 The driver doesn't retry (see section 8): whether a scan can wait for a recovery is the
 app's call. Log the counters, then try these in order, each followed by a capture:
 

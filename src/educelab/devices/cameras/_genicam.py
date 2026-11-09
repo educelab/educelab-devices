@@ -399,7 +399,7 @@ _HOST_CLOCK = _HostClock()
 
 
 def _counters_text(counters: Mapping[str, int]) -> str:
-    return ", ".join(f"{name} {value}" for name, value in counters.items())
+    return ", ".join(f"{name} {value}" for name, value in counters.items()) or "none"
 
 
 def host_time() -> float:
@@ -559,7 +559,12 @@ class GenICamCamera(FrameCamera):
 
     def _diagnostics(self) -> dict[str, int]:
         conn = self._connection
-        found = dict(conn.stream_counters())
+        try:
+            found = dict(conn.stream_counters())
+        except DeviceError as exc:
+            # A backend that breaks the never-raises contract still gets a report.
+            logger.debug("%r: no stream counters: %s", self, exc)
+            found = {}
         for node, key in _CAMERA_COUNTERS:
             try:
                 if conn.is_readable(node):
@@ -990,7 +995,8 @@ class GenICamCamera(FrameCamera):
                     self._fire()
                     retriggers += 1
                     continue
-                if self._software_trigger or stale or incomplete:
+                # A timeout within one exposure can pass between healthy frames.
+                if self._software_trigger or stale or incomplete or timeout <= exposure:
                     raise
                 # Free-running keeps the newest frame waiting, so no frame at all
                 # means nothing came since the last capture. Raised below, unchained.
@@ -1041,14 +1047,10 @@ class GenICamCamera(FrameCamera):
 
     def _stalled(self, timeout: DeviceTimeout) -> StreamStalled:
         """The error for a free-running capture that got no frame at all."""
-        try:
-            counters = self._diagnostics()
-        except DeviceError as exc:
-            logger.debug("%r: no counters for the stall: %s", self, exc)
-            counters = {}
+        counters = self._diagnostics()
         return StreamStalled(
             f"{timeout}; the camera stopped sending frames while free-running "
-            f"(counters: {_counters_text(counters) or 'none'})",
+            f"(counters: {_counters_text(counters)})",
             counters,
         )
 
@@ -1421,21 +1423,16 @@ class _LinkSpeed(_Descriptor):
     name: str = "link_speed"
 
     def read(self, camera: GenICamCamera) -> Setting | None:
-        conn = camera._connection
-        if conn.is_readable("DeviceLinkSpeed"):
-            speed = camera._call(
-                "read DeviceLinkSpeed", lambda: conn.get_int("DeviceLinkSpeed")
-            )
-            value = speed / _BYTES_PER_MB
-        elif conn.is_readable("U3VCurrentSpeed"):
-            entry = camera._read_enum("U3VCurrentSpeed")
-            if entry not in _USB_SPEEDS:
-                logger.debug("%r: unknown U3VCurrentSpeed %s", camera, entry)
-                return None
-            value = _USB_SPEEDS[entry]
-        else:
+        found = _ReadOnly(
+            self.name, ("DeviceLinkSpeed",), "MB/s", _BYTES_PER_MB, integer=True
+        ).read(camera)
+        if found is not None or not camera._connection.is_readable("U3VCurrentSpeed"):
+            return found
+        entry = camera._read_enum("U3VCurrentSpeed")
+        if entry not in _USB_SPEEDS:
+            logger.debug("%r: unknown U3VCurrentSpeed %s", camera, entry)
             return None
-        return Setting(self.name, value, unit="MB/s", read_only=True)
+        return Setting(self.name, _USB_SPEEDS[entry], unit="MB/s", read_only=True)
 
 
 @dataclass(frozen=True)

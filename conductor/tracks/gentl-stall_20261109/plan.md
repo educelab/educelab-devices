@@ -31,7 +31,7 @@ Hardware: most runs are batched into Phase 2 and Task 3.3. Task 1.1 is the excep
 
 ### Verification
 
-- [ ] Full suite, `ruff check .` and `ruff format --check .` pass.
+- [x] Full suite, `ruff check .` and `ruff format --check .` pass.
 - [ ] Maintainer check before Phase 2.
 
 ## Phase 2: Reproduce on the Windows rig

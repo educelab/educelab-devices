@@ -2,7 +2,7 @@
   "id": "gentl-stall_20261109",
   "title": "GenTL Stream Stall",
   "type": "bug",
-  "status": "pending",
+  "status": "in_progress",
   "created": "2026-11-09T00:00:00Z",
   "updated": "2026-11-09T00:00:00Z",
   "issue": 32,
@@ -12,6 +12,8 @@
   },
   "tasks": {
     "total": 15,
-    "completed": 0
-  }
+    "completed": 1
+  },
+  "current_phase": 1,
+  "current_task": "1.2"
 }

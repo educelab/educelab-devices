@@ -57,7 +57,7 @@ Behaviour the drivers add or change, and why. Each point was verified on the har
 - **Producers** come from `GENICAM_GENTL64_PATH` (or one named with `producer=`, which `discover()` takes too). Each producer is loaded once per process and unloaded when its last camera closes. A producer that fails to load, list its cameras or unload is skipped with a warning naming it; `ImportError` comes only when none works. What a producer prints to stderr while loading (e.g. "GenTL producer does not implement DSGetNumFlows") goes to the debug log.
 - **Opening twice** in one process is refused with `DeviceBusy`; FLIR's producer would otherwise allow it.
 - **Feature access** goes through `genicam.genapi`, with the camera's XML read from `local:` or `file:` URLs, plain or zipped.
-- **Buffers** are `bytes` objects, which the producer fills in place: FLIR's producer refuses a `bytearray`. The data stream is set to `NewestOnly` when it has `StreamBufferHandlingMode`; otherwise older frames are drained.
+- **Buffers** are `bytes` objects, which the producer fills in place: FLIR's producer refuses a `bytearray`. The data stream is set to `NewestOnly` when it has `StreamBufferHandlingMode`; otherwise older frames are drained. Each new-buffer event gives a fresh `genicam` wrapper over the same buffer, which is safe to requeue ([GenTL on macOS](#gentl-on-macos)).
 - **`TLParamsLocked`** is set during acquisition and cleared after, as GenTL consumers do. Unknown on the IDS camera through IDS's producer.
 - **Waits** are cut into 100 ms slices (`_WAIT_SLICE_MS`), in case `genicam` holds the GIL while waiting, as reported for Harvesters (#508).
 
@@ -190,6 +190,13 @@ Spinnaker installs a GenTL producer on macOS, in `/usr/local/lib/spinnaker-gentl
 - **Captures.** 300 `not_before` captures met 600 stale frames, at 11.9 captures per second, which matches Spinnaker. After a 1 s pause the frame taken was exposed 78 ms before the call, so the stream keeps only the newest frame.
 - **Software trigger.** Switching to software trigger took 1.27 s, with a 59 ms turnaround. Exposures began 2.2–3.1 ms after the request (median 3.1), with one outlier at 115.9 ms.
 - **Ranges.** genapi refuses an out-of-range exposure write itself (`OutOfRangeException`).
+
+**Buffer events** (`20305122`, macOS 27.0.1, Spinnaker 4.4.0.246, Python 3.13, genicam 1.6.0, 2026-11-09), probed for the stall in issue #32. [V] for each point below, on this unit:
+
+- **`EventManagerNewBuffer.buffer` is a new wrapper on every read**, even read twice without an update, and is never the object `announce_buffer` returned. Each wrapper stays bound to its own buffer: four wrappers held across later updates kept their contexts (2, 3, 0, 1) and frame IDs (34–37). Requeueing a wrapper returns its buffer to the input pool. So compare buffers by `context`, never by identity.
+- **`NewestOnly` leaves at most one frame waiting** (`num_awaiting_delivery` 1, one event queued), however long the host waits. In 30 grabs 250 ms apart, `grab()` never found an older frame to requeue, and all four buffers were queued again after each.
+- **Holding every buffer starves the stream.** With all four held, no event came in 1 s, and `num_underrun` stayed 0.
+- **Stream counters.** `num_started` follows the frame ID (frame 7 at 8 started), so it counts every frame the producer received, including those `NewestOnly` discarded. `num_delivered` counts only frames handed to the host.
 
 Loading it makes genicam print five lines such as "GenTL producer does not implement DSGetNumFlows" to stderr, one for each optional GenTL 1.6 function the producer lacks. They are harmless. The driver logs them at debug level instead of letting them reach the console.
 

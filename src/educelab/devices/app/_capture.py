@@ -436,9 +436,25 @@ def _report(camera: "GenICamCamera", result: _Results, frames: int) -> int:
         print(f"  host received ~{received:.1f} frames/s (frames_started)")
     if result.counters_after:
         print(f"  counters: {_counters_text(result.counters_after)}")
+    changed = _changes(result.counters_before, result.counters_after)
+    if changed:
+        print(f"  during the run: {changed}")
     for failure in result.failures:
         print(f"  failed: {failure}")
     return len(result.failures)
+
+
+def _changes(before: Mapping[str, int], after: Mapping[str, int]) -> str:
+    """How each counter moved between ``before`` and ``after``. Buffer counts
+    are left out: they're snapshots, not running totals."""
+    moved = [
+        f"{key} {after[key] - before[key]:+d}"
+        for key in after
+        if key in before
+        and not key.startswith("buffers_")
+        and after[key] != before[key]
+    ]
+    return ", ".join(moved)
 
 
 def _received_rate(result: _Results) -> float | None:

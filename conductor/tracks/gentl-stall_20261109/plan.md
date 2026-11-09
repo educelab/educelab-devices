@@ -32,7 +32,8 @@ Hardware: most runs are batched into Phase 2 and Task 3.3. Task 1.1 is the excep
 ### Verification
 
 - [x] Full suite, `ruff check .` and `ruff format --check .` pass.
-- [ ] Maintainer check before Phase 2.
+- [x] Maintainer check before Phase 2 (approved 2026-11-09, after a local run).
+- **Local run (2026-11-09, lab Mac, five CM3s, the stall configuration, twice):** no stall; the report's new lines work. The received rate matched the frame-ID rate on every camera. `link_recoveries` rises by one per open, never during a run; the report's new "during the run" line shows each counter's change over the run (buffer counts left out). Logs in the session scratchpad (`report_mac_run1.log`, `report_mac_run2.log`).
 
 ## Phase 2: Reproduce on the Windows rig
 
@@ -43,6 +44,7 @@ Each run is `el-devices genicam --backend gentl --pixel-format Mono8 --exposure 
 - [ ] Task 2.1: Run the stall configuration up to 10 times, or until it stalls. On a stall, record the counters, the link speed, and whether the camera still answers node reads.
 - [ ] Task 2.2: On a stalled camera, stop and restart acquisition (a scratch script, or a `pixel_format` write, which pauses acquisition). Record whether frames come back without a power cycle.
 - [ ] Task 2.3: Repeat 2.1 with 20305113 opened first (`--serial` in that order; check the CLI opens cameras in the order given). Does the stall follow the camera or the last position?
+  - Checked in code: `--serial` opens cameras in the order given (`app/genicam.py`); without it they open in the producer's listing order, which differed between two runs on the Mac. So to put 20305113 first, give every serial: `--serial 20305113 --serial ...`.
 - [ ] Task 2.4: Run the same configuration through Spinnaker (`el-devices spinnaker`) on the same machine, as many times as 2.1 took. Separates FLIR's GenTL producer and `genicam` from the camera and link.
 - [ ] Task 2.5: Classify the cause from 2.1–2.4: the camera or link, the host's buffers, or something else. Record the evidence for and against each candidate in the spec.
 

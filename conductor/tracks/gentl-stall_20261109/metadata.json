@@ -8,12 +8,12 @@
   "issue": 32,
   "phases": {
     "total": 3,
-    "completed": 0
+    "completed": 1
   },
   "tasks": {
     "total": 16,
     "completed": 5
   },
-  "current_phase": 1,
-  "current_task": "1.5"
+  "current_phase": 2,
+  "current_task": "2.1"
 }

@@ -108,6 +108,25 @@ def test_reports_each_cameras_counters_after_the_run(genicam, capsys):
     assert re.search(r"host received ~[\d.]+ frames/s", report)
 
 
+def test_reports_what_the_counters_did_during_the_run(genicam, capsys):
+    sim = genicam.cameras[0]
+    next_frame = sim.next_frame
+
+    def recover_once_then_send():
+        if sim.frames_grabbed == 1:
+            sim.set("USB3LinkRecoveryCount", sim.get("USB3LinkRecoveryCount") + 1)
+        return next_frame()
+
+    sim.next_frame = recover_once_then_send
+    args = ["--serial", MONO, "--frames", "3"]
+    assert main(["genicam", "--backend", "gentl", *args]) == 0
+    out = capsys.readouterr().out
+    during = next(line for line in out.splitlines() if "during the run" in line)
+    assert "link_recoveries +1" in during
+    assert "frames_delivered +" in during
+    assert "buffers_" not in during
+
+
 def test_a_camera_without_stream_counters_shows_its_own(repository, capsys):
     assert main(["genicam", "--backend", "aravis", "--frames", "1"]) == 0
     out = capsys.readouterr().out

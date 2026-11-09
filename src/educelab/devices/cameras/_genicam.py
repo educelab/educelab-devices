@@ -205,6 +205,12 @@ class Connection(Protocol):
         """
         ...
 
+    def stream_counters(self) -> Mapping[str, int]:
+        """The library's counts for the stream (e.g. ``frames_delivered``), for
+        diagnosis; empty where the backend has none. Never raises: a counter
+        that can't be read is left out."""
+        ...
+
     def close(self, exposure_time: float = 0.0) -> None:
         """Stop acquiring (see `stop_acquisition`) and let go of the camera.
         Does nothing if closed.
@@ -516,6 +522,27 @@ class GenICamCamera(FrameCamera):
         """
         self._measure_timestamp_offset()
         return self._timestamp_offset
+
+    @synchronized
+    def diagnostics(self) -> dict[str, int]:
+        """Counters for diagnosing a stream that stops, where the camera and
+        backend have them.
+
+        The camera's ``transmit_failures`` (``TransmitFailureCount``) and
+        ``link_recoveries`` (``USB3LinkRecoveryCount``), and the backend's stream
+        counters, e.g. GenTL's ``frames_delivered``. Keys differ between
+        cameras and backends; a counter that can't be read is left out.
+        """
+        conn = self._connection
+        found = dict(conn.stream_counters())
+        for node, key in _CAMERA_COUNTERS:
+            try:
+                if conn.is_readable(node):
+                    read = functools.partial(conn.get_int, node)
+                    found[key] = self._call(f"read {node}", read)
+            except DeviceError as exc:
+                logger.debug("%r: no %s: %s", self, node, exc)
+        return found
 
     # --- Lifecycle -------------------------------------------------------------
 
@@ -1304,6 +1331,12 @@ class _ReadOnly(_Descriptor):
             value /= self.scale
         return Setting(self.name, value, unit=self.unit, read_only=True)
 
+
+# Camera nodes `diagnostics()` reports, by its key.
+_CAMERA_COUNTERS = (
+    ("TransmitFailureCount", "transmit_failures"),
+    ("USB3LinkRecoveryCount", "link_recoveries"),
+)
 
 # Nominal signalling rates of U3VCurrentSpeed's entries, in MB/s.
 _USB_SPEEDS = {

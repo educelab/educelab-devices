@@ -580,6 +580,17 @@ class _Features:
         self._do(node.execute)
 
 
+# GenTL's stream counters, by the key `stream_counters()` gives each.
+_STREAM_COUNTERS = (
+    ("frames_started", "num_started"),
+    ("frames_delivered", "num_delivered"),
+    ("underruns", "num_underrun"),
+    ("buffers_announced", "num_announced"),
+    ("buffers_queued", "num_queued"),
+    ("buffers_awaiting_delivery", "num_awaiting_delivery"),
+)
+
+
 class _GenTLConnection(_Features):
     """A `Connection` onto one open GenTL device and its first data stream."""
 
@@ -738,6 +749,18 @@ class _GenTLConnection(_Features):
             self._do(functools.partial(self._stream.queue_buffer, buffer))
             buffer = newer
         return _GenTLBuffer(self, buffer)
+
+    def stream_counters(self) -> dict[str, int]:
+        stream = self._stream
+        found: dict[str, int] = {}
+        if stream is None:
+            return found
+        for key, attr in _STREAM_COUNTERS:
+            try:
+                found[key] = int(self._do(functools.partial(getattr, stream, attr)))
+            except DeviceError as exc:
+                logger.debug("GenTL stream has no %s: %s", attr, exc)
+        return found
 
     def close(self, exposure_time: float = 0.0) -> None:
         if self._producer is None:

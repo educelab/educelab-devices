@@ -346,6 +346,27 @@ def test_many_grabs_with_older_frames_waiting_keep_every_buffer(sim, stream_node
         assert sorted(b.context for b in stream.input) == list(range(BUFFER_COUNT))
 
 
+def test_diagnostics_report_the_streams_counters(camera, genicam):
+    stream = genicam.streams()[0]
+    before = camera.diagnostics()
+    assert stream.arrive(3) == 3
+    connection_of(camera).grab(1.0).release()
+    stream.underruns = 2
+    after = camera.diagnostics()
+    assert after["frames_started"] - before["frames_started"] == 3
+    assert after["frames_delivered"] - before["frames_delivered"] == 3
+    assert after["underruns"] == 2
+    assert after["buffers_announced"] == after["buffers_queued"] == BUFFER_COUNT
+    assert after["buffers_awaiting_delivery"] == 0
+
+
+def test_a_stream_counter_the_producer_lacks_is_left_out(camera, genicam):
+    genicam.streams()[0].missing_counters = {"num_underrun"}
+    found = camera.diagnostics()
+    assert "underruns" not in found
+    assert "frames_delivered" in found
+
+
 def test_newest_only_works_without_a_stream_node_map(sim):
     genicam = FakeGenicam([sim], stream_nodes=False)
     with make(MONO, genicam) as camera:

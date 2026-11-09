@@ -403,6 +403,9 @@ class _AravisConnection:
             self._do(lambda: stream.get_info_uint64_by_name("n_transferred_bytes"))
         )
 
+    def stream_counters(self) -> dict[str, int]:
+        return {}
+
     def grab(self, timeout: float | None) -> "_AravisBuffer":
         if not self._acquiring:
             raise DeviceError("the camera isn't acquiring")

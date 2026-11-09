@@ -31,6 +31,7 @@ from educelab.devices.errors import (
     DeviceError,
     DeviceNotFound,
     DeviceTimeout,
+    NotConnected,
 )
 from fakes.genicam import FakeBackend, FakeCamera, FakeCameraError, FakeFrame, FrameSpec
 
@@ -1194,6 +1195,36 @@ def test_an_unknown_usb_speed_name_is_left_out():
     backend = only(without=["DeviceLinkSpeed"], usb_speed="WarpSpeed")
     with GenICamCamera(MONO, backend) as camera:
         assert "link_speed" not in camera.settings()
+
+
+# --- Diagnostics --------------------------------------------------------------
+
+
+def test_diagnostics_hold_the_cameras_link_counters(camera, fake):
+    fake.set("TransmitFailureCount", 2)
+    fake.set("USB3LinkRecoveryCount", 7)
+    assert camera.diagnostics() == {"transmit_failures": 2, "link_recoveries": 7}
+
+
+def test_diagnostics_leave_out_what_the_camera_lacks():
+    backend = only(without=["TransmitFailureCount", "USB3LinkRecoveryCount"])
+    with GenICamCamera(MONO, backend) as camera:
+        assert camera.diagnostics() == {}
+
+
+def test_diagnostics_include_the_backends_stream_counters(camera, backend):
+    connection(backend).stream_counters_now = {"frames_delivered": 3}
+    assert camera.diagnostics()["frames_delivered"] == 3
+
+
+def test_a_counter_that_cant_be_read_is_left_out(camera, fake):
+    fake.failures["read TransmitFailureCount"] = FakeCameraError("access", "nope")
+    assert set(camera.diagnostics()) == {"link_recoveries"}
+
+
+def test_diagnostics_need_an_open_camera(backend):
+    with pytest.raises(NotConnected):
+        GenICamCamera(MONO, backend).diagnostics()
 
 
 # --- Software trigger ---------------------------------------------------------

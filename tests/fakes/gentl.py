@@ -428,6 +428,11 @@ class FakeDataStream(_Module):
         self.output: deque[FakeGenTLBuffer] = deque()
         self.started = False
         self.waits: list[int] = []
+        # Stream counters; tests set underruns and missing_counters directly.
+        self.frames_started = 0
+        self.delivered = 0
+        self.underruns = 0
+        self.missing_counters: set[str] = set()
         nodes = _StreamNodes() if device._genicam.stream_nodes else None
         self.nodes = nodes
         xml = None
@@ -494,6 +499,35 @@ class FakeDataStream(_Module):
             raise GenericException("stream isn't started")
         self.started = False
 
+    def _counter(self, name: str, value: int) -> int:
+        if name in self.missing_counters:
+            raise NotAvailableException(f"the producer has no {name}")
+        return value
+
+    @property
+    def num_started(self) -> int:
+        return self._counter("num_started", self.frames_started)
+
+    @property
+    def num_delivered(self) -> int:
+        return self._counter("num_delivered", self.delivered)
+
+    @property
+    def num_underrun(self) -> int:
+        return self._counter("num_underrun", self.underruns)
+
+    @property
+    def num_announced(self) -> int:
+        return self._counter("num_announced", len(self.announced))
+
+    @property
+    def num_queued(self) -> int:
+        return self._counter("num_queued", len(self.input))
+
+    @property
+    def num_awaiting_delivery(self) -> int:
+        return self._counter("num_awaiting_delivery", len(self.output))
+
     def register_event(self, event_type: int) -> "FakeDataStream":
         return self
 
@@ -510,6 +544,7 @@ class FakeDataStream(_Module):
             buffer = self.input.popleft()
             buffer._fill(self.sim.next_frame())
             self.output.append(buffer)
+            self.frames_started += 1
             landed += 1
         return landed
 
@@ -541,6 +576,7 @@ class EventManagerNewBuffer:
         if not stream.output:
             raise TimeoutException(f"no buffer in {timeout_ms} ms")
         self._latest = stream.output.popleft()
+        stream.delivered += 1
 
     def flush_event_queue(self) -> None:
         while self._stream.output:

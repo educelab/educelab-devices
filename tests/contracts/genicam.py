@@ -188,6 +188,10 @@ class BackendContract:
         conn.close(exposure_time=0.01)
         assert not sim.opened
 
+    def test_stream_counters_are_whole_numbers_by_name(self, streaming):
+        counters = streaming.stream_counters()
+        assert all(isinstance(k, str) and type(v) is int for k, v in counters.items())
+
     def test_grab_returns_a_complete_frame(self, streaming, sim):
         buffer = streaming.grab(1.0)
         try:

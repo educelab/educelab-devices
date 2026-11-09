@@ -249,7 +249,13 @@ off), the camera's auto modes by their native names (`ExposureAuto`, `GainAuto`)
 the read-only `current_throughput`, `resulting_frame_rate` and `link_speed`, each only
 where the camera has the feature. `link_speed` is in MB/s: the camera's
 `DeviceLinkSpeed`, or the nominal rate of its USB speed (625 for USB 3, 60 for USB 2)
-on cameras that only name it. Frame timestamps are measured against `host_time()`, a
+on cameras that only name it.
+
+`diagnostics()` returns counters for diagnosing a stream that stops sending, where the
+camera and backend have them: the camera's `transmit_failures` and `link_recoveries`,
+and, through GenTL, the stream's `frames_started`, `frames_delivered`, `underruns`,
+`buffers_announced`, `buffers_queued` and `buffers_awaiting_delivery`. Keys differ
+between cameras and backends, and a counter that can't be read is left out. Frame timestamps are measured against `host_time()`, a
 fine-grained `time.time()`; use it to time a capture against its frame.
 
 A frame's `metadata` holds:

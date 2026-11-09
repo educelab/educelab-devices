@@ -398,6 +398,8 @@ class FakeCamera:
                 compute=frame_rate,
             ),
             Node("DeviceLinkSpeed", "int", self.LINK_SPEED, access="RO"),
+            Node("TransmitFailureCount", "int", 0, access="RO"),
+            Node("USB3LinkRecoveryCount", "int", 0, access="RO"),
         ]
         if usb_speed is not None:
             speeds = ("LowSpeed", "FullSpeed", "HighSpeed", "SuperSpeed")
@@ -708,6 +710,8 @@ class FakeConnection:
         # The exposure_time given to each start, and to each stop and close.
         self.start_exposure_times: list[float] = []
         self.stop_exposure_times: list[float] = []
+        # What stream_counters() returns, as a GenTL stream's would.
+        self.stream_counters_now: dict[str, int] = {}
 
     @property
     def times_arrivals(self) -> bool:
@@ -780,6 +784,9 @@ class FakeConnection:
         self.stop_exposure_times.append(exposure_time)
         if self.camera.streaming:
             self._do(self.camera.stop)
+
+    def stream_counters(self) -> dict[str, int]:
+        return dict(self.stream_counters_now)
 
     def grab(self, timeout: float | None) -> FakeBuffer:
         self.grab_timeouts.append(timeout)

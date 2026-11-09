@@ -541,6 +541,9 @@ class _PySpinConnection:
         if self._cam.IsStreaming():
             self._cam.EndAcquisition()
 
+    def stream_counters(self) -> dict[str, int]:
+        return {}
+
     def grab(self, timeout: float | None) -> "_PySpinBuffer":
         if timeout is None:
             grab_ms = self._pyspin.EVENT_TIMEOUT_INFINITE

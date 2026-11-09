@@ -41,8 +41,13 @@ Each run is `el-devices genicam --backend gentl --pixel-format Mono8 --exposure 
 
 ### Tasks
 
-- [ ] Task 2.1: Run the stall configuration up to 10 times, or until it stalls. On a stall, record the counters, the link speed, and whether the camera still answers node reads.
+- [x] Task 2.1: Run the stall configuration up to 10 times, or until it stalls. On a stall, record the counters, the link speed, and whether the camera still answers node reads.
+  - **Runs (2026-11-09, Windows rig `DESKTOP-Q940IU7`, educelab-devices at this branch, Python 3.12.10; logs `PNY:/gentl-stall/20261109-164944-gentl-run01..10.log`):** 10 of 10 ok, no stall. Every camera captured 100/100 in every run (1,000 each); no failures, `underruns`, `transmit_failures` or `link_recoveries`, which stayed 0 at every open too (unlike the Mac, where it rose at each open). Link 625 MB/s on all five. All-camera capture median 124–187 ms.
+  - The producer listed and opened the cameras in the same order every run: 20305114, 20305122, 20298479, 20298452, 20305113. So 20305113 was last each time, as in the original stall, and didn't stall.
+  - The received rate (`frames_started`) matched the frame-ID rate on every camera in every run (within 0.1 frames/s), so the frame-ID rate holds on Windows too.
+  - **The link is oversubscribed in this configuration.** The five cameras ask for 5 × 80.4 = 402 MB/s but streamed 286–344 MB/s together (median about 331). 20298479 and 20305113 held the cap (78–80 MB/s) in most runs; 20305122 (43–73) and 20298452 (40–55) got less. The original stall's four working cameras streamed 4 × 80.4 = 322 MB/s, about the same total, so the stalled camera got none of the shared link rather than a share. This weakens the spec's argument against oversubscription: Mono16 at the same cap was oversubscribed too, so its not stalling shows only that oversubscription doesn't always stall. Evidence for 2.5.
 - [ ] Task 2.2: On a stalled camera, stop and restart acquisition (a scratch script, or a `pixel_format` write, which pauses acquisition). Record whether frames come back without a power cycle.
+  - Waits for a stall: none in 2.1.
 - [ ] Task 2.3: Repeat 2.1 with 20305113 opened first (`--serial` in that order; check the CLI opens cameras in the order given). Does the stall follow the camera or the last position?
   - Checked in code: `--serial` opens cameras in the order given (`app/genicam.py`); without it they open in the producer's listing order, which differed between two runs on the Mac. So to put 20305113 first, give every serial: `--serial 20305113 --serial ...`.
 - [ ] Task 2.4: Run the same configuration through Spinnaker (`el-devices spinnaker`) on the same machine, as many times as 2.1 took. Separates FLIR's GenTL producer and `genicam` from the camera and link.

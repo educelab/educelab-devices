@@ -37,7 +37,7 @@ Hardware: most runs are batched into Phase 2 and Task 3.3. Task 1.1 is the excep
 
 ## Phase 2: Reproduce on the Windows rig
 
-Each run is `el-devices genicam --backend gentl --pixel-format Mono8 --exposure min --throughput-limit 80 --frames 100` on the five CM3s, unless a task says otherwise. Log every run to the PNY drive and record each one here, stalled or not. [`stall-runs.ps1`](./stall-runs.ps1) repeats a configuration, logs each run to its own file with a summary, and stops at the first stall (see its examples for 2.1, 2.3 and 2.4).
+Each run is `el-devices genicam --backend gentl --pixel-format Mono8 --exposure min --throughput-limit 80 --frames 100` on the five CM3s, unless a task says otherwise. Log every run to the PNY drive and record each one here, stalled or not. [`stall-runs.sh`](./stall-runs.sh) (Git Bash or MSYS2) repeats a configuration, logs each run to its own file with a summary, and stops at the first stall (see its examples for 2.1, 2.3 and 2.4).
 
 ### Tasks
 

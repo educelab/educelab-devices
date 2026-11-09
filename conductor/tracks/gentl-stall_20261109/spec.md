@@ -53,13 +53,13 @@ The stall rate is now far below the original 1 in 8: with that rate, 80 GenTL ru
 
 ## Acceptance Criteria
 
-- [ ] `el-devices genicam` reports each camera's link speed, and for GenTL its stream's counters (frames delivered, underruns, buffers queued), where the camera and library have them.
-- [ ] Whether `EventManagerNewBuffer.buffer` is a fresh object after each update is verified against real `genicam`, and `GenTLConnection.grab()` is correct for what it does, with a fake-backed test pinning it.
-- [ ] The stall is reproduced on the Windows rig with the new report, or the attempts that failed to reproduce it are recorded.
-- [ ] The cause is identified from evidence, and the stall is fixed; or, if the camera or link is at fault, the driver recovers or reports it clearly (decided in Phase 3, with the maintainer).
-- [ ] Downstream apps have a documented way, and a method if one is needed, to detect and deal with a stalled stream (`docs/guide.md`).
-- [ ] `docs/hardware/usb3-vision.md` records the five-camera Windows GenTL runs, the stall and its cause, and any change the evidence supports to the link-sharing guidance.
-- [ ] Issue #32 is updated with the findings and closed by the track's PR.
+- [x] `el-devices genicam` reports each camera's link speed, and for GenTL its stream's counters (frames delivered, underruns, buffers queued), where the camera and library have them.
+- [x] Whether `EventManagerNewBuffer.buffer` is a fresh object after each update is verified against real `genicam`, and `GenTLConnection.grab()` is correct for what it does, with a fake-backed test pinning it.
+- [x] The stall is reproduced on the Windows rig with the new report, or the attempts that failed to reproduce it are recorded.
+- [x] The cause is identified from evidence, and the stall is fixed; or, if the camera or link is at fault, the driver recovers or reports it clearly (decided in Phase 3, with the maintainer).
+- [x] Downstream apps have a documented way, and a method if one is needed, to detect and deal with a stalled stream (`docs/guide.md`).
+- [x] `docs/hardware/usb3-vision.md` records the five-camera Windows GenTL runs, the stall and its cause, and any change the evidence supports to the link-sharing guidance.
+- [x] Issue #32 is updated with the findings and closed by the track's PR.
 
 ## Dependencies
 

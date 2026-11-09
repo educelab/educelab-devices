@@ -1,7 +1,7 @@
 # Track: GenTL Stream Stall
 
 **ID:** gentl-stall_20261109
-**Status:** Pending
+**Status:** Complete
 **Issue:** [#32](https://github.com/educelab/educelab-devices/issues/32)
 
 ## Documents
@@ -11,8 +11,8 @@
 
 ## Progress
 
-- Phases: 0/3 complete
-- Tasks: 0/15 complete
+- Phases: 3/3 complete
+- Tasks: 15/16 complete (2.2 not done: no camera stalled on its own)
 
 ## Quick Links
 

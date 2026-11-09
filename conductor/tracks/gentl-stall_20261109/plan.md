@@ -3,7 +3,7 @@
 **Track ID:** gentl-stall_20261109
 **Spec:** [spec.md](./spec.md)
 **Created:** 2026-11-09
-**Status:** [~] In Progress
+**Status:** [x] Complete (PR #33, merged 2026-11-09)
 
 ## Overview
 
@@ -83,14 +83,14 @@ Each run is `el-devices genicam --backend gentl --pixel-format Mono8 --exposure 
 ### Verification
 
 - [x] Full suite, `ruff check .` and `ruff format --check .` pass.
-- [ ] Maintainer check.
+- [x] Maintainer check (PR #33 merged 2026-11-09).
 
 ## Final Verification
 
-- [ ] All acceptance criteria met
-- [ ] Tests passing
-- [ ] Documentation updated
-- [ ] Ready for review
+- [x] All acceptance criteria met
+- [x] Tests passing
+- [x] Documentation updated
+- [x] Ready for review
 
 ---
 

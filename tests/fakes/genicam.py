@@ -200,6 +200,8 @@ class FakeCamera:
             None stamps frames at the end of their exposure.
         busy_after_frame: Seconds after handing out a frame during which the
             camera ignores triggers, as the IDS U3-36PxXCP does for about 3 ms.
+        usb_speed: Add ``U3VCurrentSpeed`` with this entry current, as the
+            CM3-U3-50S5M has in place of ``DeviceLinkSpeed``.
         ids_nodes: Behave as the IDS U3-36PxXCP's nodes do: ``Gain`` is a
             factor from 1 to 8.042, rounded down to 4 binary places, and a writable ``AcquisitionFrameRate``
             drops to fit a longer exposure and stays there after a shorter one.
@@ -211,6 +213,7 @@ class FakeCamera:
     THROUGHPUT_MIN = 10_000_000
     THROUGHPUT_MAX = 500_000_000
     THROUGHPUT_INC = 8_000
+    LINK_SPEED = 625_000_000  # USB 3 Gen 1, bytes/s
 
     def __init__(
         self,
@@ -236,6 +239,7 @@ class FakeCamera:
         arrival_latency: float | None = None,
         ready_after: float | None = None,
         busy_after_frame: float = 0.0,
+        usb_speed: str | None = None,
         ids_nodes: bool = False,
     ) -> None:
         self.arrival_latency = arrival_latency
@@ -393,7 +397,14 @@ class FakeCamera:
                 access="RO",
                 compute=frame_rate,
             ),
+            Node("DeviceLinkSpeed", "int", self.LINK_SPEED, access="RO"),
         ]
+        if usb_speed is not None:
+            speeds = ("LowSpeed", "FullSpeed", "HighSpeed", "SuperSpeed")
+            entries = speeds if usb_speed in speeds else (*speeds, usb_speed)
+            nodes.append(
+                Node("U3VCurrentSpeed", "enum", usb_speed, entries=entries, access="RO")
+            )
         if throughput_mode:
             nodes.append(enum("DeviceLinkThroughputLimitMode", "Off"))
         if ids_nodes:

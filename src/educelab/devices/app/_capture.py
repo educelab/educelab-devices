@@ -277,13 +277,15 @@ def _apply(camera: "GenICamCamera", name: str, value: "SettingValue") -> str | N
 def _throughput_text(settings: Mapping[str, "Setting"]) -> str:
     from educelab.devices.cameras import THROUGHPUT_LIMIT
 
+    speed = settings.get("link_speed")
+    text = "" if speed is None else f"link {speed.value:g} MB/s, "
     limit = settings.get(THROUGHPUT_LIMIT)
     if limit is None:
-        text = "no throughput limit node"
+        text += "no throughput limit node"
     elif limit.value is None:
-        text = "throughput limit off"
+        text += "throughput limit off"
     else:
-        text = f"throughput limit {limit.value:g} MB/s"
+        text += f"throughput limit {limit.value:g} MB/s"
     rate = settings.get("resulting_frame_rate")
     if rate is not None and rate.value is not None:
         text += f", resulting {rate.value:.1f} frames/s"

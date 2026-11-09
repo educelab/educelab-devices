@@ -84,6 +84,20 @@ def test_benchmarks_every_camera_at_once(backend, capsys, request):
     assert all(not sim.opened for sim in sims(backend, request))
 
 
+def test_reports_each_cameras_link_speed(monkeypatch, capsys):
+    usb2 = FakeCamera(COLOR, without=["DeviceLinkSpeed"], usb_speed="HighSpeed")
+    monkeypatch.setattr(
+        aravis, "load_aravis", lambda: FakeRepository([FakeCamera(MONO), usb2])
+    )
+    assert main(["genicam", "--backend", "aravis", "--frames", "1"]) == 0
+    out = capsys.readouterr().out
+    lines = {
+        line.split(":")[0]: line for line in out.splitlines() if "firmware" in line
+    }
+    assert "link 625 MB/s, throughput limit" in lines[MONO]
+    assert "link 60 MB/s, throughput limit" in lines[COLOR]
+
+
 def test_reports_bit_depth_and_timestamp_source(monkeypatch, capsys):
     repository = FakeRepository([FakeCamera(MONO, formats=["Mono8", "Mono10g40IDS"])])
     monkeypatch.setattr(aravis, "load_aravis", lambda: repository)

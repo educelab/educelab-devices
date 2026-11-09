@@ -778,6 +778,7 @@ class GenICamCamera(FrameCamera):
                 integer=True,
             ),
             _ReadOnly("resulting_frame_rate", rate_nodes, "Hz"),
+            _LinkSpeed(),
         ]
         return {d.name: d for d in found if d is not None}
 
@@ -1302,6 +1303,40 @@ class _ReadOnly(_Descriptor):
         if self.scale != 1.0:
             value /= self.scale
         return Setting(self.name, value, unit=self.unit, read_only=True)
+
+
+# Nominal signalling rates of U3VCurrentSpeed's entries, in MB/s.
+_USB_SPEEDS = {
+    "LowSpeed": 0.1875,
+    "FullSpeed": 1.5,
+    "HighSpeed": 60.0,
+    "SuperSpeed": 625.0,
+}
+
+
+@dataclass(frozen=True)
+class _LinkSpeed(_Descriptor):
+    """The link's speed in MB/s, from ``DeviceLinkSpeed`` or, on cameras without
+    it (e.g. the CM3-U3-50S5M), the nominal rate of ``U3VCurrentSpeed``."""
+
+    name: str = "link_speed"
+
+    def read(self, camera: GenICamCamera) -> Setting | None:
+        conn = camera._connection
+        if conn.is_readable("DeviceLinkSpeed"):
+            speed = camera._call(
+                "read DeviceLinkSpeed", lambda: conn.get_int("DeviceLinkSpeed")
+            )
+            value = speed / _BYTES_PER_MB
+        elif conn.is_readable("U3VCurrentSpeed"):
+            entry = camera._read_enum("U3VCurrentSpeed")
+            if entry not in _USB_SPEEDS:
+                logger.debug("%r: unknown U3VCurrentSpeed %s", camera, entry)
+                return None
+            value = _USB_SPEEDS[entry]
+        else:
+            return None
+        return Setting(self.name, value, unit="MB/s", read_only=True)
 
 
 @dataclass(frozen=True)

@@ -246,8 +246,10 @@ exposed that much before the request. Python 3.13 and later don't have this prob
 canonical settings they offer `TRIGGER` (`"Off"` or `"Software"`, where each capture
 fires a software trigger), `THROUGHPUT_LIMIT` in MB/s (`None` while the camera's limit is
 off), the camera's auto modes by their native names (`ExposureAuto`, `GainAuto`), and
-the read-only `current_throughput` and `resulting_frame_rate`, each only where the
-camera has the feature. Frame timestamps are measured against `host_time()`, a
+the read-only `current_throughput`, `resulting_frame_rate` and `link_speed`, each only
+where the camera has the feature. `link_speed` is in MB/s: the camera's
+`DeviceLinkSpeed`, or the nominal rate of its USB speed (625 for USB 3, 60 for USB 2)
+on cameras that only name it. Frame timestamps are measured against `host_time()`, a
 fine-grained `time.time()`; use it to time a capture against its frame.
 
 A frame's `metadata` holds:

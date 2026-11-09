@@ -371,6 +371,7 @@ def test_settings_cover_exposure_gain_format_auto_modes_and_throughput(camera):
         TRIGGER,
         "current_throughput",
         "resulting_frame_rate",
+        "link_speed",
     }
 
 
@@ -389,6 +390,7 @@ SETTING_NODES = {
     TRIGGER: {"TriggerMode", "TriggerSource", "TriggerSelector"},
     "current_throughput": {"DeviceLinkCurrentThroughput"},
     "resulting_frame_rate": {"AcquisitionResultingFrameRate", "AcquisitionFrameRate"},
+    "link_speed": {"DeviceLinkSpeed", "U3VCurrentSpeed"},
 }
 
 # A write may also raise a self-slowing camera's frame rate, and one that pauses
@@ -440,7 +442,7 @@ def test_reading_one_setting_reads_only_its_nodes(any_camera, name):
         n
         for n in SETTING_NODES
         if n not in (WIDTH, HEIGHT, SENSOR_WIDTH, SENSOR_HEIGHT)
-        and n not in ("current_throughput", "resulting_frame_rate")
+        and n not in ("current_throughput", "resulting_frame_rate", "link_speed")
     ],
 )
 def test_writing_one_setting_reads_only_its_nodes(any_camera, name):
@@ -725,6 +727,7 @@ ALL_SETTINGS = {
     TRIGGER,
     "current_throughput",
     "resulting_frame_rate",
+    "link_speed",
 }
 
 
@@ -737,6 +740,7 @@ ALL_SETTINGS = {
         (["DeviceLinkThroughputLimit"], {THROUGHPUT_LIMIT}),
         (["DeviceLinkCurrentThroughput"], {"current_throughput"}),
         (["AcquisitionResultingFrameRate"], {"resulting_frame_rate"}),
+        (["DeviceLinkSpeed"], {"link_speed"}),
         (["ExposureAuto"], {"ExposureAuto"}),
         (["Gain", "GainAuto"], {GAIN, "GainAuto"}),
         (["SensorWidth", "SensorHeight"], {SENSOR_WIDTH, SENSOR_HEIGHT}),
@@ -1165,6 +1169,31 @@ def test_current_throughput_and_frame_rate_are_read_only(camera, fake):
     assert rate.value == pytest.approx(fake.MAX_FRAME_RATE)
     with pytest.raises(ValueError, match="read-only"):
         camera.set_setting("resulting_frame_rate", 10.0)
+
+
+def test_link_speed_is_read_only_in_mb_per_second(camera, fake):
+    speed = camera.setting("link_speed")
+    assert (speed.value, speed.unit) == (fake.LINK_SPEED / MB, "MB/s")
+    assert speed.read_only
+    with pytest.raises(ValueError, match="read-only"):
+        camera.set_setting("link_speed", 60.0)
+
+
+@pytest.mark.parametrize(
+    ("entry", "mb_per_s"),
+    [("SuperSpeed", 625.0), ("HighSpeed", 60.0), ("FullSpeed", 1.5)],
+)
+def test_link_speed_falls_back_to_the_usb_speed_name(entry, mb_per_s):
+    # The CM3-U3-50S5M has U3VCurrentSpeed but no DeviceLinkSpeed (usb3-vision.md).
+    backend = only(without=["DeviceLinkSpeed"], usb_speed=entry)
+    with GenICamCamera(MONO, backend) as camera:
+        assert camera.setting("link_speed").value == mb_per_s
+
+
+def test_an_unknown_usb_speed_name_is_left_out():
+    backend = only(without=["DeviceLinkSpeed"], usb_speed="WarpSpeed")
+    with GenICamCamera(MONO, backend) as camera:
+        assert "link_speed" not in camera.settings()
 
 
 # --- Software trigger ---------------------------------------------------------

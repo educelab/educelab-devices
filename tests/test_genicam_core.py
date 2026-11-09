@@ -1,6 +1,7 @@
 """The shared GenICam camera core, tested against the in-memory fake backend."""
 
 import math
+import pickle
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -31,6 +32,8 @@ from educelab.devices.errors import (
     DeviceError,
     DeviceNotFound,
     DeviceTimeout,
+    NotConnected,
+    StreamStalled,
 )
 from fakes.genicam import FakeBackend, FakeCamera, FakeCameraError, FakeFrame, FrameSpec
 
@@ -371,6 +374,7 @@ def test_settings_cover_exposure_gain_format_auto_modes_and_throughput(camera):
         TRIGGER,
         "current_throughput",
         "resulting_frame_rate",
+        "link_speed",
     }
 
 
@@ -389,6 +393,7 @@ SETTING_NODES = {
     TRIGGER: {"TriggerMode", "TriggerSource", "TriggerSelector"},
     "current_throughput": {"DeviceLinkCurrentThroughput"},
     "resulting_frame_rate": {"AcquisitionResultingFrameRate", "AcquisitionFrameRate"},
+    "link_speed": {"DeviceLinkSpeed", "U3VCurrentSpeed"},
 }
 
 # A write may also raise a self-slowing camera's frame rate, and one that pauses
@@ -440,7 +445,7 @@ def test_reading_one_setting_reads_only_its_nodes(any_camera, name):
         n
         for n in SETTING_NODES
         if n not in (WIDTH, HEIGHT, SENSOR_WIDTH, SENSOR_HEIGHT)
-        and n not in ("current_throughput", "resulting_frame_rate")
+        and n not in ("current_throughput", "resulting_frame_rate", "link_speed")
     ],
 )
 def test_writing_one_setting_reads_only_its_nodes(any_camera, name):
@@ -725,6 +730,7 @@ ALL_SETTINGS = {
     TRIGGER,
     "current_throughput",
     "resulting_frame_rate",
+    "link_speed",
 }
 
 
@@ -737,6 +743,7 @@ ALL_SETTINGS = {
         (["DeviceLinkThroughputLimit"], {THROUGHPUT_LIMIT}),
         (["DeviceLinkCurrentThroughput"], {"current_throughput"}),
         (["AcquisitionResultingFrameRate"], {"resulting_frame_rate"}),
+        (["DeviceLinkSpeed"], {"link_speed"}),
         (["ExposureAuto"], {"ExposureAuto"}),
         (["Gain", "GainAuto"], {GAIN, "GainAuto"}),
         (["SensorWidth", "SensorHeight"], {SENSOR_WIDTH, SENSOR_HEIGHT}),
@@ -1165,6 +1172,164 @@ def test_current_throughput_and_frame_rate_are_read_only(camera, fake):
     assert rate.value == pytest.approx(fake.MAX_FRAME_RATE)
     with pytest.raises(ValueError, match="read-only"):
         camera.set_setting("resulting_frame_rate", 10.0)
+
+
+def test_link_speed_is_read_only_in_mb_per_second(camera, fake):
+    speed = camera.setting("link_speed")
+    assert (speed.value, speed.unit) == (fake.LINK_SPEED / MB, "MB/s")
+    assert speed.read_only
+    with pytest.raises(ValueError, match="read-only"):
+        camera.set_setting("link_speed", 60.0)
+
+
+@pytest.mark.parametrize(
+    ("entry", "mb_per_s"),
+    [("SuperSpeed", 625.0), ("HighSpeed", 60.0), ("FullSpeed", 1.5)],
+)
+def test_link_speed_falls_back_to_the_usb_speed_name(entry, mb_per_s):
+    # The CM3-U3-50S5M has U3VCurrentSpeed but no DeviceLinkSpeed (usb3-vision.md).
+    backend = only(without=["DeviceLinkSpeed"], usb_speed=entry)
+    with GenICamCamera(MONO, backend) as camera:
+        assert camera.setting("link_speed").value == mb_per_s
+
+
+def test_an_unknown_usb_speed_name_is_left_out():
+    backend = only(without=["DeviceLinkSpeed"], usb_speed="WarpSpeed")
+    with GenICamCamera(MONO, backend) as camera:
+        assert "link_speed" not in camera.settings()
+
+
+# --- Diagnostics --------------------------------------------------------------
+
+
+def test_diagnostics_hold_the_cameras_link_counters(camera, fake):
+    fake.set("TransmitFailureCount", 2)
+    fake.set("USB3LinkRecoveryCount", 7)
+    assert camera.diagnostics() == {"transmit_failures": 2, "link_recoveries": 7}
+
+
+def test_diagnostics_leave_out_what_the_camera_lacks():
+    backend = only(without=["TransmitFailureCount", "USB3LinkRecoveryCount"])
+    with GenICamCamera(MONO, backend) as camera:
+        assert camera.diagnostics() == {}
+
+
+def test_diagnostics_include_the_backends_stream_counters(camera, backend):
+    connection(backend).stream_counters_now = {"frames_delivered": 3}
+    assert camera.diagnostics()["frames_delivered"] == 3
+
+
+def test_a_counter_that_cant_be_read_is_left_out(camera, fake):
+    fake.failures["read TransmitFailureCount"] = FakeCameraError("access", "nope")
+    assert set(camera.diagnostics()) == {"link_recoveries"}
+
+
+def test_diagnostics_need_an_open_camera(backend):
+    with pytest.raises(NotConnected):
+        GenICamCamera(MONO, backend).diagnostics()
+
+
+# --- Stalled stream -----------------------------------------------------------
+
+
+def test_a_camera_that_stops_sending_raises_stream_stalled(camera, fake, backend):
+    camera.capture_frame()
+    fake.sending = False
+    fake.set("USB3LinkRecoveryCount", 3)
+    connection(backend).stream_counters_now = {"frames_started": 40}
+    with pytest.raises(StreamStalled, match="stopped sending") as info:
+        camera.capture_frame()
+    assert isinstance(info.value, DeviceTimeout)
+    assert info.value.counters == {
+        "frames_started": 40,
+        "transmit_failures": 0,
+        "link_recoveries": 3,
+    }
+    assert "link_recoveries 3" in str(info.value)
+    assert info.value.__context__ is None
+
+
+def test_a_camera_that_never_sent_a_frame_has_stalled_too(camera, fake):
+    fake.sending = False
+    with pytest.raises(StreamStalled, match=r"\(another program"):
+        camera.capture_frame()
+
+
+def test_a_capture_that_saw_frames_hasnt_stalled(camera, fake):
+    fake.queue_frames(*(stale(fake) for _ in range(100_000)))
+    with pytest.raises(DeviceTimeout) as info:
+        camera.capture_frame(not_before=datetime.now(UTC), timeout=0.05)
+    assert not isinstance(info.value, StreamStalled)
+
+
+def test_a_timeout_within_one_exposure_isnt_a_stall(camera, fake):
+    camera.set_setting("ExposureAuto", "Off")
+    camera.set_setting(EXPOSURE_TIME, 0.1)
+    fake.sending = False
+    with pytest.raises(DeviceTimeout) as info:
+        camera.capture_frame(timeout=0.05)
+    assert not isinstance(info.value, StreamStalled)
+
+
+def test_a_stall_keeps_its_counters_through_pickling():
+    error = StreamStalled("stopped", {"link_recoveries": 3})
+    copy = pickle.loads(pickle.dumps(error))
+    assert (str(copy), copy.counters) == ("stopped", {"link_recoveries": 3})
+
+
+def test_a_stall_still_raises_if_its_counters_cant_be_read(
+    camera, fake, backend, monkeypatch
+):
+    fake.sending = False
+
+    def unreadable():
+        raise DeviceError("gone")
+
+    monkeypatch.setattr(connection(backend), "stream_counters", unreadable)
+    with pytest.raises(StreamStalled) as info:
+        camera.capture_frame()
+    # The camera's own counters still come through.
+    assert info.value.counters == {"transmit_failures": 0, "link_recoveries": 0}
+
+
+def test_restarting_acquisition_brings_frames_back(camera, fake, caplog):
+    fake.sending = False
+    with pytest.raises(StreamStalled):
+        camera.capture_frame()
+    caplog.set_level("INFO")
+    camera.restart_acquisition()
+    assert camera.capture_frame().pixels.shape == (6, 8)
+    assert "restarted acquisition" in caplog.text
+    assert "link_recoveries" in caplog.text
+
+
+def test_restarting_acquisition_in_software_trigger_mode_keeps_it(camera, fake):
+    camera.set_setting(TRIGGER, "Software")
+    camera.restart_acquisition()
+    assert camera.setting(TRIGGER).value == "Software"
+    before = fake.trigger_calls
+    camera.capture_frame()
+    assert fake.trigger_calls > before
+
+
+def test_restarting_acquisition_needs_an_open_camera(backend):
+    with pytest.raises(NotConnected):
+        GenICamCamera(MONO, backend).restart_acquisition()
+
+
+@pytest.mark.parametrize("entry", ["HighSpeed", "FullSpeed"])
+def test_a_camera_linked_below_usb_3_warns_at_open(entry, caplog):
+    backend = only(usb_speed=entry)
+    with GenICamCamera(MONO, backend):
+        pass
+    assert f"linked at {entry}" in caplog.text
+    assert "USB 3" in caplog.text
+
+
+def test_a_camera_linked_at_usb_3_doesnt_warn(caplog):
+    with GenICamCamera(MONO, only(usb_speed="SuperSpeed")):
+        pass
+    assert "linked at" not in caplog.text
 
 
 # --- Software trigger ---------------------------------------------------------

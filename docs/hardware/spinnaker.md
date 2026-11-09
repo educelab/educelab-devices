@@ -409,6 +409,7 @@ once it is closed.
 | `throughput_limit` | `DeviceLinkThroughputLimit` | MB/s → bytes/s (× 10^6) | Reads `None` while `DeviceLinkThroughputLimitMode` is Off; writing sets the mode On first ([Settings](#settings)) |
 | `current_throughput` | `DeviceLinkCurrentThroughput` | MB/s ← bytes/s (÷ 10^6) | Read-only |
 | `resulting_frame_rate` | `AcquisitionResultingFrameRate` | Hz → Hz | Read-only; not on the CM3-U3-50S5M |
+| `link_speed` | `DeviceLinkSpeed`, else `U3VCurrentSpeed` | MB/s ← bytes/s (÷ 10^6), or the speed's nominal rate (SuperSpeed 625, HighSpeed 60, FullSpeed 1.5, LowSpeed 0.1875) | Read-only. The CM3-U3-50S5M has only `U3VCurrentSpeed` (through GenTL, 2026-11-09; untried through PySpin) |
 | `trigger` | `TriggerMode`, `TriggerSource`, `TriggerSelector` | `Off` → `TriggerMode=Off`; `Software` → `TriggerSelector=FrameStart`, `TriggerSource=Software`, `TriggerMode=On` | Reads `None` for any other trigger setup (e.g. a hardware line); changing it pauses acquisition ([Software trigger](#software-trigger-opt-in)) |
 
 `exposure_time`, `gain`, `pixel_format` and the four sizes are canonical names shared

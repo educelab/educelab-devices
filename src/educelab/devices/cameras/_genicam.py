@@ -51,6 +51,7 @@ from educelab.devices.errors import (
     DeviceNotFound,
     DeviceTimeout,
     NotConnected,
+    StreamStalled,
 )
 
 __all__ = [
@@ -203,6 +204,12 @@ class Connection(Protocol):
         Raises:
             DeviceTimeout: No frame came in time.
         """
+        ...
+
+    def stream_counters(self) -> Mapping[str, int]:
+        """The library's counts for the stream (e.g. ``frames_delivered``), for
+        diagnosis; empty where the backend has none. Never raises: a counter
+        that can't be read is left out."""
         ...
 
     def close(self, exposure_time: float = 0.0) -> None:
@@ -391,6 +398,10 @@ class _HostClock:
 _HOST_CLOCK = _HostClock()
 
 
+def _counters_text(counters: Mapping[str, int]) -> str:
+    return ", ".join(f"{name} {value}" for name, value in counters.items()) or "none"
+
+
 def host_time() -> float:
     """The host's wall-clock time in seconds, as ``time.time()`` but fine-grained
     on every platform. Frame timestamps are measured against it."""
@@ -517,6 +528,52 @@ class GenICamCamera(FrameCamera):
         self._measure_timestamp_offset()
         return self._timestamp_offset
 
+    @synchronized
+    def diagnostics(self) -> dict[str, int]:
+        """Counters for diagnosing a stream that stops, where the camera and
+        backend have them.
+
+        The camera's ``transmit_failures`` (``TransmitFailureCount``) and
+        ``link_recoveries`` (``USB3LinkRecoveryCount``), and the backend's stream
+        counters, e.g. GenTL's ``frames_delivered``. Keys differ between
+        cameras and backends; a counter that can't be read is left out.
+        """
+        return self._diagnostics()
+
+    @synchronized
+    def restart_acquisition(self) -> None:
+        """Stop and start acquisition: the first thing to try on a stalled stream.
+
+        Logs the camera's `diagnostics` before and after. A capture afterwards
+        shows whether frames are back; if not, close and reopen the camera.
+        """
+        before = self._diagnostics()
+        with self._acquisition_paused():
+            pass
+        logger.warning(
+            "%r: restarted acquisition; counters before: %s; after: %s",
+            self,
+            _counters_text(before),
+            _counters_text(self._diagnostics()),
+        )
+
+    def _diagnostics(self) -> dict[str, int]:
+        conn = self._connection
+        try:
+            found = dict(conn.stream_counters())
+        except DeviceError as exc:
+            # A backend that breaks the never-raises contract still gets a report.
+            logger.debug("%r: no stream counters: %s", self, exc)
+            found = {}
+        for node, key in _CAMERA_COUNTERS:
+            try:
+                if conn.is_readable(node):
+                    read = functools.partial(conn.get_int, node)
+                    found[key] = self._call(f"read {node}", read)
+            except DeviceError as exc:
+                logger.debug("%r: no %s: %s", self, node, exc)
+        return found
+
     # --- Lifecycle -------------------------------------------------------------
 
     @property
@@ -536,6 +593,7 @@ class GenICamCamera(FrameCamera):
             self._firmware = self._read_string("DeviceFirmwareVersion")
             self._own_serial = self._read_string("DeviceSerialNumber")
             self._configure()
+            self._warn_of_a_slow_link()
             self._delivered = False
             self._software_trigger = False
             self._fired_at = None
@@ -600,6 +658,24 @@ class GenICamCamera(FrameCamera):
         self._descriptors = self._describe_settings()
         # Another program may have left the camera slowed down.
         self._raise_frame_rate()
+
+    def _warn_of_a_slow_link(self) -> None:
+        # The CM3 that stalled had come up at USB 2 before (gentl-stall track).
+        node = "U3VCurrentSpeed"
+        if not self._connection.is_readable(node):
+            return
+        try:
+            speed = self._read_enum(node)
+        except DeviceError as exc:
+            logger.debug("%r: no %s: %s", self, node, exc)
+            return
+        if _USB_SPEEDS.get(speed, math.inf) < _USB_SPEEDS["SuperSpeed"]:
+            logger.warning(
+                "%r is linked at %s, slower than USB 3: replug it into a USB 3 "
+                "port, or expect fewer frames",
+                self,
+                speed,
+            )
 
     @contextmanager
     def _acquisition_paused(self) -> Iterator[None]:
@@ -778,6 +854,7 @@ class GenICamCamera(FrameCamera):
                 integer=True,
             ),
             _ReadOnly("resulting_frame_rate", rate_nodes, "Hz"),
+            _LinkSpeed(),
         ]
         return {d.name: d for d in found if d is not None}
 
@@ -899,6 +976,7 @@ class GenICamCamera(FrameCamera):
                 floor = datetime.fromtimestamp(fired_at, UTC) - tolerance
                 not_before = floor if not_before is None else max(not_before, floor)
         stale = incomplete = retriggers = 0
+        stalled: StreamStalled | None
         remeasured = False
         while True:
             remaining = deadline - time.perf_counter()
@@ -911,13 +989,22 @@ class GenICamCamera(FrameCamera):
             wait = min(remaining, retrigger_s)
             try:
                 buffer = self._next_buffer(None if math.isinf(wait) else wait)
-            except DeviceTimeout:
-                if wait >= remaining:
+            except DeviceTimeout as exc:
+                if wait < remaining:
+                    logger.info("%r: no frame from the trigger; firing again", self)
+                    self._fire()
+                    retriggers += 1
+                    continue
+                # A timeout within one exposure can pass between healthy frames.
+                if self._software_trigger or stale or incomplete or timeout <= exposure:
                     raise
-                logger.info("%r: no frame from the trigger; firing again", self)
-                self._fire()
-                retriggers += 1
-                continue
+                # Free-running keeps the newest frame waiting, so no frame at all
+                # means nothing came since the last capture. Raised below, unchained.
+                stalled = self._stalled(exc)
+            else:
+                stalled = None
+            if stalled is not None:
+                raise stalled
             try:
                 taken = self._call(
                     "read a frame",
@@ -957,6 +1044,15 @@ class GenICamCamera(FrameCamera):
                 logger.info("%r: %d stale frames; re-measuring offset", self, stale)
                 self._measure_timestamp_offset()
                 remeasured = True
+
+    def _stalled(self, timeout: DeviceTimeout) -> StreamStalled:
+        """The error for a free-running capture that got no frame at all."""
+        counters = self._diagnostics()
+        return StreamStalled(
+            f"{timeout}; the camera stopped sending frames while free-running "
+            f"(counters: {_counters_text(counters)})",
+            counters,
+        )
 
     def _next_buffer(self, timeout: float | None) -> Buffer:
         conn = self._connection
@@ -1302,6 +1398,41 @@ class _ReadOnly(_Descriptor):
         if self.scale != 1.0:
             value /= self.scale
         return Setting(self.name, value, unit=self.unit, read_only=True)
+
+
+# Camera nodes `diagnostics()` reports, by its key.
+_CAMERA_COUNTERS = (
+    ("TransmitFailureCount", "transmit_failures"),
+    ("USB3LinkRecoveryCount", "link_recoveries"),
+)
+
+# Nominal signalling rates of U3VCurrentSpeed's entries, in MB/s.
+_USB_SPEEDS = {
+    "LowSpeed": 0.1875,
+    "FullSpeed": 1.5,
+    "HighSpeed": 60.0,
+    "SuperSpeed": 625.0,
+}
+
+
+@dataclass(frozen=True)
+class _LinkSpeed(_Descriptor):
+    """The link's speed in MB/s, from ``DeviceLinkSpeed`` or, on cameras without
+    it (e.g. the CM3-U3-50S5M), the nominal rate of ``U3VCurrentSpeed``."""
+
+    name: str = "link_speed"
+
+    def read(self, camera: GenICamCamera) -> Setting | None:
+        found = _ReadOnly(
+            self.name, ("DeviceLinkSpeed",), "MB/s", _BYTES_PER_MB, integer=True
+        ).read(camera)
+        if found is not None or not camera._connection.is_readable("U3VCurrentSpeed"):
+            return found
+        entry = camera._read_enum("U3VCurrentSpeed")
+        if entry not in _USB_SPEEDS:
+            logger.debug("%r: unknown U3VCurrentSpeed %s", camera, entry)
+            return None
+        return Setting(self.name, _USB_SPEEDS[entry], unit="MB/s", read_only=True)
 
 
 @dataclass(frozen=True)

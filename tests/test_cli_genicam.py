@@ -1,6 +1,7 @@
 """``el-devices genicam``, against the fake Aravis and ``genicam`` libraries."""
 
 import builtins
+import re
 import sys
 import zlib
 
@@ -9,7 +10,8 @@ import pytest
 
 from educelab.devices.app.cli import main
 from educelab.devices.cameras import aravis, gentl
-from educelab.devices.cameras._genicam import BufferStatus
+from educelab.devices.cameras._genicam import BufferStatus, GenICamCamera
+from educelab.devices.errors import DeviceError
 from fakes.aravis import FakeRepository
 from fakes.genicam import FakeCamera, FrameSpec
 from fakes.gentl import PRODUCER, FakeGenicam
@@ -82,6 +84,81 @@ def test_benchmarks_every_camera_at_once(backend, capsys, request):
     assert "timestamp offset" in out
     assert "frames/s" in out
     assert all(not sim.opened for sim in sims(backend, request))
+
+
+def test_reports_each_cameras_link_speed(monkeypatch, capsys):
+    usb2 = FakeCamera(COLOR, without=["DeviceLinkSpeed"], usb_speed="HighSpeed")
+    monkeypatch.setattr(
+        aravis, "load_aravis", lambda: FakeRepository([FakeCamera(MONO), usb2])
+    )
+    assert main(["genicam", "--backend", "aravis", "--frames", "1"]) == 0
+    out = capsys.readouterr().out
+    lines = {
+        line.split(":")[0]: line for line in out.splitlines() if "firmware" in line
+    }
+    assert "link 625 MB/s, throughput limit" in lines[MONO]
+    assert "link 60 MB/s, throughput limit" in lines[COLOR]
+
+
+def test_reports_each_cameras_counters_after_the_run(genicam, capsys):
+    assert main(["genicam", "--backend", "gentl", "--frames", "3"]) == 0
+    out = capsys.readouterr().out
+    report = out.split(f"{MONO}: 3/3 captured")[1].split(f"{COLOR}:")[0]
+    assert "counters: frames_started " in report
+    assert "transmit_failures 0" in report
+    assert re.search(r"host received ~[\d.]+ frames/s", report)
+
+
+def test_reports_what_the_counters_did_during_the_run(genicam, capsys):
+    sim = genicam.cameras[0]
+    next_frame = sim.next_frame
+
+    def recover_once_then_send():
+        if sim.frames_grabbed == 1:
+            sim.set("USB3LinkRecoveryCount", sim.get("USB3LinkRecoveryCount") + 1)
+        return next_frame()
+
+    sim.next_frame = recover_once_then_send
+    args = ["--serial", MONO, "--frames", "3"]
+    assert main(["genicam", "--backend", "gentl", *args]) == 0
+    out = capsys.readouterr().out
+    during = next(line for line in out.splitlines() if "during the run" in line)
+    assert "link_recoveries +1" in during
+    assert "frames_delivered +" in during
+    assert "buffers_" not in during
+
+
+def test_a_camera_without_stream_counters_shows_its_own(repository, capsys):
+    assert main(["genicam", "--backend", "aravis", "--frames", "1"]) == 0
+    out = capsys.readouterr().out
+    assert "counters: transmit_failures 0, link_recoveries 0" in out
+    assert "host received" not in out
+
+
+def test_a_cameras_first_failure_shows_its_counters_then(genicam, capsys):
+    genicam.cameras[0].buffer_count = 0  # every grab times out
+    args = ["--serial", MONO, "--frames", "3"]
+    assert main(["genicam", "--backend", "gentl", *args]) == 1
+    out = capsys.readouterr().out
+    assert out.count(f"{MONO}: first failure, at capture 1") == 1
+    line = next(line for line in out.splitlines() if "first failure" in line)
+    assert "StreamStalled" in line and line.count("buffers_queued") == 1
+    assert out.count("failed:") == 3
+
+
+def test_a_first_failure_other_than_a_stall_shows_the_counters(
+    genicam, capsys, monkeypatch
+):
+    def broken(*args):
+        raise DeviceError("unreadable")
+
+    monkeypatch.setattr(GenICamCamera, "_take", broken)
+    args = ["--serial", MONO, "--frames", "1"]
+    assert main(["genicam", "--backend", "gentl", *args]) == 1
+    line = next(
+        line for line in capsys.readouterr().out.splitlines() if "first failure" in line
+    )
+    assert "counters: " in line and "buffers_queued" in line
 
 
 def test_reports_bit_depth_and_timestamp_source(monkeypatch, capsys):

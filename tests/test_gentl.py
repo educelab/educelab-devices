@@ -3,6 +3,7 @@
 import re
 import subprocess
 import sys
+from collections import deque
 
 import numpy as np
 import pytest
@@ -318,6 +319,52 @@ def test_grab_returns_the_newest_frame_and_requeues_older_ones(camera, genicam, 
     buffer.release()
     assert sim.held == []
     assert len(stream.input) == BUFFER_COUNT
+
+
+def test_the_fake_event_gives_a_fresh_wrapper_like_genicam(camera, genicam):
+    # Verified on FLIR's producer (usb3-vision.md, GenTL on macOS).
+    stream = genicam.streams()[0]
+    stream.arrive()
+    events = connection_of(camera)._events
+    events.update_event_data(0)
+    assert events.buffer is not events.buffer
+    assert all(events.buffer is not b for b in stream.announced)
+
+
+@pytest.mark.parametrize("stream_nodes", [True, False])
+def test_many_grabs_with_older_frames_waiting_keep_every_buffer(sim, stream_nodes):
+    genicam = FakeGenicam([sim], stream_nodes=stream_nodes)
+    with make(MONO, genicam) as camera:
+        stream = genicam.streams()[0]
+        conn = connection_of(camera)
+        for _ in range(50):
+            assert stream.arrive(3) == 3
+            buffer = conn.grab(1.0)
+            assert buffer.frame_id() == sim.frames_grabbed
+            buffer.release()
+        assert stream.output == deque()
+        assert sorted(b.context for b in stream.input) == list(range(BUFFER_COUNT))
+
+
+def test_diagnostics_report_the_streams_counters(camera, genicam):
+    stream = genicam.streams()[0]
+    before = camera.diagnostics()
+    assert stream.arrive(3) == 3
+    connection_of(camera).grab(1.0).release()
+    stream.underruns = 2
+    after = camera.diagnostics()
+    assert after["frames_started"] - before["frames_started"] == 3
+    assert after["frames_delivered"] - before["frames_delivered"] == 3
+    assert after["underruns"] == 2
+    assert after["buffers_announced"] == after["buffers_queued"] == BUFFER_COUNT
+    assert after["buffers_awaiting_delivery"] == 0
+
+
+def test_a_stream_counter_the_producer_lacks_is_left_out(camera, genicam):
+    genicam.streams()[0].missing_counters = {"num_underrun"}
+    found = camera.diagnostics()
+    assert "underruns" not in found
+    assert "frames_delivered" in found
 
 
 def test_newest_only_works_without_a_stream_node_map(sim):

@@ -66,14 +66,14 @@ Each run is `el-devices genicam --backend gentl --pixel-format Mono8 --exposure 
 
 ### Tasks
 
-- [ ] Task 3.1: Choose the fix with the maintainer. Likely shapes:
-  - Lost buffers: done by 1.2, if that was the cause.
-  - The camera or link stops: detect a stream silent for several frame periods while acquiring, restart acquisition once and log it, or raise an error that names the cause.
-  - A USB 2 link: warn or refuse at open when `link_speed` is below USB 3.
-- [ ] Task 3.2: Implement it test-first on the fakes.
-- [ ] Task 3.3: Rerun Phase 2's stall configuration on the Windows rig as many times as it took to reproduce. No stall, or the stall is recovered or reported as designed.
-- [ ] Task 3.4: Update `docs/hardware/usb3-vision.md`: the five-camera Windows GenTL runs (Hardware runs), the stall and its cause (Hazards), what 1.1 found about `genicam`'s buffers, and the link-sharing guidance where the evidence changes it. Update `docs/guide.md` if callers can see the new counters.
-- [ ] Task 3.5: Give downstream apps (e.g. pgs-scan) a documented way to deal with a stalled stream: how a stall shows up to a caller (which error, after how long), what the driver already does about it, and what the app should do (e.g. a method to restart the stream, or close and reopen), with an example in `docs/guide.md`. Shaped by 3.1's choice. (Maintainer's note, 2026-11-09.)
+- [ ] Task 3.1: Agree the API with the maintainer. Chosen shape (2026-11-09): the driver detects a stall and reports it, and gives apps a tested way to restart the stream; it doesn't retry on its own, since no restart has been seen to clear a real stall. To agree:
+  - A `StreamStalled(DeviceTimeout)` error in `errors.py` (shared, so it needs approval), raised when a free-running camera's capture times out while acquiring. Its message says the camera stopped sending and includes `diagnostics()`. Triggered capture keeps raising `DeviceTimeout`, since a missing trigger looks the same.
+  - A public `GenICamCamera.restart_acquisition()` that stops and starts acquisition and logs the counters before and after.
+  - A warning at open when `link_speed` is below USB 3 (SuperSpeed).
+- [ ] Task 3.2: Implement 3.1 test-first on the fakes: a fake stream that stops delivering, the error and its counters, a restart bringing frames back, and the USB 2 warning.
+- [ ] Task 3.3: On the Windows rig: rerun Phase 2's stall configuration 10 times with the new code; then force a stall by executing `AcquisitionStop` behind the driver's back (a scratch script in the track directory), and check that capture raises `StreamStalled` with the counters and that `restart_acquisition()` brings frames back.
+- [ ] Task 3.4: Update `docs/hardware/usb3-vision.md`: the five-camera Windows GenTL runs (Hardware runs), the stall and what's known of its cause (Hazards), what 1.1 found about `genicam`'s buffers, and the link-sharing guidance: this rig carries about 330 MB/s in total, so five cameras need a cap of about 64 MB/s, not 80. Flag the cap for pgs-scan's link budget (outside this track).
+- [ ] Task 3.5: Give downstream apps (e.g. pgs-scan) a documented way to deal with a stalled stream in `docs/guide.md`: how a stall shows up (`StreamStalled`, after the capture timeout), what the driver does (detects and reports, no retry), and what the app should try, in order, with an example: `restart_acquisition()`, then close and reopen, then power-cycle the camera's port through the hub, then fail the scan. (Maintainer's note, 2026-11-09.)
 - [ ] Task 3.6: Post the findings on issue #32 and close it from the track's PR.
 
 ### Verification

@@ -47,7 +47,9 @@ el-devices genicam --backend gentl --pixel-format Mono8 --exposure min --through
 
 The stall rate is now far below the original 1 in 8: with that rate, 80 GenTL runs without one would happen about once in 40,000 tries. So something about the original session (most likely 20305113's USB 2 enumeration and replug) mattered, and the stall can't be reproduced on demand.
 
-**Affected:** `cameras/gentl.py` (stream and buffer handling), `app/_capture.py` (the report), `docs/hardware/usb3-vision.md`. Possibly the core, if a silent stream should be recovered there.
+**Fix (chosen with the maintainer, 2026-11-09):** since the stall can't be reproduced, the driver detects and reports it rather than removing its cause. A free-running capture that times out raises a `StreamStalled` error with the camera's counters, and `GenICamCamera.restart_acquisition()` gives apps a tested first step to recover. The driver doesn't retry on its own; apps choose, with the steps documented in `guide.md`.
+
+**Affected:** `errors.py`, `cameras/_genicam.py` (detection, restart, USB 2 warning), `app/_capture.py` (the report), `docs/guide.md`, `docs/hardware/usb3-vision.md`.
 
 ## Acceptance Criteria
 

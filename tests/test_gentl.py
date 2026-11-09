@@ -9,8 +9,8 @@ import pytest
 
 from contracts import FrameCameraContract
 from contracts.genicam import BackendContract
-from educelab.devices.cameras import PIXEL_FORMAT, gentl
-from educelab.devices.cameras._genicam import TRIGGER, BufferStatus
+from educelab.devices.cameras import PIXEL_FORMAT, TRIGGER, gentl
+from educelab.devices.cameras._genicam import BufferStatus
 from educelab.devices.cameras.gentl import (
     BUFFER_COUNT,
     GENTL_INSTALL_HINT,

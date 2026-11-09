@@ -266,6 +266,50 @@ def test_nearest_clamps_to_the_last_step_below_an_off_grid_maximum():
     assert setting.nearest(9.5, "up") == 9
 
 
+@pytest.mark.parametrize(
+    ("setting", "low", "low_step", "high", "high_step"),
+    [
+        (SHUTTER, 1 / 250, 1 / 125 - 1 / 250, 1 / 30, 1 / 30 - 1 / 60),
+        (STEPPED, 0.0002, 0.0002, 0.01, 0.0002),
+        (CONTINUOUS, 0.0001, 0.0, 0.01, 0.0),
+    ],
+)
+def test_strict_nearest_refuses_more_than_half_a_step_past_either_end(
+    setting, low, low_step, high, high_step
+):
+    assert setting.nearest(low - low_step / 2, strict=True) == pytest.approx(low)
+    assert setting.nearest(high + high_step / 2, strict=True) == pytest.approx(high)
+    with pytest.raises(ValueError, match="outside"):
+        setting.nearest(low - low_step * 0.6 - 1e-9, strict=True)
+    with pytest.raises(ValueError, match="outside"):
+        setting.nearest(high + high_step * 0.6 + 1e-9, strict=True)
+
+
+def test_strict_nearest_says_what_the_setting_takes():
+    gain = Setting("gain", 0.0, choices=(0.0, 6.0206, 12.0412, 18.0618), unit="dB")
+    with pytest.raises(ValueError, match="gain 30 dB is outside 0 to 18.06 dB"):
+        gain.nearest(30, strict=True)
+
+
+def test_strict_nearest_checks_only_the_ends_a_setting_has():
+    open_top = Setting("s", 0.0, minimum=0.0, step=1.0)
+    assert open_top.nearest(1e6, strict=True) == 1e6
+    with pytest.raises(ValueError, match="s -1 is below 0"):
+        open_top.nearest(-1, strict=True)
+
+
+@pytest.mark.parametrize(
+    "setting",
+    [
+        Setting("gain", 0.0, choices=(0.0, 6.0206, 12.0412), unit="dB"),
+        Setting("gain", 0.0, minimum=0.0, maximum=18.0, unit="dB"),
+    ],
+)
+def test_strict_nearest_refuses_nan(setting):
+    with pytest.raises(ValueError, match="NaN"):
+        setting.nearest(math.nan, strict=True)
+
+
 def test_setting_without_a_value_still_offers_its_choices():
     bulb = Setting(EXPOSURE_TIME, None, choices=(1 / 250, 1 / 60, 1.0), unit="s")
     assert bulb.nearest(0.02) == 1 / 60

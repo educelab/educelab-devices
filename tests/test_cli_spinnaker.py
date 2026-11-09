@@ -7,13 +7,8 @@ import pytest
 
 from educelab.devices.app.cli import main
 from educelab.devices.cameras import spinnaker
-from fakes.pyspin import (
-    SPINNAKER_IMAGE_STATUS_DATA_INCOMPLETE,
-    SPINNAKER_IMAGE_STATUS_MISSING_TRAILER,
-    FakeCamera,
-    FakePySpin,
-    FrameSpec,
-)
+from educelab.devices.cameras._genicam import BufferStatus
+from fakes.pyspin import FakePySpin, FrameSpec, flir_camera
 
 MONO = "20000001"
 COLOR = "20000002"
@@ -23,8 +18,8 @@ COLOR = "20000002"
 def pyspin(monkeypatch):
     pyspin = FakePySpin(
         [
-            FakeCamera(MONO, "Blackfly S BFS-U3-51S5M"),
-            FakeCamera(COLOR, "Blackfly S BFS-U3-200S6C", color=True),
+            flir_camera(MONO, "Blackfly S BFS-U3-51S5M"),
+            flir_camera(COLOR, "Blackfly S BFS-U3-200S6C", color=True),
         ]
     )
     monkeypatch.setattr(spinnaker, "load_pyspin", lambda: pyspin)
@@ -37,7 +32,7 @@ def test_lists_cameras_without_opening_them(pyspin, capsys):
     assert "Spinnaker SDK 4.4.0.0" in out
     assert f"{MONO}  Blackfly S BFS-U3-51S5M" in out
     assert f"{COLOR}  Blackfly S BFS-U3-200S6C" in out
-    assert all(camera.init_calls == 0 for camera in pyspin.system.cameras)
+    assert all(camera.open_calls == 0 for camera in pyspin.system.cameras)
 
 
 def test_benchmarks_every_camera_at_once(pyspin, capsys):
@@ -57,7 +52,7 @@ def test_reports_dropped_frames(pyspin, capsys):
     old = fake.device_time_ns() - 10**9
     fake.queue_frames(
         FrameSpec(timestamp_ns=old),
-        FrameSpec(status=SPINNAKER_IMAGE_STATUS_MISSING_TRAILER),
+        FrameSpec(status=BufferStatus.MISSING_TRAILER),
     )
     main(["spinnaker", "--serial", MONO, "--frames", "2"])
     out = capsys.readouterr().out
@@ -105,10 +100,7 @@ def test_incomplete_frames_on_every_camera_are_counted_and_retried(pyspin, capsy
     # As when several cameras saturate one USB link.
     for fake in pyspin.system.cameras:
         fake.queue_frames(
-            *(
-                FrameSpec(status=SPINNAKER_IMAGE_STATUS_DATA_INCOMPLETE)
-                for _ in range(3)
-            )
+            *(FrameSpec(status=BufferStatus.INCOMPLETE) for _ in range(3))
         )
     assert main(["spinnaker", "--frames", "2"]) == 0
     out = capsys.readouterr().out
@@ -145,13 +137,17 @@ def test_throughput_limit_caps_every_camera(pyspin, capsys):
     assert main(["spinnaker", "--frames", "1", "--throughput-limit", "80"]) == 0
     out = capsys.readouterr().out
     assert out.count("throughput limit 80 MB/s") == 2
-    assert all(c.throughput_limit._value == 80_000_000 for c in pyspin.system.cameras)
+    assert all(
+        c.get("DeviceLinkThroughputLimit") == 80_000_000 for c in pyspin.system.cameras
+    )
 
 
 def test_without_throughput_limit_the_cameras_are_left_alone(pyspin, capsys):
     main(["spinnaker", "--frames", "1"])
     assert "throughput limit 500 MB/s" in capsys.readouterr().out
-    assert all(c.throughput_limit._value == 500_000_000 for c in pyspin.system.cameras)
+    assert all(
+        c.get("DeviceLinkThroughputLimit") == 500_000_000 for c in pyspin.system.cameras
+    )
 
 
 def test_throughput_limit_out_of_range_fails_cleanly(pyspin, capsys):
@@ -163,7 +159,7 @@ def test_throughput_limit_out_of_range_fails_cleanly(pyspin, capsys):
 
 
 def test_throughput_limit_on_a_camera_without_one_fails(monkeypatch, capsys):
-    pyspin = FakePySpin([FakeCamera(MONO, throughput=False)])
+    pyspin = FakePySpin([flir_camera(MONO, without=["DeviceLinkThroughputLimit"])])
     monkeypatch.setattr(spinnaker, "load_pyspin", lambda: pyspin)
     assert main(["spinnaker", "--throughput-limit", "80"]) == 1
     assert "has no DeviceLinkThroughputLimit" in capsys.readouterr().err
@@ -202,7 +198,7 @@ def test_exposure_min_is_read_after_the_pixel_format(pyspin, capsys, monkeypatch
     args = ["--serial", MONO, "--frames", "1", "--exposure", "min"]
     assert main(["spinnaker", *args, "--pixel-format", "Mono16"]) == 0
     assert "Mono16, exposure 0.025 ms (Off)" in capsys.readouterr().out
-    assert fake.nodes["ExposureTime"]._value == 25.0
+    assert fake.get("ExposureTime") == 25.0
 
 
 def test_software_trigger_fires_every_camera_before_collecting(
@@ -265,9 +261,7 @@ def read_png(path):
 
 def test_frames_with_a_missing_trailer_are_saved(pyspin, capsys, tmp_path):
     fake = pyspin.system.cameras[0]
-    fake.queue_frames(
-        FrameSpec(), FrameSpec(status=SPINNAKER_IMAGE_STATUS_MISSING_TRAILER)
-    )
+    fake.queue_frames(FrameSpec(), FrameSpec(status=BufferStatus.MISSING_TRAILER))
     args = ["--serial", MONO, "--frames", "3", "--pixel-format", "Mono16"]
     assert main(["spinnaker", *args, "--save-missing-trailer", str(tmp_path)]) == 0
     assert sorted(p.name for p in tmp_path.iterdir()) == [
@@ -282,7 +276,7 @@ def test_frames_with_a_missing_trailer_are_saved(pyspin, capsys, tmp_path):
 
 def test_saved_color_frames_are_rgb(pyspin, tmp_path):
     pyspin.system.cameras[1].queue_frames(
-        FrameSpec(status=SPINNAKER_IMAGE_STATUS_MISSING_TRAILER)
+        FrameSpec(status=BufferStatus.MISSING_TRAILER)
     )
     args = ["--serial", COLOR, "--frames", "1", "--pixel-format", "RGB8"]
     main(["spinnaker", *args, "--save-missing-trailer", str(tmp_path)])

@@ -10,7 +10,7 @@ from educelab.devices.app import _capture
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from educelab.devices.cameras._genicam import GenICamCamera
+    from educelab.devices.cameras import GenICamCamera
     from educelab.devices.device import DeviceInfo
 
 

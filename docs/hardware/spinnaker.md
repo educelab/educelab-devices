@@ -452,6 +452,7 @@ and writable again under `Off`, and every listed pixel format captures (hardware
   |---|---|
   | `SPINNAKER_ERR_TIMEOUT` (-1011) | `DeviceTimeout`; before the camera's first frame, the message adds that another program (e.g. SpinView) may be streaming from it |
   | `SPINNAKER_ERR_ACCESS_DENIED` (-1005) from `Init()` | `DeviceBusy` |
+  | a camera already initialized in this process | `DeviceBusy`, before `Init()` ([Hazards](#hazards)) |
   | any error writing a setting | `CommandRejected` |
   | no camera with the serial | `DeviceNotFound`, listing the attached serials |
   | anything else | `DeviceError` |
@@ -512,6 +513,19 @@ and writable again under `Off`, and every listed pixel format captures (hardware
     capture should take about N × frame size / 400 MB/s plus the exposure. Measured with
     five cameras at Mono16 (2026-10-20): 129.4 ms at minimum exposure, against ~125 ms
     estimated and about 250 ms free-running.
+- **Reading and writing one setting** (CM3-U3-50S5M, median of 20 for `exposure_time`,
+  2026-11-05; `GenICamHardwareTests.test_time_to_read_and_write_one_setting`). Since
+  each setting became a descriptor, `setting()` and `set_setting()` read only that
+  setting's nodes instead of building every setting first:
+
+  | Backend | `settings()` | `setting()` before → after | `set_setting()` before → after |
+  |---|---|---|---|
+  | Spinnaker (20305122) | 1.1 ms | 1.0 → 0.5 ms | 1.7 → 1.1 ms |
+  | GenTL, Spinnaker's producer (20305122) | 0.9 ms | 0.9 → 0.4 ms | 1.6 → 1.1 ms |
+  | Aravis (0135BAD4) | 33 ms | 31.8 → 3.9 ms | 36.4 → 7.2 ms |
+
+  Spinnaker answers node reads without asking the camera each time (assumed, from
+  these times); Aravis reads the camera.
 - **Error codes:** the driver maps `SPINNAKER_ERR_TIMEOUT` (`-1011`) to `DeviceTimeout`
   and `SPINNAKER_ERR_ACCESS_DENIED` (`-1005`) from `Init()` to `DeviceBusy`. The names and
   values are verified in PySpin 4.4.0.246.
@@ -544,6 +558,12 @@ and writable again under `Off`, and every listed pixel format captures (hardware
   them to `DeviceError`s raised outside the `except` block, so they carry no
   `__cause__` or `__context__`. The problem has been seen with the fake PySpin in the
   test suite, not on a rig.
+- **Opening a camera twice in one process** (verified 2026-11-05 on CM3 20305122):
+  pointers from separate `GetCameras()` lists share one camera, so the second `Init()`
+  succeeds and only `BeginAcquisition()` fails, with `-1004` ("Camera is already
+  streaming"). Cleaning up after that failure ended acquisition and de-initialized the
+  camera under the first open, whose next read failed with `-2006`. The driver checks
+  `IsInitialized()` first and raises `DeviceBusy` without touching the camera.
 - **Unreleased image buffers** (`pgs-scan` #83): `pgs-scan` released only the last
   frame of its stale-frame loop. With `NewestOnly` buffering the pool is small, so leaked
   buffers pile up until `GetNextImage()` blocks, which shows up as intermittent capture

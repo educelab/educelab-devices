@@ -21,7 +21,6 @@ from typing import Any, TypeVar
 import numpy.typing as npt
 
 from educelab.devices.cameras._genicam import (
-    _EXPOSURE_NODES,
     BufferStatus,
     GenICamCamera,
     pfnc_name,
@@ -202,6 +201,7 @@ class _AravisConnection:
     """A `Connection` onto one open Aravis camera."""
 
     times_arrivals = True
+    drains_on_stop = True
 
     def __init__(self, arv: Any, glib: Any, camera: Any, key: tuple[int, str]) -> None:
         self._key = key
@@ -325,7 +325,7 @@ class _AravisConnection:
 
     # --- Stream -----------------------------------------------------------------
 
-    def start_acquisition(self) -> None:
+    def start_acquisition(self, exposure_time: float = 0.0) -> None:
         # TLParamsLocked is left alone, as Aravis's own tools do: with it set,
         # the U3-36PxXCP-M streams nothing (ids-u3-36p0xcp.md, Hazards).
         # A stream only while acquiring, sized to the current payload.
@@ -337,11 +337,11 @@ class _AravisConnection:
             # frame finish. A stream left behind keeps its channel on.
             with contextlib.suppress(DeviceError):
                 self._do(self._camera.stop_acquisition)
-            self._drop_stream()
+            self._drop_stream(exposure_time)
             raise
         self._acquiring = True
 
-    def stop_acquisition(self) -> None:
+    def stop_acquisition(self, exposure_time: float = 0.0) -> None:
         if not self._acquiring:
             return
         self._acquiring = False
@@ -349,9 +349,9 @@ class _AravisConnection:
             self._do(self._camera.stop_acquisition)
         finally:
             # Even after a failed stop, since the camera may still be sending.
-            self._drop_stream()
+            self._drop_stream(exposure_time)
 
-    def _drop_stream(self) -> None:
+    def _drop_stream(self, exposure_time: float) -> None:
         """Drop the stream once the camera has finished sending.
 
         Dropping it disables its channel (the U3-36PxXCP-M refuses PixelFormat
@@ -359,11 +359,11 @@ class _AravisConnection:
         (ids-u3-36p0xcp.md, Pixel formats).
         """
         try:
-            self._drain()
+            self._drain(exposure_time)
         finally:
             self._stream = None
 
-    def _drain(self) -> None:
+    def _drain(self, exposure_time: float) -> None:
         """Wait until the camera has finished sending, after AcquisitionStop.
 
         Dropping an async stream mid-frame cancels its transfers part-way, which
@@ -374,10 +374,10 @@ class _AravisConnection:
         stream = self._stream
         if not self._async or stream is None:
             return
-        exposure = self._exposure_s()
-        quiet_s = _DRAIN_QUIET_S + exposure
+        # A frame being exposed at the stop is sent once its exposure ends.
+        quiet_s = _DRAIN_QUIET_S + exposure_time
         now = started = time.perf_counter()
-        deadline = now + _DRAIN_LIMIT_S + exposure
+        deadline = now + _DRAIN_LIMIT_S + exposure_time
         try:
             received = self._transferred(stream)
             quiet_since = now
@@ -403,16 +403,6 @@ class _AravisConnection:
             self._do(lambda: stream.get_info_uint64_by_name("n_transferred_bytes"))
         )
 
-    def _exposure_s(self) -> float:
-        # A frame being exposed at the stop is sent once its exposure ends.
-        for name in _EXPOSURE_NODES:
-            try:
-                if self.is_readable(name):
-                    return self.get_float(name) / 1e6
-            except DeviceError:
-                pass
-        return 0.0
-
     def grab(self, timeout: float | None) -> "_AravisBuffer":
         if not self._acquiring:
             raise DeviceError("the camera isn't acquiring")
@@ -431,12 +421,12 @@ class _AravisConnection:
             buffer = newer
         return _AravisBuffer(self, buffer)
 
-    def close(self) -> None:
+    def close(self, exposure_time: float = 0.0) -> None:
         if self._camera is None:
             return
         problem = None
         try:
-            self.stop_acquisition()
+            self.stop_acquisition(exposure_time)
         except DeviceError as exc:
             problem = f"stop acquisition: {exc}"
         # Aravis lets go of the camera when the last reference to it goes.

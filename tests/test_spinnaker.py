@@ -15,7 +15,7 @@ from educelab.devices.cameras.spinnaker import (
     load_pyspin,
 )
 from educelab.devices.errors import DeviceError, NotConnected
-from fakes.pyspin import FakeCamera, FakePySpin, LibraryVersion, SpinnakerException
+from fakes.pyspin import FakePySpin, LibraryVersion, SpinnakerException, flir_camera
 
 # --- Importing PySpin ---------------------------------------------------------
 
@@ -69,9 +69,9 @@ def test_an_injected_module_is_used_instead_of_pyspin(no_pyspin):
 def pyspin():
     return FakePySpin(
         [
-            FakeCamera("20000001", "Blackfly S BFS-U3-51S5M"),
-            FakeCamera("20000002", "Blackfly S BFS-U3-200S6C", color=True),
-            FakeCamera("20000003", "Blackfly S BFS-U3-51S5M"),
+            flir_camera("20000001", "Blackfly S BFS-U3-51S5M"),
+            flir_camera("20000002", "Blackfly S BFS-U3-200S6C", color=True),
+            flir_camera("20000003", "Blackfly S BFS-U3-51S5M"),
         ]
     )
 
@@ -214,7 +214,7 @@ def test_discover_releases_everything_it_took(pyspin):
 
 def test_discover_does_not_initialize_cameras(pyspin):
     SpinnakerSystem(pyspin=pyspin).discover()
-    assert all(camera.init_calls == 0 for camera in pyspin.system.cameras)
+    assert all(camera.open_calls == 0 for camera in pyspin.system.cameras)
 
 
 def test_discover_keeps_an_open_handle_open(pyspin):
@@ -239,19 +239,17 @@ def test_discover_skips_a_camera_unplugged_while_listing(pyspin):
 
 
 def test_discover_reports_a_camera_without_a_readable_serial(pyspin):
-    pyspin.system.cameras[0].tl_device_nodes["DeviceSerialNumber"]._access = pyspin.NA
+    device = pyspin.transport(pyspin.system.cameras[0]).device
+    device.nodes["DeviceSerialNumber"].access = pyspin.NA
     infos = SpinnakerSystem(pyspin=pyspin).discover()
     assert infos[0].serial_number is None
     assert infos[0].model == "Blackfly S BFS-U3-51S5M"
     assert infos[0].vendor == "FLIR"
 
 
-def test_discover_lists_a_camera_whose_vendor_cant_be_read(pyspin, monkeypatch):
-    def fail():
-        raise SpinnakerException("node not available")
-
-    node = pyspin.system.cameras[0].tl_device_nodes["DeviceVendorName"]
-    monkeypatch.setattr(node, "ToString", fail)
+def test_discover_lists_a_camera_whose_vendor_cant_be_read(pyspin):
+    device = pyspin.transport(pyspin.system.cameras[0]).device
+    device.failures["DeviceVendorName"] = SpinnakerException("node not available")
     infos = SpinnakerSystem(pyspin=pyspin).discover()
     assert infos[0].serial_number == "20000001"
     assert infos[0].vendor is None

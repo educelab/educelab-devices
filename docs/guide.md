@@ -279,7 +279,8 @@ The driver doesn't retry (see section 8): whether a scan can wait for a recovery
 app's call. Log the counters, then try these in order, each followed by a capture:
 
 1. `camera.restart_acquisition()` stops and starts the stream, logging the counters before
-   and after. Settings are kept.
+   and after. Settings are kept. Frame IDs, and GenTL's stream counters, start again
+   from 0.
 2. `camera.close()` and `camera.open()`. Opening sets `trigger` back to `"Off"`, so
    apply your settings again.
 3. Power-cycle the camera's hub port (`Hub.power_cycle(port)`), wait for it to come back
@@ -311,8 +312,10 @@ def capture(camera, apply_settings):
     return camera.capture_frame()  # a third StreamStalled goes to the caller
 ```
 
-Whether step 1 clears a stall like the one on the rig is unknown. When a stall happens,
-record which step cleared it in `usb3-vision.md`.
+On the rig, step 1 cleared a stall forced by stopping a camera's acquisition behind the
+driver's back, through GenTL and Spinnaker. Whether it clears a stall like the one that
+happened by itself is unknown. When one happens, record which step cleared it in
+`usb3-vision.md`.
 
 A frame's `metadata` holds:
 

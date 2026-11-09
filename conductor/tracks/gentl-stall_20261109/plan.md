@@ -77,11 +77,12 @@ Each run is `el-devices genicam --backend gentl --pixel-format Mono8 --exposure 
   - **Mono16, to settle the cap (logs `PNY:/gentl-stall-mono16/`):** 10 runs each, all ok. 80 MB/s: 321.6 MB/s together, two cameras at half (40.2), all-camera median 250 ms. 64 MB/s (kept as 60.288): 301.5 MB/s, every camera 60.3, median 333 ms. Agreed with the maintainer to keep recommending 80 MB/s; 64 is for even rates.
 - [x] Task 3.4: Update `docs/hardware/usb3-vision.md`: the five-camera Windows GenTL runs (Hardware runs), the stall and what's known of its cause (Hazards), what 1.1 found about `genicam`'s buffers, and the link-sharing guidance: this rig carries about 330 MB/s in total, so five cameras need a cap of about 64 MB/s, not 80. Flag the cap for pgs-scan's link budget (outside this track).
 - [x] Task 3.5: Give downstream apps (e.g. pgs-scan) a documented way to deal with a stalled stream in `docs/guide.md`: how a stall shows up (`StreamStalled`, after the capture timeout), what the driver does (detects and reports, no retry), and what the app should try, in order, with an example: `restart_acquisition()`, then close and reopen, then power-cycle the camera's port through the hub, then fail the scan. (Maintainer's note, 2026-11-09.)
-- [ ] Task 3.6: Post the findings on issue #32 and close it from the track's PR.
+- [x] Task 3.6: Post the findings on issue #32 and close it from the track's PR.
+  - Posted 2026-11-09 (issue #32, comment 6749638970); #33 closes it on merge.
 
 ### Verification
 
-- [ ] Full suite, `ruff check .` and `ruff format --check .` pass.
+- [x] Full suite, `ruff check .` and `ruff format --check .` pass.
 - [ ] Maintainer check.
 
 ## Final Verification

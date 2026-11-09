@@ -3,23 +3,27 @@
 # logs every run, and stops at the first stall. For Git Bash or MSYS2 on the
 # Windows rig, from the venv with educelab-devices installed.
 #
-# Usage: stall-runs.sh [-n RUNS] [-d gentl|spinnaker] [-k] LOG_DIR [SERIAL...]
+# Usage: stall-runs.sh [-n RUNS] [-d gentl|spinnaker] [-l MB_S] [-k] LOG_DIR [SERIAL...]
 #   Task 2.1: stall-runs.sh /e/gentl-stall
 #   Task 2.3: stall-runs.sh /e/gentl-stall 20305113 20305122 20305114 20298452 20298479
 #   Task 2.4: stall-runs.sh -d spinnaker -n 8 /e/gentl-stall
-# -n runs (default 10), -d driver (default gentl), -k keeps going after a stall.
+#   Task 3.3: stall-runs.sh -l 64 /e/gentl-stall
+# -n runs (default 10), -d driver (default gentl), -l throughput limit per camera
+# in MB/s (default 80), -k keeps going after a stall.
 # Serials open in the order given; without them, in the producer's order.
 set -u
 
-usage() { sed -n '2,12p' "$0"; exit 2; }
+usage() { sed -n '2,13p' "$0"; exit 2; }
 
 runs=10
 driver=gentl
+limit=80
 keep_going=0
-while getopts "n:d:k" opt; do
+while getopts "n:d:l:k" opt; do
   case $opt in
     n) runs=$OPTARG ;;
     d) driver=$OPTARG ;;
+    l) limit=$OPTARG ;;
     k) keep_going=1 ;;
     *) usage ;;
   esac
@@ -34,7 +38,7 @@ case $driver in
   spinnaker) command=(spinnaker) ;;
   *) usage ;;
 esac
-command+=(--pixel-format Mono8 --exposure min --throughput-limit 80 --frames 100)
+command+=(--pixel-format Mono8 --exposure min --throughput-limit "$limit" --frames 100)
 for serial in "$@"; do command+=(--serial "$serial"); done
 
 mkdir -p "$log_dir"

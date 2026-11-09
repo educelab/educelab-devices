@@ -135,8 +135,9 @@ Run together at the end of the track, with the cameras attached (`venv/`, Python
 The review fixes change how stops and closes get the exposure, Spinnaker's node lookups, and the throughput hardware test. Rerun:
 
 - [ ] Aravis on the IDS and on a CM3 (`ARAVIS_SERIAL=4110091493`, then `0135BAD4`): the drain now gets the exposure at every start too.
-- [ ] Spinnaker and GenTL on a CM3 (`SPINNAKER_SERIAL` / `GENTL_SERIAL=20305122`): Spinnaker's node lookups now go through `_do`, and `test_throughput_limit_round_trips_and_is_restored` now sets the shortest exposure first.
-- [ ] `el-devices genicam --backend aravis --serial 4110091493 --frames 5 --gain 6 --exposure min`: the CLI now reads single settings rather than `settings()`.
+- [x] Spinnaker and GenTL on a CM3 (`SPINNAKER_SERIAL` / `GENTL_SERIAL=20305122`): Spinnaker's node lookups now go through `_do`, and `test_throughput_limit_round_trips_and_is_restored` now sets the shortest exposure first. Windows rig, Python 3.12.10, 2026-11-09: Spinnaker 27 passed, 1 skipped; GenTL 26 passed, 1 skipped. The CM3 reports no `resulting_frame_rate`, so the throughput test's unit check didn't run.
+- [x] `el-devices genicam --backend gentl --serial 20305122 --frames 5 --gain 6 --exposure min --throughput-limit 80 --trigger software` (Windows rig, 2026-11-09): 5/5 captured, gain 5.999 dB, exposure 0.0297 ms, limit 80.384 MB/s. Covers every path that now reads single settings except a gain with fixed steps.
+- [ ] `el-devices genicam --backend aravis --serial 4110091493 --frames 5 --gain 6 --exposure min`: the IDS camera's fixed gain steps, through the CLI's single-setting reads.
 
 
 - [x] All acceptance criteria met

@@ -25,6 +25,7 @@ Project-level context outside this directory:
 - [Documentation Site and Machine Setup](./tracks/docs-site_20261012/index.md) — pending
 - [Camera Preview Mode](./tracks/preview-mode_20261102/index.md) — pending
 - [gphoto2 Single-Setting Reads](./tracks/gphoto2-single-setting_20261102/index.md) — pending
+- [GenTL Stream Stall](./tracks/gentl-stall_20261109/index.md) — pending
 
 ## Completed Tracks
 

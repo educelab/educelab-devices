@@ -1,0 +1,73 @@
+# Implementation Plan: GenTL Stream Stall
+
+**Track ID:** gentl-stall_20261109
+**Spec:** [spec.md](./spec.md)
+**Created:** 2026-11-09
+**Status:** [ ] Not Started
+
+## Overview
+
+Diagnose before fixing. Phase 1 makes the report show what a stall needs to explain itself, and settles the one library question the fakes can't answer. Phase 2 reproduces the stall on the Windows rig. Phase 3's fix depends on what Phase 2 finds, so its tasks are refined at Phase 2's checkpoint.
+
+Hardware: most runs are batched into Phase 2 and Task 3.3. Task 1.1 is the exception. It's a short probe on the lab Mac (FLIR's macOS GenTL producer, a CM3 attached), needed before Task 1.2 can be written.
+
+## Phase 1: Instruments
+
+### Tasks
+
+- [ ] Task 1.1: Find out whether `EventManagerNewBuffer.buffer` is a fresh object after each `update_event_data`, against real `genicam` and FLIR's producer on the lab Mac. A scratch script grabs several buffers and records each one's identity and its token's context. Also record what `NewestOnly` leaves in the output queue. Record the results here and in `usb3-vision.md`.
+- [ ] Task 1.2: Pin `GenTLConnection.grab()`'s buffer handling. A fake-backed test captures many frames with older ones waiting, and checks every announced buffer is back in the input pool afterwards. If 1.1 shows `buffer` is reused, make the fake reuse it too (red), then fix `grab()` (green), e.g. by requeueing the announced buffer that matches the event's context.
+- [ ] Task 1.3: Add a read-only `link_speed` setting (MB/s) from `DeviceLinkSpeed`, left out where a camera lacks it, with a fake test. Show it on the report's camera line.
+- [ ] Task 1.4: Decide how stream counters get above the backend seam without making the core GenTL-specific (e.g. an optional `Connection` method returning a mapping, surfaced by a `GenICamCamera` method). It's new public API on `GenICamCamera`, so agree it with the maintainer, then implement it for GenTL (frames delivered, underruns, buffers announced, queued and awaiting delivery) with fake tests. Other backends return nothing.
+- [ ] Task 1.5: Report the counters in `el-devices genicam`: per camera at the end of the run, and when a camera's capture first times out, so a stall shows its state at the time. Show the frames the host received next to the frame-ID-based streaming rate, so the rate's assumption can be checked. Tests in `test_cli_genicam.py`.
+
+### Verification
+
+- [ ] Full suite, `ruff check .` and `ruff format --check .` pass.
+- [ ] Maintainer check before Phase 2.
+
+## Phase 2: Reproduce on the Windows rig
+
+Each run is `el-devices genicam --backend gentl --pixel-format Mono8 --exposure min --throughput-limit 80 --frames 100` on the five CM3s, unless a task says otherwise. Log every run to the PNY drive and record each one here, stalled or not.
+
+### Tasks
+
+- [ ] Task 2.1: Run the stall configuration up to 10 times, or until it stalls. On a stall, record the counters, the link speed, and whether the camera still answers node reads.
+- [ ] Task 2.2: On a stalled camera, stop and restart acquisition (a scratch script, or a `pixel_format` write, which pauses acquisition). Record whether frames come back without a power cycle.
+- [ ] Task 2.3: Repeat 2.1 with 20305113 opened first (`--serial` in that order; check the CLI opens cameras in the order given). Does the stall follow the camera or the last position?
+- [ ] Task 2.4: Run the same configuration through Spinnaker (`el-devices spinnaker`) on the same machine, as many times as 2.1 took. Separates FLIR's GenTL producer and `genicam` from the camera and link.
+- [ ] Task 2.5: Classify the cause from 2.1–2.4: the camera or link, the host's buffers, or something else. Record the evidence for and against each candidate in the spec.
+
+### Verification
+
+- [ ] Every run is recorded here.
+- [ ] Maintainer agrees on the cause; Phase 3's tasks are refined to match.
+
+## Phase 3: Fix and record
+
+### Tasks
+
+- [ ] Task 3.1: Choose the fix with the maintainer. Likely shapes:
+  - Lost buffers: done by 1.2, if that was the cause.
+  - The camera or link stops: detect a stream silent for several frame periods while acquiring, restart acquisition once and log it, or raise an error that names the cause.
+  - A USB 2 link: warn or refuse at open when `link_speed` is below USB 3.
+- [ ] Task 3.2: Implement it test-first on the fakes.
+- [ ] Task 3.3: Rerun Phase 2's stall configuration on the Windows rig as many times as it took to reproduce. No stall, or the stall is recovered or reported as designed.
+- [ ] Task 3.4: Update `docs/hardware/usb3-vision.md`: the five-camera Windows GenTL runs (Hardware runs), the stall and its cause (Hazards), what 1.1 found about `genicam`'s buffers, and the link-sharing guidance where the evidence changes it. Update `docs/guide.md` if callers can see the new counters.
+- [ ] Task 3.5: Post the findings on issue #32 and close it from the track's PR.
+
+### Verification
+
+- [ ] Full suite, `ruff check .` and `ruff format --check .` pass.
+- [ ] Maintainer check.
+
+## Final Verification
+
+- [ ] All acceptance criteria met
+- [ ] Tests passing
+- [ ] Documentation updated
+- [ ] Ready for review
+
+---
+
+_Generated by Conductor. Tasks will be marked [~] in progress and [x] complete._

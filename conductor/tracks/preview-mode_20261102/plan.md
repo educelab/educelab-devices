@@ -32,7 +32,7 @@ Use throwaway scripts in a scratch directory, not package code. Each finding goe
 - [x] Task 1.3: Z7 II: after a focus step, check whether the next preview requested can still show the lens from before the step, and how many previews it takes to settle.
   - The first preview requested after `step()` returns (which waits `focus_settle_s()`) already shows the new focus, in 4 of 4 rounds at ±2000 steps. About one fast preview in four or five repeats the previous frame's bytes.
 - [x] Task 1.4: CM3-U3-50S5M and IDS U3-36P0XCP: check which of `OffsetX`/`OffsetY` and `Width`/`Height` can be written while streaming, through each backend we support on the bench (Spinnaker, Aravis, GenTL), and record their increments.
-  - Through Aravis on both cameras: size writes are accepted while streaming but need an acquisition restart (0.1–0.4 s); offsets move with no restart. Spinnaker and GenTL (FLIR's producer) on the CM3 lock size, binning and decimation while streaming and write them paused (restart 0.12–0.14 s), and move offsets while streaming. The IDS through GenTL needs a Windows or Linux run (no IDS producer on macOS). Details in `docs/hardware/usb3-vision.md` (Geometry).
+  - Through Aravis on both cameras: size writes are accepted while streaming but need an acquisition restart (0.1–0.4 s); offsets move with no restart. Spinnaker and GenTL (FLIR's producer) on the CM3 lock size, binning and decimation while streaming and write them paused (restart 0.12–0.14 s), and move offsets while streaming. The IDS through GenTL (IDS peak, Windows) locks offsets too while streaming, and can't honor `not_before` (no latch, no arrival times). Details in `docs/hardware/usb3-vision.md` (Geometry).
 - [x] Task 1.5: CM3 and IDS: record the binning and decimation nodes, modes and selectors, whether each mode averages or sums, whether it changes the frame rate, and the restart cost of switching geometry.
   - Binning sums on both (4× the level at 2 × 2); decimation keeps the level. The CM3's throughput limit and its maximum shrink with the payload and don't grow back. Writing the old limit over the lower maximum broke its stream until a pixel format round trip reset it.
 
@@ -59,7 +59,8 @@ Phase 3 (GenICam):
 - A preview of the same size at a new place only moves the offsets, which needs no restart. A new size, or decimation, needs a stop and start: about 0.1–0.4 s through Aravis.
 - After applying geometry, raise `AcquisitionFrameRate` to its new maximum (`_raise_frame_rate`), since the IDS doesn't do it on its own.
 - On `stop_preview()` and `close()`, restore the capture geometry and then the throughput limit, with a pixel format round trip first if the limit's maximum has shrunk. Never write the limit above its current maximum.
-- The hardware path works on all three backends for the CM3 (writes with acquisition paused, as `_acquisition_paused` does). The IDS through GenTL is unchecked: use host crop and stride there until a Windows or Linux run (Task 3.4).
+- The hardware path works on every backend checked (writes with acquisition paused, as `_acquisition_paused` does). On the IDS through GenTL, moving the preview also needs a restart, since IDS's producer locks offsets while streaming.
+- `not_before` on the IDS through GenTL can't work by timestamp. Preview there either refuses `not_before`, as capture does, or falls back to arrival: wait until `not_before`, then drop the frames already buffered.
 
 Phase 4 (gphoto2):
 

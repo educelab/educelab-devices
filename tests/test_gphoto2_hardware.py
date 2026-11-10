@@ -156,8 +156,9 @@ def test_capture_after_an_idle_gap(camera, quality, quick_exposure):
 
 
 def test_preview_is_an_rgb_frame(camera):
+    camera.start_preview()
     started = time.monotonic()
-    preview = camera.preview_frame()
+    preview = camera.preview_frame().pixels
     elapsed = time.monotonic() - started
     print(f"\npreview {preview.shape} in {elapsed:.3f} s")
     assert preview.dtype == np.uint8 and preview.ndim == 3
@@ -169,7 +170,7 @@ def test_aperture_choices_with_and_without_live_view(camera):
     camera.close()
     camera.open()
     before = camera.setting(APERTURE).choices
-    camera.preview_frame()
+    camera.start_preview()
     during = camera.setting(APERTURE).choices
     print(f"\naperture choices without live view: {before}")
     print(f"aperture choices with live view: {during}")

@@ -4,6 +4,7 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import numpy as np
@@ -27,6 +28,7 @@ from educelab.devices.cameras.base import (
     EXPOSURE_TIME,
     ISO,
     CameraFile,
+    PreviewRegion,
     Setting,
 )
 from educelab.devices.cameras.gphoto2 import GPhoto2Camera
@@ -39,6 +41,8 @@ from educelab.devices.errors import (
     NotConnected,
 )
 from fakes.gphoto2 import FOLDER, NIKON_WIDGETS, FakeCamera, FakeLibrary, jpeg
+
+CENTER = PreviewRegion(0.25, 0.25, 0.5, 0.5)
 
 
 def fake_sdk():
@@ -990,46 +994,60 @@ def test_failed_single_setting_read_raises_device_error():
 
 def test_preview_is_a_decoded_rgb_array():
     with opened(FakeCamera(preview=jpeg(64, 48))) as camera:
+        geometry = camera.start_preview()
         preview = camera.preview_frame()
-    assert preview.shape == (48, 64, 3)
-    assert preview.dtype == np.uint8
+    assert (geometry.width, geometry.height) == (64, 48)
+    assert preview.pixel_format == "RGB8"
+    assert preview.pixels.shape == (48, 64, 3)
+    assert preview.pixels.dtype == np.uint8
 
 
-def test_first_preview_turns_live_view_on_and_continuous_af_off():
+def test_starting_preview_turns_live_view_on_once():
     attached = FakeCamera()
     with opened(attached) as camera:
+        camera.start_preview()
         camera.preview_frame()
-        camera.preview_frame()
-        assert attached.writes == [{"viewfinder": 1, "continuousaf": "Off"}]
-        assert attached.calls.count("capture_preview") == 2
+        camera.start_preview(CENTER)
+        # Continuous AF is the caller's setting, so it's left alone.
+        assert attached.writes == [{"viewfinder": 1}]
+
+
+def test_stopping_preview_turns_live_view_off():
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        camera.start_preview()
+        camera.stop_preview()
+        assert attached.writes == [{"viewfinder": 1}, {"viewfinder": 0}]
+        camera.start_preview()
+        assert attached.writes[-1] == {"viewfinder": 1}
+
+
+def test_failing_to_turn_live_view_off_raises_and_ends_preview():
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        camera.start_preview()
+        attached.fail_next("set_config", GP_ERROR)
+        with pytest.raises(DeviceError, match="live view"):
+            camera.stop_preview()
+        assert camera.preview is None
 
 
 @pytest.mark.parametrize("name", ["eosviewfinder", "d1a6"])
 def test_live_view_uses_the_viewfinder_widget_the_camera_has(name):
-    widgets = [w for w in NIKON_WIDGETS if w.name not in ("viewfinder", "continuousaf")]
+    widgets = [w for w in NIKON_WIDGETS if w.name != "viewfinder"]
     widgets.append(_gphoto2.Widget(name, name, "toggle", 0, section="actions"))
     attached = FakeCamera(widgets=widgets)
     with opened(attached) as camera:
-        camera.preview_frame()
+        camera.start_preview()
         assert attached.writes == [{name: 1}]
 
 
-def test_continuous_af_toggle_is_turned_off():
-    widgets = [w for w in NIKON_WIDGETS if w.name != "continuousaf"]
-    widgets.append(
-        _gphoto2.Widget("continuousaf", "AF", "toggle", 1, section="capturesettings")
-    )
-    attached = FakeCamera(widgets=widgets)
+def test_preview_works_without_a_live_view_widget():
+    attached = FakeCamera(widgets=[w for w in NIKON_WIDGETS if w.name != "viewfinder"])
     with opened(attached) as camera:
-        camera.preview_frame()
-        assert attached.writes == [{"viewfinder": 1, "continuousaf": 0}]
-
-
-def test_preview_works_without_live_view_widgets():
-    names = ("viewfinder", "continuousaf")
-    attached = FakeCamera(widgets=[w for w in NIKON_WIDGETS if w.name not in names])
-    with opened(attached) as camera:
-        assert camera.preview_frame().ndim == 3
+        camera.start_preview()
+        assert camera.preview_frame().pixels.ndim == 3
+        camera.stop_preview()
         assert attached.writes == []
 
 
@@ -1038,21 +1056,53 @@ def test_live_view_that_cannot_be_enabled_still_previews(caplog):
     with opened(attached) as camera:
         attached.fail_next("set_config", GP_ERROR)
         with caplog.at_level(logging.WARNING, logger=gphoto2.__name__):
-            assert camera.preview_frame().ndim == 3
-            camera.preview_frame()
+            camera.start_preview()
+            assert camera.preview_frame().pixels.ndim == 3
         assert "live view" in caplog.text
+        camera.stop_preview()
         assert attached.calls.count("set_config") == 1
+
+
+def test_preview_crops_and_strides_on_the_host():
+    with opened(FakeCamera(preview=jpeg(64, 48))) as camera:
+        geometry = camera.start_preview(CENTER, max_size=16)
+        preview = camera.preview_frame()
+    assert geometry.region == CENTER
+    assert preview.pixels.shape == (12, 16, 3)
+
+
+def test_preview_follows_a_change_of_live_view_size():
+    attached = FakeCamera(preview=jpeg(64, 48))
+    with opened(attached) as camera:
+        camera.start_preview()
+        attached.preview = jpeg(32, 24)
+        preview = camera.preview_frame()
+        assert preview.pixels.shape == (24, 32, 3)
+        assert camera.preview == preview.geometry
+
+
+def test_preview_not_before_goes_by_arrival():
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        camera.start_preview()
+        grabbed = attached.calls.count("capture_preview")
+        ready = datetime.now(UTC) + timedelta(seconds=0.05)
+        frame = camera.preview_frame(not_before=ready)
+        assert frame.timestamp >= ready
+        # Asked for only after not_before, so one grab is enough.
+        assert attached.calls.count("capture_preview") == grabbed + 1
 
 
 def test_undecodable_preview_raises_device_error():
     camera = opened(FakeCamera(preview=b"not a jpeg"))
     with camera, pytest.raises(DeviceError, match="preview"):
-        camera.preview_frame()
+        camera.start_preview()
 
 
 def test_failed_preview_raises_device_error():
     attached = FakeCamera()
     with opened(attached) as camera:
+        camera.start_preview()
         attached.fail_next("capture_preview", GP_ERROR)
         with pytest.raises(DeviceError, match="preview"):
             camera.preview_frame()
@@ -1061,14 +1111,13 @@ def test_failed_preview_raises_device_error():
 def test_close_turns_live_view_off_and_reopen_turns_it_on_again():
     attached = FakeCamera()
     camera = opened(attached)
-    camera.preview_frame()
+    camera.start_preview()
     camera.close()
     assert attached.writes[-1] == {"viewfinder": 0}
     camera.open()
-    camera.preview_frame()
+    camera.start_preview()
     camera.close()
-    # Continuous AF is still off from the first session.
-    assert attached.writes[-2] == {"viewfinder": 1}
+    assert attached.writes[-2:] == [{"viewfinder": 1}, {"viewfinder": 0}]
 
 
 def test_close_without_preview_leaves_live_view_alone():

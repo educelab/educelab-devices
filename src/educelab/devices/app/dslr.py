@@ -68,7 +68,9 @@ def run(args: argparse.Namespace) -> int:
         if args.capture is not None and not _capture(camera, args.capture):
             return 1
         if args.preview:
-            height, width = camera.preview_frame().shape[:2]
+            camera.start_preview()
+            height, width = camera.preview_frame().pixels.shape[:2]
+            camera.stop_preview()
             print(f"preview: {width}x{height}")
         if args.focus_steps is not None and not _step_focus(camera, args.focus_steps):
             return 1

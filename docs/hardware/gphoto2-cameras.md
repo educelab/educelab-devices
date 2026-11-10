@@ -223,19 +223,15 @@ after another take longer: 3.6–3.7 s, over 10 in a row (body `…03059822`, 20
 ## Live view
 
 `preview_frame()` grabs one live-view image with `gp_camera_capture_preview()` and
-decodes it with Pillow into an RGB array. On the first preview after `open()` the driver
-reads the config tree and, in one write:
+decodes it with Pillow into an RGB array, cropped to the preview region on the host.
+`start_preview()` reads the config tree and turns live view on through the first of
+`viewfinder` (Nikon), `eosviewfinder` (Canon), or `d1a6` (Nikon's raw PTP property) the
+camera has. `stop_preview()` and `close()` turn it off again. `not_before` goes by
+arrival: the driver asks for the image only once `not_before` has passed, and stamps
+it with the time it arrived.
 
-- turns live view on through the first of `viewfinder` (Nikon), `eosviewfinder` (Canon),
-  or `d1a6` (Nikon's raw PTP property) the camera has, and
-- turns continuous AF off through the first of `continuousaf`, `continuous-af`, or
-  `continuousautofocus`, choosing the choice spelled `off`, `0`, `disable(d)`, `false`,
-  or `no`, or `0` for a toggle.
-
-These widget names and spellings are the prototype's. The Z7 II has `viewfinder` and
-none of the continuous-AF widgets, so only live view is switched. **verified**.
-Turning continuous AF off keeps the lens from hunting between frames on bodies that
-have it, and it stays off after `close()`.
+These widget names are the prototype's. The Z7 II has `viewfinder`. **verified**. The
+driver no longer turns continuous AF off; it's the caller's setting.
 
 - **Best effort.** Most bodies return previews without live view being switched on
   explicitly, so a failure to enable it is logged as a warning and not retried until the

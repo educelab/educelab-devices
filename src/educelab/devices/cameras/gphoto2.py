@@ -11,6 +11,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import numpy as np
 import numpy.typing as npt
@@ -31,6 +32,7 @@ from educelab.devices.cameras._gphoto2 import (
     Widget,
     WidgetValue,
 )
+from educelab.devices.cameras._preview import HostCrop, host_crop
 from educelab.devices.cameras.base import (
     APERTURE,
     CANONICAL_UNITS,
@@ -38,6 +40,9 @@ from educelab.devices.cameras.base import (
     ISO,
     CameraFile,
     FileCamera,
+    PreviewFrame,
+    PreviewGeometry,
+    PreviewRegion,
 )
 from educelab.devices.cameras.focus import FocusDrive, FocusLimit
 from educelab.devices.device import DeviceInfo, Disconnected
@@ -94,12 +99,9 @@ FOCUS_LIMIT_RECOVERY_S = 1.0
 # drive_to_limit() gives up after this many steps without reaching an end stop.
 FOCUS_LIMIT_MAX_STEPS = 1_000_000
 
-# Widgets that turn live view on, by camera family, and spellings of "off" for
-# continuous AF. From pgs-scan's spectral prototype
-# (docs/hardware/gphoto2-cameras.md#live-view).
+# Widgets that turn live view on, by camera family. From pgs-scan's spectral
+# prototype (docs/hardware/gphoto2-cameras.md#live-view).
 _VIEWFINDER_WIDGETS = ("viewfinder", "eosviewfinder", "d1a6")
-_CONTINUOUS_AF_WIDGETS = ("continuousaf", "continuous-af", "continuousautofocus")
-_OFF_SPELLINGS = frozenset({"off", "0", "disable", "disabled", "false", "no"})
 
 _DOC = "docs/hardware/gphoto2-cameras.md"
 
@@ -167,9 +169,12 @@ class GPhoto2Camera(FileCamera):
         self._keep_alive_thread: threading.Thread | None = None
         self._focus: GPhoto2FocusDrive | None = None
         self._focus_checked = False
-        self._live_view_tried = False
-        # The widget that turned live view on, so close() can turn it off.
+        # The widget that turned live view on, so stopping can turn it off.
         self._live_view: str | None = None
+        self._preview_request: tuple[PreviewRegion, int | None] | None = None
+        self._crop: HostCrop | None = None
+        # The live-view image shape the crop was planned for.
+        self._planned_for: tuple[int, int] | None = None
 
     @property
     def info(self) -> DeviceInfo:
@@ -339,15 +344,10 @@ class GPhoto2Camera(FileCamera):
         if thread is not None and thread is not threading.current_thread():
             thread.join()
         session, self._session = self._session, None
-        live_view, self._live_view = self._live_view, None
-        self._live_view_tried = False
+        self._live_view = None
+        self._preview_request = self._crop = None
         if session is None:
             return
-        if live_view is not None:
-            try:
-                session.set_config({live_view: 0})
-            except GPhoto2Error as exc:
-                logger.warning("%r could not turn live view off: %s", self, exc)
         try:
             session.close()
         except GPhoto2Error as exc:
@@ -437,11 +437,55 @@ class GPhoto2Camera(FileCamera):
         except GPhoto2Error as exc:
             raise self._error(exc, f"setting {name} to {value!r}") from exc
 
-    def _preview_frame(self) -> npt.NDArray[np.uint8]:
+    def _start_preview(
+        self, region: PreviewRegion, max_size: int | None
+    ) -> PreviewGeometry:
         session = self._require_session()
-        if not self._live_view_tried:
-            self._live_view_tried = True
+        if self._preview_request is None:
             self._start_live_view(session)
+        self._preview_request = (region, max_size)
+        # The live-view size is only known from an image, so grab one.
+        return self._plan_crop(self._grab_preview(session))
+
+    def _stop_preview(self) -> None:
+        live_view, self._live_view = self._live_view, None
+        self._preview_request = self._crop = None
+        if live_view is None:
+            return
+        try:
+            self._require_session().set_config({live_view: 0})
+        except GPhoto2Error as exc:
+            raise self._error(exc, "turning live view off") from exc
+
+    def _preview_frame(self, not_before: datetime | None) -> PreviewFrame:
+        # Previews carry no time, so not_before goes by arrival: ask for the
+        # image only once not_before has passed.
+        if not_before is not None:
+            time.sleep(max((not_before - datetime.now(UTC)).total_seconds(), 0.0))
+        pixels = self._grab_preview(self._require_session())
+        arrived = datetime.now(UTC)
+        crop = self._crop
+        if crop is None or pixels.shape[:2] != self._planned_for:
+            # A setting changed the live-view size; report the new geometry.
+            self._preview = self._plan_crop(pixels)
+            crop = self._crop
+        assert crop is not None
+        return PreviewFrame(
+            np.ascontiguousarray(crop.apply(pixels)), "RGB8", arrived, crop.geometry
+        )
+
+    def _plan_crop(self, pixels: npt.NDArray[np.uint8]) -> PreviewGeometry:
+        """Plan the host crop for live-view images the size of ``pixels``,
+        which show the whole sensor."""
+        assert self._preview_request is not None
+        region, max_size = self._preview_request
+        height, width = pixels.shape[:2]
+        size = (width, height)
+        self._crop = host_crop(region, max_size, sensor=size, frame=size)
+        self._planned_for = (height, width)
+        return self._crop.geometry
+
+    def _grab_preview(self, session: Session) -> npt.NDArray[np.uint8]:
         try:
             data = session.capture_preview()
         except GPhoto2Error as exc:
@@ -454,7 +498,7 @@ class GPhoto2Camera(FileCamera):
             raise DeviceError(f"{self!r}: could not decode the preview: {exc}") from exc
 
     def _start_live_view(self, session: Session) -> None:
-        """Turn live view on and continuous AF off, in one round trip.
+        """Turn live view on with the viewfinder widget the camera has.
 
         Best effort: most bodies still return previews without this, so a
         failure is logged rather than raised.
@@ -464,19 +508,11 @@ class GPhoto2Camera(FileCamera):
         except GPhoto2Error as exc:
             logger.warning("%r could not read settings for live view: %s", self, exc)
             return
-        values: dict[str, WidgetValue] = {}
         viewfinder = next((n for n in _VIEWFINDER_WIDGETS if n in widgets), None)
-        if viewfinder is not None:
-            values[viewfinder] = 1
-        af = next((widgets[n] for n in _CONTINUOUS_AF_WIDGETS if n in widgets), None)
-        if af is not None:
-            off = _off_value(af)
-            if off is not None and af.value != off:
-                values[af.name] = off
-        if not values:
+        if viewfinder is None:
             return
         try:
-            session.set_config(values)
+            session.set_config({viewfinder: 1})
         except GPhoto2Error as exc:
             logger.warning("%r could not turn live view on: %s", self, exc)
             return
@@ -770,15 +806,6 @@ def _native_setting(widget: Widget) -> Setting | None:
     if widget.kind == "date":
         return Setting(name, int(value), read_only=read_only)
     return Setting(name, str(value), read_only=read_only)
-
-
-def _off_value(widget: Widget) -> WidgetValue | None:
-    """The value that turns a toggle or choice widget off, if it has one."""
-    if widget.kind == "toggle":
-        return 0
-    return next(
-        (c for c in widget.choices if c.strip().lower() in _OFF_SPELLINGS), None
-    )
 
 
 def _toggle_value(value: SettingValue) -> WidgetValue:

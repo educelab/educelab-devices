@@ -142,6 +142,8 @@ class _LiveView:
 _LIVE_VIEW = {"Nikon Z7_2": _LiveView({"QVGA": 320, "VGA": 640, "XGA": 1024})}
 # Preview sets these, so they're reported read-only on the bodies above.
 _PREVIEW_WIDGETS = ("liveviewsize", "liveviewzoomarea")
+# What each preview start reads to plan the zoom.
+_ZOOM_SOURCES = (*_PREVIEW_WIDGETS, "imagesize")
 _WHOLE_SENSOR = (0.0, 0.0, 1.0, 1.0)
 
 _DOC = "docs/hardware/gphoto2-cameras.md"
@@ -226,6 +228,8 @@ class GPhoto2Camera(FileCamera):
         # Live-view size and zoom as found, and as preview last set them.
         self._found: dict[str, WidgetValue] = {}
         self._set: dict[str, WidgetValue] = {}
+        # The camera's widget names, from this session's first preview.
+        self._live_view_names: frozenset[str] | None = None
 
     @property
     def info(self) -> DeviceInfo:
@@ -399,6 +403,7 @@ class GPhoto2Camera(FileCamera):
         self._preview_request = self._crop = None
         self._zoom_levels = ()
         self._found, self._set = {}, {}
+        self._live_view_names = None
         if session is None:
             return
         try:
@@ -514,11 +519,12 @@ class GPhoto2Camera(FileCamera):
         restore = {n: v for n, v in self._found.items() if self._set.get(n) != v}
         self._zoom_levels = ()
         self._found, self._set = {}, {}
-        if restore:
+        # One at a time: a write of several reads the whole tree first.
+        for name, value in restore.items():
             try:
-                session.set_config(restore)
+                session.set_config({name: value})
             except GPhoto2Error as exc:
-                logger.warning("%r could not restore %s: %s", self, restore, exc)
+                logger.warning("%r could not restore %s: %s", self, name, exc)
         if live_view is None:
             return
         try:
@@ -662,12 +668,20 @@ class GPhoto2Camera(FileCamera):
         failure is logged rather than raised.
         """
         try:
-            widgets = session.config()
+            names = self._live_view_names
+            if names is None:
+                # The whole tree takes seconds on the Z7 II, so only the
+                # first preview of a session reads it.
+                widgets = session.config()
+                names = self._live_view_names = frozenset(widgets)
+            else:
+                found = {n: session.widget(n) for n in _ZOOM_SOURCES if n in names}
+                widgets = {n: w for n, w in found.items() if w is not None}
+            self._find_zoom(names, widgets)
         except GPhoto2Error as exc:
             logger.warning("%r could not read settings for live view: %s", self, exc)
             return
-        self._find_zoom(widgets)
-        viewfinder = next((n for n in _VIEWFINDER_WIDGETS if n in widgets), None)
+        viewfinder = next((n for n in _VIEWFINDER_WIDGETS if n in names), None)
         if viewfinder is None:
             return
         try:
@@ -677,11 +691,14 @@ class GPhoto2Camera(FileCamera):
             return
         self._live_view = viewfinder
 
-    def _find_zoom(self, widgets: Mapping[str, Widget]) -> None:
-        """Note the zoom levels and sizes of a body whose zoom is known."""
+    def _find_zoom(self, names: frozenset[str], widgets: Mapping[str, Widget]) -> None:
+        """Note the image area, zoom levels and sizes of a body whose zoom is
+        known. ``names`` are the camera's widgets; ``widgets`` the ones read."""
         profile = _LIVE_VIEW.get(self._model or "")
-        needed = (*_PREVIEW_WIDGETS, "changeafarea", "imagesize")
-        if profile is None or any(name not in widgets for name in needed):
+        needed = (*_ZOOM_SOURCES, "changeafarea")
+        if profile is None or any(name not in names for name in needed):
+            return
+        if any(name not in widgets for name in _ZOOM_SOURCES):
             return
         areas = [
             (int(m[1]), int(m[2]))

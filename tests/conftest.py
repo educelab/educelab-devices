@@ -17,8 +17,11 @@ def discover_only(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def no_live_view_settle(monkeypatch):
-    """Fakes show a zoom write at once, so don't wait for it."""
+def no_live_view_settle(request, monkeypatch):
+    """Fakes show a zoom write at once, so don't wait for it. Real cameras
+    don't, so hardware tests keep the wait."""
+    if request.node.get_closest_marker("hardware"):
+        return
     from educelab.devices.cameras import gphoto2
 
     monkeypatch.setattr(gphoto2, "LIVE_VIEW_SETTLE_S", 0.0)

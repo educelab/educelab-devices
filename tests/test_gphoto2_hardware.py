@@ -8,14 +8,17 @@ hardware doc.
 """
 
 import os
+import subprocess
+import sys
 import time
+from datetime import UTC, datetime
 
 import numpy as np
 import pytest
 
 from educelab.devices.cameras import APERTURE, EXPOSURE_TIME
 from educelab.devices.cameras.gphoto2 import GPhoto2Camera
-from educelab.devices.errors import DeviceNotFound, FocusLimitReached
+from educelab.devices.errors import DeviceBusy, DeviceNotFound, FocusLimitReached
 
 pytestmark = pytest.mark.hardware
 
@@ -155,23 +158,153 @@ def test_capture_after_an_idle_gap(camera, quality, quick_exposure):
     assert camera.capture_files()
 
 
-def test_preview_is_an_rgb_frame(camera):
-    camera.start_preview()
-    started = time.monotonic()
-    preview = camera.preview_frame().pixels
-    elapsed = time.monotonic() - started
-    print(f"\npreview {preview.shape} in {elapsed:.3f} s")
-    assert preview.dtype == np.uint8 and preview.ndim == 3
+@pytest.fixture
+def preview(camera):
+    """The camera, with preview stopped again after the test."""
+    yield camera
+    camera.stop_preview()
 
 
-def test_aperture_choices_with_and_without_live_view(camera):
-    if APERTURE not in camera.settings():
-        pytest.skip("no aperture setting")
-    camera.close()
+def reopen(camera):
+    """Open a camera just closed. macOS's ptpcamerad takes a released camera
+    within moments, so it's stopped and the open tried again."""
+    for _ in range(5):
+        try:
+            camera.open()
+            return
+        except DeviceBusy:
+            if sys.platform != "darwin":
+                raise
+            subprocess.run(["killall", "-9", "ptpcamerad"], check=False)
+            time.sleep(0.5)
     camera.open()
-    before = camera.setting(APERTURE).choices
-    camera.start_preview()
-    during = camera.setting(APERTURE).choices
+
+
+def similarity(a, b) -> float:
+    """How alike two images are, from -1 to 1, whatever their levels."""
+    a = np.asarray(a, dtype=np.float64) - np.mean(a)
+    b = np.asarray(b, dtype=np.float64) - np.mean(b)
+    return float((a * b).sum() / max(np.sqrt((a * a).sum() * (b * b).sum()), 1e-9))
+
+
+def gray(pixels, size=None):
+    from PIL import Image, ImageFilter
+
+    image = Image.fromarray(pixels).convert("L")
+    if size is not None:
+        image = image.resize(size, Image.Resampling.BOX)
+    # Blurred, so fine texture that aliases differently at each zoom (a mesh,
+    # print) doesn't swamp the shapes.
+    return np.asarray(image.filter(ImageFilter.BoxBlur(2)), dtype=np.float64)
+
+
+def test_preview_is_an_rgb_frame(preview):
+    geometry = preview.start_preview()
+    started = time.monotonic()
+    frame = preview.preview_frame()
+    elapsed = time.monotonic() - started
+    print(f"\npreview {geometry} in {elapsed:.3f} s")
+    assert frame.pixel_format == "RGB8"
+    assert frame.pixels.dtype == np.uint8 and frame.pixels.ndim == 3
+    assert geometry.region.is_full
+
+
+@pytest.mark.parametrize("side", [0.2, 0.1, 0.05])
+@pytest.mark.parametrize("corner", [(0.65, 0.65), (0.15, 0.15), (0.8, 0.0)])
+def test_a_zoomed_preview_shows_the_region_it_reports(preview, corner, side):
+    """Point the camera at a still scene with distinct, unrepeated shapes all
+    over the frame. Regions it can't find in the unzoomed frame are skipped."""
+    preview.start_preview()
+    whole = gray(preview.preview_frame().pixels)
+    wanted = (*corner, side, side)
+    started = time.monotonic()
+    geometry = preview.start_preview(wanted)
+    elapsed = time.monotonic() - started
+    frame = preview.preview_frame()
+    region = geometry.region
+    zoom = preview.setting("liveviewzoomarea").value
+    rows, cols = whole.shape
+    width = max(round(region.width * cols), 8)
+    height = max(round(region.height * rows), 8)
+    seen = gray(frame.pixels, (width, height))
+    if seen.std() < 3:
+        pytest.skip(f"the target is blank at {wanted}")
+    # Where the frame best matches the unzoomed one, near where it's reported.
+    reach = round(0.08 * cols)
+    x0, y0 = round(region.x * cols), round(region.y * rows)
+    scores = {}
+    for dy in range(-reach, reach + 1):
+        for dx in range(-reach, reach + 1):
+            x, y = x0 + dx, y0 + dy
+            if x < 0 or y < 0 or x + width > cols or y + height > rows:
+                continue
+            scores[dx, dy] = similarity(seen, whole[y : y + height, x : x + width])
+    at = max(scores, key=scores.__getitem__)
+    best = scores[at]
+    # A plain wall matches nearly as well somewhere else; that says nothing.
+    far = 0.02 * cols
+    elsewhere = max(
+        (
+            v
+            for (dx, dy), v in scores.items()
+            if abs(dx - at[0]) + abs(dy - at[1]) > far
+        ),
+        default=-1.0,
+    )
+    off = max(abs(at[0]) / cols, abs(at[1]) / rows)
+    print(
+        f"\n{wanted}: zoom {zoom}, {elapsed:.2f} s, {geometry.width}x"
+        f"{geometry.height}; best match {best:.2f}, {at[0]:+d},{at[1]:+d} px "
+        f"({off:.4f} of the frame) from the reported region"
+    )
+    if best < 0.8 or elsewhere > best - 0.05:
+        pytest.skip(f"nothing distinct at {wanted} to find in the unzoomed frame")
+    # Within 1% of the frame of where the driver says it is.
+    assert off <= 0.01
+
+
+def test_stopping_preview_restores_the_live_view_size_and_zoom(preview):
+    before = {n: preview.setting(n).value for n in ("liveviewsize", "liveviewzoomarea")}
+    preview.start_preview((0.45, 0.45, 0.1, 0.1))
+    during = {n: preview.setting(n).value for n in before}
+    preview.stop_preview()
+    after = {n: preview.setting(n).value for n in before}
+    print(f"\nbefore {before}, during {during}, after {after}")
+    assert during != before and after == before
+
+
+def test_capture_works_after_a_zoomed_preview(preview, quality, quick_exposure):
+    quality(lambda c: "NEF" in c and "+" not in c)
+    preview.start_preview((0.45, 0.45, 0.1, 0.1))
+    preview.preview_frame()
+    preview.stop_preview()
+    assert preview.capture_files()
+
+
+def test_preview_after_a_focus_step_is_from_after_it(preview):
+    focus = preview.focus
+    if focus is None:
+        pytest.skip("camera has no focus drive")
+    preview.start_preview((0.45, 0.45, 0.1, 0.1))
+    for steps in (500, -500):
+        try:
+            focus.step(steps)
+        except FocusLimitReached:
+            # Already at that end, from an earlier test: go the other way.
+            focus.step(-steps)
+        ready = datetime.now(UTC)
+        frame = preview.preview_frame(not_before=ready)
+        assert frame.timestamp >= ready
+
+
+def test_aperture_choices_with_and_without_live_view(preview):
+    if APERTURE not in preview.settings():
+        pytest.skip("no aperture setting")
+    preview.close()
+    reopen(preview)
+    before = preview.setting(APERTURE).choices
+    preview.start_preview()
+    during = preview.setting(APERTURE).choices
     print(f"\naperture choices without live view: {before}")
     print(f"aperture choices with live view: {during}")
     assert during

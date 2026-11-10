@@ -1354,6 +1354,33 @@ def test_a_body_without_imagesize_crops_on_the_host():
         assert zoom_writes(attached) == []
 
 
+def test_only_the_first_preview_of_a_session_reads_the_whole_tree():
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        camera.start_preview(PreviewRegion(0.2, 0.45, 0.1, 0.1))
+        camera.stop_preview()
+        trees = attached.calls.count("config")
+        geometry = camera.start_preview(PreviewRegion(0.2, 0.45, 0.1, 0.1))
+        camera.stop_preview()
+        assert attached.calls.count("config") == trees
+        assert attached.widgets["liveviewzoomarea"].value == "0"
+        assert geometry.width == 824
+    # Each write is of one widget, which doesn't need the tree either.
+    assert all(len(write) == 1 for write in attached.writes)
+
+
+def test_a_later_preview_sees_a_new_image_area():
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        camera.start_preview()
+        camera.stop_preview()
+        for widget in image_area(5408, 3600):
+            if widget.name == "imagesize":
+                attached.widgets["imagesize"] = widget
+        camera.start_preview(PreviewRegion(0.1, 0.1, 0.3, 0.3))
+        assert attached.af_areas == ["1352x900"]
+
+
 def test_stopping_puts_the_live_view_size_and_zoom_back():
     attached = FakeCamera()
     with opened(attached) as camera:

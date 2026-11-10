@@ -262,8 +262,11 @@ below:
 
 Checked on the camera (2026-11-10, macOS). **verified**:
 
-- In 16:9, for regions of 0.3, 0.2, 0.1 and 0.05 of the area, the region the driver
-  reported was within 0.003 of where the frame matched in an unzoomed frame.
+- In 16:9, 5:4 and 1:1, for regions of 0.3, 0.2, 0.15, 0.1 and 0.05 of the area, the
+  region the driver reported was within 0.003 of where the frame matched in an
+  unzoomed frame. In DX it was within 0.006, and 0.01 for the 0.05 regions, where
+  the match itself varied by that much between runs.
+- The hardware tests also passed in DX, 5:4 and 1:1, with more regions skipped.
 - In FX, the hardware tests found each zoomed frame within 1 pixel of an unzoomed
   XGA frame (0.0015 of it) of its reported region, at zooms `2048`, `1024` and `512`,
   including a region against the top edge. Regions over plain wall or repeating mesh

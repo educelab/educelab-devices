@@ -55,7 +55,7 @@ Prepared before the rig run, smoke-tested on the fakes only:
 
 Phase 3 (GenICam):
 
-- Reduce with **decimation**, not binning: binning sums, so a binned preview is 4× brighter than the capture and saturates in 8 bits. Then stride on the host for the rest of `max_size`.
+- Reduce only when `max_size` asks for it, with **decimation**, not binning: binning sums, so a binned preview is 4× brighter than the capture. Then stride on the host for the rest of `max_size`.
 - A preview of the same size at a new place only moves the offsets, which needs no restart. A new size, or decimation, needs a stop and start: about 0.1–0.4 s through Aravis.
 - After applying geometry, raise `AcquisitionFrameRate` to its new maximum (`_raise_frame_rate`), since the IDS doesn't do it on its own.
 - On `stop_preview()` and `close()`, restore the capture geometry and then the throughput limit, with a pixel format round trip first if the limit's maximum has shrunk. Never write the limit above its current maximum.
@@ -72,7 +72,7 @@ The discovery scripts were run from a worktree at e91ee59 (before Phase 2's `Cam
 
 ### Verification
 
-- [ ] The maintainer reviews the findings. Phases 3 and 4 are amended to match what was found.
+- [x] The maintainer reviews the findings. Phases 3 and 4 are amended to match what was found. (Approved 2026-11-10.)
 
 ## Phase 2: Preview API and contract
 
@@ -81,17 +81,31 @@ The discovery scripts were run from a worktree at e91ee59 (before Phase 2's `Cam
 - [x] Task 2.1: Add `PreviewGeometry` (region in sensor fractions, output `width`/`height`) and region validation in `cameras/base.py`, with unit tests.
   - The region type is `PreviewRegion(x, y, width, height)`, the glossary's term, as a frozen dataclass; `PreviewRegion.of()` also takes a 4-tuple or `None` (the whole sensor). `check_max_size()` validates `max_size`.
 - [x] Task 2.2: Write the preview contract tests in `tests/contracts/cameras.py`. They cover start, reconfigure, stop as a no-op, `close()` ending preview, `preview_frame()` raising outside preview, capture raising during preview, the reported region lying within the requested one, the output staying within `max_size`, `not_before`, and setting changes applying during preview.
-  - Committed red: the drivers pass it from Tasks 2.3–2.6. `not_before` is checked by elapsed time, since `preview_frame()` returns a bare array and every fake runs on the real clock. Wrong-state calls raise a new `PreviewError(DeviceError)`, following `PositionError`. Setting changes are checked by writing every choice during preview and confirming frames stay `uint8` at the reported size.
+  - Committed red: the drivers pass it from Tasks 2.3–2.6. `not_before` is checked by the frame's timestamp and by elapsed time. Wrong-state calls raise a new `PreviewError(DeviceError)`, following `PositionError`. Setting changes are checked by writing every choice during preview and confirming frames stay at the reported size.
 - [x] Task 2.3: Add `start_preview()`, `stop_preview()`, the `preview` property and `preview_frame(not_before=None)` to `Camera`, with driver hooks. Make `capture_frame()`/`capture_files()` refuse during preview.
   - `Camera.close()` stops preview before `Device.close()` runs `_close()`, logging a failure to stop; `_reset_state()` also clears it. A failed `_start_preview()` ends preview rather than leaving a half-applied one. `preview_frame()` takes `not_before` keyword-only, like `capture_frame()`.
 - [x] Task 2.4: Simulated cameras: implement region and `max_size` on the host, and pass the contract.
   - The host crop and stride is a shared helper, `cameras/_preview.py` (`host_crop`), for the GenICam fallback and gphoto2 too. It rounds the region inward to whole pixels and clips it to the part of the sensor the frames cover, so the reported region always lies within the requested one. A `SimulatedCamera` with a larger `sensor_size` now takes its frames from the middle of the sensor.
-- [~] Task 2.5: GenICam core: implement preview with host crop and stride, and `not_before` through `_grab()`. Pass the contract on the fakes for all three backends.
-- [ ] Task 2.6: gphoto2: switch live view on and off at `start_preview()`/`stop_preview()`, stop touching continuous AF, and implement `not_before` by arrival. Pass the contract on the fake.
+- [x] Task 2.5: GenICam core: implement preview with host crop and stride, and `not_before` through `_grab()`. Pass the contract on the fakes for all three backends.
+  - `PREVIEW_MAX_SIZE` is gone. An untimed camera refuses `not_before` in preview as in capture. Making the acquisition mode explicit moves to Phase 3 (Task 3.2), where preview first changes how the camera acquires.
+- [x] Task 2.6: gphoto2: switch live view on and off at `start_preview()`/`stop_preview()`, stop touching continuous AF, and implement `not_before` by arrival. Pass the contract on the fake.
+  - `start_preview()` grabs one image to learn the live-view size. If a setting changes that size mid-preview, the next frame re-plans the crop and `camera.preview` follows.
+
+#### API revision after the downstream-use review (2026-11-10)
+
+The maintainer walked through how `pgs-scan` and `pgs-spectral` use preview: framing, focusing by scroll-zoom on full-resolution images, thumbnails of every camera, often at Mono10 and above. Agreed, and applied across Tasks 2.1–2.6:
+
+- `preview_frame()` returns a `PreviewFrame` (pixels, pixel format, timestamp, geometry).
+- `max_size` defaults to `None`: full resolution unless the caller asks for less. It stays a pixel bound, not a scale factor.
+- Preview keeps the camera's current pixel format. The library never converts depth; display scaling, zoom, pan, histograms and focus metrics are the consumer's.
+- Captures still refuse during preview (consumers show the last capture during a scan). One stream per camera.
+- Cameras that can't time their frames refuse `not_before`.
+
+Owed hardware check: whether Mono8 is the top 8 bits of the deeper formats on the CM3 and the IDS, so 8-bit clipping matches full-depth clipping.
 
 ### Verification
 
-- [ ] The full suite passes, and every driver and simulated camera passes the preview contract.
+- [x] The full suite passes, and every driver and simulated camera passes the preview contract. (2438 passed, 2026-11-10; mypy clean.)
 
 ## Phase 3: GenICam hardware ROI and binning
 
@@ -100,7 +114,7 @@ Scope as amended after Phase 1.
 ### Tasks
 
 - [ ] Task 3.1: Add the core's geometry mapping: region fractions to ROI rounded to the node increments, and `max_size` to binning or decimation and then host stride. Tests on the fake node map.
-- [ ] Task 3.2: Apply the geometry at `start_preview()`, restarting acquisition only when a locked node changes, and restore the capture geometry at `stop_preview()` and `close()`.
+- [ ] Task 3.2: Make the core's acquisition mode explicit (free-run, software trigger, preview). Apply the geometry at `start_preview()`, restarting acquisition only when a locked node changes, and restore the capture geometry at `stop_preview()` and `close()`.
 - [ ] Task 3.3: Keep the canonical `width`/`height` reporting the capture size during preview. Keep timestamps and `not_before` correct across geometry restarts.
 - [ ] Task 3.4: Enable each path per model and per backend according to the Phase 1 findings.
 

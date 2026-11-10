@@ -7,14 +7,14 @@
   "updated": "2026-11-10T00:00:00Z",
   "phases": {
     "total": 5,
-    "completed": 0
+    "completed": 2
   },
   "tasks": {
     "total": 21,
-    "completed": 9
+    "completed": 11
   },
-  "current_phase": 2,
-  "current_task": "2.5",
+  "current_phase": 3,
+  "current_task": "3.1",
   "commits": [
     "8deb075: Prepare the preview-mode hardware discovery runs",
     "c97e118: Record the discovery prep commit in the preview-mode metadata",
@@ -25,6 +25,9 @@
     "ff38b86: Write the camera preview contract",
     "923a6dc: Make preview an explicit state on the Camera base",
     "4691ac6: Preview the simulated cameras with a shared host crop and stride",
-    "486dbba: Record the preview discovery: Z7 II zoom geometry, GenICam binning and ROI"
+    "486dbba: Record the preview discovery: Z7 II zoom geometry, GenICam binning and ROI",
+    "568f73d: Return PreviewFrame at full resolution and depth from preview",
+    "d49cc2c: Preview GenICam cameras through the explicit state, with a host crop",
+    "ab526ba: Switch gphoto2 live view on and off with the preview state"
   ]
 }

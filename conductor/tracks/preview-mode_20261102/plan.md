@@ -136,12 +136,16 @@ Scope as amended after Phase 1.
 
 ### Tasks
 
-- [ ] Task 4.1: Map the region to the nearest `liveviewzoomarea` (and to a zoom center, if Task 1.2 found a way to set one), and `max_size` to `liveviewsize`. Report the applied region and size.
-- [ ] Task 4.2: Report `liveviewzoomarea` and `liveviewsize` read-only through `settings()`.
+- [x] Task 4.1: Map the region to the nearest `liveviewzoomarea` (and to a zoom center, if Task 1.2 found a way to set one), and `max_size` to `liveviewsize`. Report the applied region and size.
+  - Enabled per body from a table of measured zoom geometry (`_LIVE_VIEW`, the Z7 II only), since the crop is in sensor pixels and gphoto2 doesn't report the sensor size. `start_preview()` waits 0.4 s after a size, zoom or centre write, then takes the image it plans the crop from. `stop_preview()` restores the size and zoom as found.
+- [x] Task 4.2: Report `liveviewzoomarea` and `liveviewsize` read-only through `settings()`.
+  - Only on bodies in the table. Elsewhere preview doesn't touch them, so they stay writable.
+
+Owed hardware checks (Task 5.4): the reported region against a template match at each zoom, including the clamp at the sensor edge; that 0.4 s is enough after a centre-only write; the size and zoom restore on stop.
 
 ### Verification
 
-- [ ] The gphoto2 tests and the contract pass.
+- [x] The gphoto2 tests and the contract pass. (2581 passed, 2026-11-10.)
 
 ## Phase 5: Docs, CLI, hardware checks
 

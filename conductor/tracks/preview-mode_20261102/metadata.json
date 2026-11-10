@@ -7,14 +7,14 @@
   "updated": "2026-11-10T00:00:00Z",
   "phases": {
     "total": 5,
-    "completed": 3
+    "completed": 4
   },
   "tasks": {
     "total": 21,
-    "completed": 15
+    "completed": 17
   },
-  "current_phase": 4,
-  "current_task": "4.1",
+  "current_phase": 5,
+  "current_task": "5.1",
   "commits": [
     "8deb075: Prepare the preview-mode hardware discovery runs",
     "c97e118: Record the discovery prep commit in the preview-mode metadata",
@@ -30,6 +30,7 @@
     "d49cc2c: Preview GenICam cameras through the explicit state, with a host crop",
     "ab526ba: Switch gphoto2 live view on and off with the preview state",
     "1993cfb: Map a preview region to a camera ROI and decimation",
-    "713ddda: Preview GenICam cameras through hardware ROI and decimation"
+    "713ddda: Preview GenICam cameras through hardware ROI and decimation",
+    "aca1268: Zoom the Z7 II's live view to the preview region"
   ]
 }

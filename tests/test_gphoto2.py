@@ -40,11 +40,26 @@ from educelab.devices.errors import (
     FocusLimitReached,
     NotConnected,
 )
-from fakes.gphoto2 import FOLDER, NIKON_WIDGETS, FakeCamera, FakeLibrary, jpeg
+from fakes.gphoto2 import (
+    FOLDER,
+    NIKON_WIDGETS,
+    FakeCamera,
+    FakeLibrary,
+    image_area,
+    jpeg,
+)
 
 CENTER = PreviewRegion(0.25, 0.25, 0.5, 0.5)
 # A body with live view but no zoom the driver knows how to use.
 ZOOM_WIDGETS = ("liveviewsize", "liveviewzoomarea", "changeafarea")
+# Size on the sensor and unzoomed XGA frame of each Z7 II image area, as measured.
+IMAGE_AREAS = {
+    "FX": ((8256, 5504), (1024, 680)),
+    "DX": ((5408, 3600), (1024, 680)),
+    "5:4": ((6880, 5504), (960, 768)),
+    "1:1": ((5504, 5504), (768, 768)),
+    "16:9": ((8256, 4640), (1024, 576)),
+}
 PLAIN_WIDGETS = [w for w in NIKON_WIDGETS if w.name not in ZOOM_WIDGETS]
 
 
@@ -1257,6 +1272,86 @@ def test_preview_waits_for_a_zoom_write_to_show(monkeypatch):
     with opened(attached) as camera:
         camera.start_preview(PreviewRegion(0.2, 0.45, 0.1, 0.1))
         assert waits == [0.4]
+
+
+@pytest.mark.parametrize("name", IMAGE_AREAS)
+def test_an_unzoomed_preview_shows_the_whole_image_area(name):
+    area, frame = IMAGE_AREAS[name]
+    attached = FakeCamera(widgets=image_area(*area))
+    with opened(attached) as camera:
+        geometry = camera.start_preview()
+        assert geometry.region.is_full
+        assert (geometry.width, geometry.height) == frame
+
+
+# changeafarea written, and the crop's centre on the full sensor as matched
+# against an FX frame (z7_live_view.py area, 2026-11-10).
+MEASURED_CENTRES = [
+    ("DX", "2048", "2064x1376", (0.421, 0.422)),
+    ("DX", "2048", "6192x4128", (0.702, 0.704)),
+    ("DX", "1024", "6192x4128", (0.764, 0.765)),
+    ("5:4", "2048", "2064x1376", (0.333, 0.250)),
+    ("5:4", "2048", "6192x4128", (0.791, 0.750)),
+    ("5:4", "1024", "6192x4128", (0.832, 0.751)),
+    ("1:1", "2048", "2064x1376", (0.416, 0.250)),
+    ("1:1", "2048", "6192x4128", (0.708, 0.750)),
+    ("1:1", "1024", "6192x4128", (0.770, 0.751)),
+    ("16:9", "2048", "6192x4128", (0.748, 0.798)),
+    ("16:9", "1024", "6192x4128", (0.747, 0.829)),
+    ("FX", "2048", "2064x1376", (0.249, 0.250)),
+    ("FX", "1024", "6192x4128", (0.750, 0.751)),
+]
+
+
+@pytest.mark.parametrize(("name", "zoom", "centre", "measured"), MEASURED_CENTRES)
+def test_the_reported_zoom_matches_where_the_camera_put_it(
+    name, zoom, centre, measured
+):
+    (area_w, area_h), _ = IMAGE_AREAS[name]
+    at_x, at_y = (int(v) for v in centre.split("x"))
+    # A region centred where the script wrote changeafarea, sized for the zoom.
+    side_w, side_h = int(zoom) * 0.9 / area_w, int(zoom) * 0.6 / area_h
+    x = min(max(at_x / area_w - side_w / 2, 0.0), 1.0 - side_w)
+    y = min(max(at_y / area_h - side_h / 2, 0.0), 1.0 - side_h)
+    attached = FakeCamera(widgets=image_area(area_w, area_h))
+    with opened(attached) as camera:
+        camera.start_preview(PreviewRegion(x, y, side_w, side_h))
+        assert attached.widgets["liveviewzoomarea"].value == zoom
+        view_x, view_y, view_w, view_h = camera._view
+    # From fractions of the image area to fractions of the full sensor.
+    on_sensor_x = ((view_x + view_w / 2) * area_w + (8256 - area_w) / 2) / 8256
+    on_sensor_y = ((view_y + view_h / 2) * area_h + (5504 - area_h) / 2) / 5504
+    assert (on_sensor_x, on_sensor_y) == pytest.approx(measured, abs=0.005)
+    assert view_w * area_w == pytest.approx(int(zoom))
+
+
+def test_a_region_is_a_fraction_of_the_image_area_not_the_sensor():
+    attached = FakeCamera(widgets=image_area(5408, 3600))
+    with opened(attached) as camera:
+        # 0.3 of DX is 1,622 sensor pixels: inside the 2048 crop, as it
+        # wouldn't be on the full sensor.
+        camera.start_preview(PreviewRegion(0.1, 0.1, 0.3, 0.3))
+        assert attached.widgets["liveviewzoomarea"].value == "2048"
+        assert attached.af_areas == ["1352x900"]
+
+
+def test_a_region_too_tall_for_a_zoom_uses_the_next_one():
+    # In 16:9 the 3:2 crop is tall for the area: 0.25 of the height fits
+    # 2048 (1,365 rows) but 0.25 of the width (2,064 px) doesn't.
+    attached = FakeCamera(widgets=image_area(8256, 4640))
+    with opened(attached) as camera:
+        camera.start_preview(PreviewRegion(0.1, 0.1, 0.1, 0.25))
+        assert attached.widgets["liveviewzoomarea"].value == "2048"
+        camera.start_preview(PreviewRegion(0.1, 0.1, 0.1, 0.3))
+        assert attached.widgets["liveviewzoomarea"].value == "0"
+
+
+def test_a_body_without_imagesize_crops_on_the_host():
+    widgets = [w for w in NIKON_WIDGETS if w.name != "imagesize"]
+    attached = FakeCamera(widgets=widgets)
+    with opened(attached) as camera:
+        camera.start_preview(PreviewRegion(0.45, 0.45, 0.1, 0.1))
+        assert zoom_writes(attached) == []
 
 
 def test_stopping_puts_the_live_view_size_and_zoom_back():

@@ -117,24 +117,29 @@ class _LiveView:
     """How a body's live view zooms, for bodies where it was measured
     (docs/hardware/gphoto2-cameras.md, Z7 II zoom geometry).
 
-    ``liveviewzoomarea`` is the crop's width in sensor pixels, at the sensor's
-    aspect, and ``changeafarea`` its centre as ``"<x>x<y>"`` sensor pixels.
-
-    Measured with the FX image area only. Other image areas (DX, 5:4, 1:1,
-    16:9) change what captures and live view cover, and aren't handled yet.
+    Captures and unzoomed live view cover the image area (FX, DX, 5:4, 1:1 or
+    16:9), whose size in sensor pixels is the largest ``imagesize`` choice.
+    ``liveviewzoomarea`` is the crop's width in sensor pixels, always at
+    ``zoom_aspect``, and ``changeafarea`` its centre as ``"<x>x<y>"`` pixels of
+    the image area. The camera keeps the crop inside the image area.
 
     Attributes:
-        sensor: The sensor as ``(width, height)`` pixels.
-        sizes: Frame width of each ``liveviewsize``.
+        sizes: Frame width of each ``liveviewsize``; unzoomed frames fit a
+            4:3 box that wide.
+        zoom_aspect: Height over width of a zoomed crop.
     """
 
-    sensor: tuple[int, int]
     sizes: Mapping[str, int]
+    zoom_aspect: float = 2 / 3
+
+    def unzoomed(self, size: str, area: tuple[int, int]) -> tuple[float, float]:
+        """An unzoomed frame's width and height at a ``liveviewsize``."""
+        box = self.sizes[size]
+        width = min(box, 0.75 * box * area[0] / area[1])
+        return width, width * area[1] / area[0]
 
 
-_LIVE_VIEW = {
-    "Nikon Z7_2": _LiveView((8256, 5504), {"QVGA": 320, "VGA": 640, "XGA": 1024}),
-}
+_LIVE_VIEW = {"Nikon Z7_2": _LiveView({"QVGA": 320, "VGA": 640, "XGA": 1024})}
 # Preview sets these, so they're reported read-only on the bodies above.
 _PREVIEW_WIDGETS = ("liveviewsize", "liveviewzoomarea")
 _WHOLE_SENSOR = (0.0, 0.0, 1.0, 1.0)
@@ -216,6 +221,8 @@ class GPhoto2Camera(FileCamera):
         # Zoom levels on offer, widest last; empty where preview can't zoom.
         self._zoom_levels: tuple[int, ...] = ()
         self._size_choices: tuple[str, ...] = ()
+        # The image area captures cover, in sensor pixels.
+        self._image_area = (0, 0)
         # Live-view size and zoom as found, and as preview last set them.
         self._found: dict[str, WidgetValue] = {}
         self._set: dict[str, WidgetValue] = {}
@@ -528,27 +535,42 @@ class GPhoto2Camera(FileCamera):
         profile = _LIVE_VIEW.get(self._model or "")
         if profile is None or not self._zoom_levels:
             return _WHOLE_SENSOR
-        sensor_w, sensor_h = profile.sensor
-        longest = max(region.width, region.height)
-        # A level is the crop's width in sensor pixels; its height is in
-        # proportion, so it's the same fraction of both.
+        area_w, area_h = self._image_area
+        wide, tall = region.width * area_w, region.height * area_h
+        aspect = profile.zoom_aspect
         level = next(
-            (n for n in self._zoom_levels if longest <= n / sensor_w + _ZOOM_SLACK), 0
+            (
+                n
+                for n in self._zoom_levels
+                if wide <= n + _ZOOM_SLACK and tall <= n * aspect + _ZOOM_SLACK
+            ),
+            0,
         )
-        shown = level / sensor_w if level else 1.0
-        widths = sorted((profile.sizes[n], n) for n in self._size_choices)
-        aspect = sensor_h / sensor_w
-        pixels = max(region.width, region.height * aspect) / shown
+        # The part of the image area a zoomed frame shows, as fractions.
+        shown_w = min(level / area_w, 1.0) if level else 1.0
+        shown_h = min(level * aspect / area_h, 1.0) if level else 1.0
+
+        def longest(size: str) -> float:
+            """Pixels on the region's longest side at a live-view size."""
+            if level:
+                frame_w = float(profile.sizes[size])
+                frame_h = frame_w * aspect
+            else:
+                frame_w, frame_h = profile.unzoomed(size, self._image_area)
+            across = region.width / shown_w * frame_w
+            return max(across, region.height / shown_h * frame_h)
+
+        sizes = sorted(self._size_choices, key=profile.sizes.__getitem__)
         size = next(
-            (n for w, n in widths if max_size is not None and w * pixels >= max_size),
-            widths[-1][1],
+            (n for n in sizes if max_size is not None and longest(n) >= max_size),
+            sizes[-1],
         )
         wanted: dict[str, WidgetValue] = {
             "liveviewsize": size,
             "liveviewzoomarea": str(level),
         }
-        centre_x = (region.x + region.width / 2) * sensor_w
-        centre_y = (region.y + region.height / 2) * sensor_h
+        centre_x = (region.x + region.width / 2) * area_w
+        centre_y = (region.y + region.height / 2) * area_h
         if level:
             wanted["changeafarea"] = f"{round(centre_x)}x{round(centre_y)}"
         changed = {n: v for n, v in wanted.items() if self._set.get(n) != v}
@@ -569,10 +591,10 @@ class GPhoto2Camera(FileCamera):
             time.sleep(LIVE_VIEW_SETTLE_S)
         if not level:
             return _WHOLE_SENSOR
-        # The camera keeps the crop on the sensor.
-        x = min(max(centre_x / sensor_w - shown / 2, 0.0), 1.0 - shown)
-        y = min(max(centre_y / sensor_h - shown / 2, 0.0), 1.0 - shown)
-        return x, y, shown, shown
+        # The camera keeps the crop on the image area.
+        x = min(max(centre_x / area_w - shown_w / 2, 0.0), 1.0 - shown_w)
+        y = min(max(centre_y / area_h - shown_h / 2, 0.0), 1.0 - shown_h)
+        return x, y, shown_w, shown_h
 
     def _preview_frame(self, not_before: datetime | None) -> PreviewFrame:
         # Previews carry no time, so not_before goes by arrival: ask for the
@@ -658,9 +680,18 @@ class GPhoto2Camera(FileCamera):
     def _find_zoom(self, widgets: Mapping[str, Widget]) -> None:
         """Note the zoom levels and sizes of a body whose zoom is known."""
         profile = _LIVE_VIEW.get(self._model or "")
-        needed = (*_PREVIEW_WIDGETS, "changeafarea")
+        needed = (*_PREVIEW_WIDGETS, "changeafarea", "imagesize")
         if profile is None or any(name not in widgets for name in needed):
             return
+        areas = [
+            (int(m[1]), int(m[2]))
+            for choice in widgets["imagesize"].choices
+            if (m := re.fullmatch(r"(\d+)x(\d+)", choice))
+        ]
+        if not areas:
+            return
+        # The largest size on offer is the image area itself.
+        self._image_area = max(areas)
         levels = (c for c in widgets["liveviewzoomarea"].choices if c.isdigit())
         self._zoom_levels = tuple(sorted(n for n in map(int, levels) if n))
         sizes = widgets["liveviewsize"].choices

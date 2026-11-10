@@ -141,9 +141,9 @@ Scope as amended after Phase 1.
 - [x] Task 4.2: Report `liveviewzoomarea` and `liveviewsize` read-only through `settings()`.
   - Only on bodies in the table. Elsewhere preview doesn't touch them, so they stay writable.
 
-Open, from the maintainer (2026-11-10): the Z7 II's image area modes (DX, 5:4, 1:1, 16:9) change the native output size, and the table assumes FX. Discovery owed before this is right: which widget reports the image area; what unzoomed live view covers in each; whether `liveviewzoomarea` and `changeafarea` stay in full-sensor pixels. Then key the geometry by image area, with the region as a fraction of what captures cover, and crop on the host in any area not measured. A read-only widget listing was tried on 2026-11-10 and the camera didn't answer (`[-105] Unknown model`).
+Image areas (raised by the maintainer, 2026-11-10; fixed): the Z7 II's image area (FX, DX, 5:4, 1:1, 16:9) changes what captures and live view cover. All five were measured with `z7_live_view.py area`. The camera has no image-area widget, but the largest `imagesize` choice is the area's size in sensor pixels; the zoom crop stays N sensor pixels wide at 3:2; `changeafarea` counts from the area's corner; the crop is clamped to the area. The driver now reads the area at each preview start and treats the region as a fraction of it, and the table holds no sensor size. Its tests replay the 13 measured centres. On the camera in 16:9, reported regions were within 0.003 of a template match.
 
-Owed hardware checks (Task 5.4): the reported region against a template match at each zoom, including the clamp at the sensor edge; that 0.4 s is enough after a centre-only write; the size and zoom restore on stop.
+Owed hardware checks (Task 5.4): the driver's reported region on the camera in FX, DX, 5:4 and 1:1 (16:9 is done), including the clamp at the area's edge; that 0.4 s is enough after a centre-only write. The size and zoom restore on stop is verified.
 
 ### Verification
 

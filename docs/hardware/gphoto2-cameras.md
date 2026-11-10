@@ -234,30 +234,62 @@ These widget names are the prototype's. The Z7 II has `viewfinder`. **verified**
 driver no longer turns continuous AF off; it's the caller's setting.
 
 On the Z7 II (`Nikon Z7_2`), preview also drives the zoom, from the geometry measured
-below. Run on the fake only so far:
+below:
 
+- **Region:** a fraction of the **image area** (FX, DX, 5:4, 1:1 or 16:9), which is
+  what captures and unzoomed live view cover. The driver reads the area's size in
+  sensor pixels from the largest `imagesize` choice each time preview starts.
 - **Zoom:** the tightest `liveviewzoomarea` whose crop contains the preview region,
-  or `0` for a region wider than the `2048` crop (0.248 of the sensor).
-- **Centre:** `changeafarea`, at the region's centre in sensor pixels. It's written
-  after live view is running, and again with every zoom change.
+  or `0` for a region the `2048` crop can't hold.
+- **Centre:** `changeafarea`, at the region's centre in pixels of the image area. It's
+  written after live view is running, and again with every zoom change.
 - **Size:** `liveviewsize` `XGA` unless `max_size` asks for less; then the smallest
   size that still reaches it. The host crops the image to the region and strides it.
 - **Settling:** after any of those writes, `start_preview()` waits 0.4 s
   (`LIVE_VIEW_SETTLE_S`) before taking the image it reports, so moving a zoomed region
-  costs about that long.
+  costs about that long (0.46 s measured; 0.83 s when the zoom level changes too).
 - **Restore:** `stop_preview()` and `close()` put `liveviewsize` and
   `liveviewzoomarea` back as found. Both read as read-only settings on this body.
 - **Resolution:** full resolution is only available zoomed. `1024` at `XGA` is about one
-  image pixel per sensor pixel; the whole sensor is at most 1024 px wide.
+  image pixel per sensor pixel; the whole image area is at most 1024 px wide.
 
-Other bodies keep their live-view settings writable and are cropped on the host.
+Checked on the camera in 16:9 (2026-11-10): for regions of 0.3, 0.2, 0.1 and 0.05 of
+the area, the region the driver reported was within 0.003 of where the frame matched
+in an unzoomed frame, and the size and zoom were back at `VGA` and `0` after
+`stop_preview()`. **verified**. A fifth region over a blank part of the target
+couldn't be matched. The other four areas are checked against the measurements
+below in the driver's tests, not yet on the camera.
 
-**Image area: not handled yet.** The zoom geometry was measured with the FX image
-area (8256 × 5504). The Z7 II's other image areas (DX, 5:4, 1:1, 16:9) change what a
-capture covers, so in those the driver's region is **wrong**: it still assumes the
-full sensor. Which widget reports the image area, what unzoomed live view covers in
-each, and whether `liveviewzoomarea` and `changeafarea` stay in full-sensor pixels are
-all **unknown**.
+Other bodies, and a Z7 II without `imagesize`, keep their live-view settings writable
+and are cropped on the host.
+
+**Image areas** (macOS, firmware V1.62, 2026-11-10, `z7_live_view.py area` once per
+area, matched against an FX frame with `z7_afmap_match.py --reference`). The camera has
+no widget for the image area itself: it's set on the body (Photo shooting menu, Choose
+image area), and shows over USB only as the sizes `imagesize` and `rawimagesize`
+offer. **verified**:
+
+| Image area | `imagesize` choices | On the sensor | Unzoomed `XGA` frame |
+|---|---|---|---|
+| FX | `8256x5504`, `6192x4128`, `4128x2752` | all of it | 1024 × 680 |
+| DX | `5408x3600`, `4048x2696`, `2704x1800` | centred, 0.655 of the width and height | 1024 × 680 |
+| 5:4 | `6880x5504`, `5152x4120`, `3440x2752` | centred, 0.833 of the width | 960 × 768 |
+| 1:1 | `5504x5504`, `4128x4128`, `2752x2752` | centred, 0.667 of the width | 768 × 768 |
+| 16:9 | `8256x4640`, `6192x3480`, `4128x2320` | centred, 0.843 of the height | 1024 × 576 |
+
+- Unzoomed live view shows the image area, fitted in a 4:3 box (1024 × 768 at `XGA`).
+- A zoomed frame is always 1024 × 680 at `XGA`, and the crop is always
+  `liveviewzoomarea` sensor pixels wide at 3:2, whatever the area's shape: `2048`
+  covered 0.246 of the full sensor's width and height in every area.
+- `changeafarea` counts pixels **from the image area's top-left corner**, not the
+  sensor's. `2064x1376` centred the crop at (0.25, 0.25) of the full sensor in FX,
+  (0.42, 0.42) in DX, (0.33, 0.25) in 5:4 and (0.42, 0.25) in 1:1.
+- The crop is clamped to the **image area**: `6192x4128` at `2048` stopped at the
+  area's far edge in DX, 5:4, 1:1 and 16:9.
+- Eleven centres measured across the four cropped areas fit this within 0.005 of the
+  sensor. Points over the blank middle of the target couldn't be matched.
+- The size choices also set the JPEG's pixel size (large, medium, small). The driver
+  uses only the largest, which is the area itself.
 
 - **Best effort.** Most bodies return previews without live view being switched on
   explicitly, so a failure to enable it is logged as a warning and not retried until the
@@ -299,8 +331,8 @@ all **unknown**.
     `512` 0.062. So at XGA (1024 px wide), `1024` is about one frame pixel per sensor
     pixel, `2048` halves, and `512` upsamples by 2. That one-to-one at `1024` is
     **inferred** from the sizes, not measured.
-  - **`changeafarea` sets the crop's centre**, as `"<x>x<y>"` in sensor pixels
-    (8256 × 5504): `2064x2752` centred the crop at (0.25, 0.50) of the frame,
+  - **`changeafarea` sets the crop's centre**, as `"<x>x<y>"` in pixels of the image
+    area (8256 × 5504 in FX, where this was measured; see Image areas above): `2064x2752` centred the crop at (0.25, 0.50) of the frame,
     `6192x5504` at (0.75, near the bottom), for every zoom level. Near an edge the
     crop is clamped to stay on the sensor (`0x0` gave a crop at the top-left corner).
   - `changeafarea` is write-only in effect: it reads back `0x0` after every write.

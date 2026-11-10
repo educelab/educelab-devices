@@ -44,6 +44,7 @@ NIKON_WIDGETS = (
         section="capturesettings",
     ),
     _radio("continuousaf", "On", ["Off", "On"], section="capturesettings"),
+    _radio("imagesize", "8256x5504", ["8256x5504", "6192x4128", "4128x2752"]),
     _radio("liveviewsize", "VGA", ["QVGA", "VGA", "XGA"]),
     _radio("liveviewzoomarea", "0", ["0", "512", "1024", "2048"]),
     Widget(
@@ -88,6 +89,16 @@ NIKON_WIDGETS = (
 
 # The Z7 II's live-view frames (docs/hardware/gphoto2-cameras.md, Live view).
 LIVE_VIEW_SIZES = {"QVGA": (320, 212), "VGA": (640, 424), "XGA": (1024, 680)}
+
+
+def image_area(width, height):
+    """`NIKON_WIDGETS` with the camera set to another image area, e.g.
+    ``image_area(5408, 3600)`` for DX: ``imagesize`` lists that area's sizes."""
+    sizes = [f"{width * k // 4}x{height * k // 4}" for k in (4, 3, 2)]
+    return [
+        _radio("imagesize", sizes[0], sizes) if w.name == "imagesize" else w
+        for w in NIKON_WIDGETS
+    ]
 
 
 @functools.cache
@@ -269,8 +280,16 @@ class FakeCamera:
         if size is None:
             return jpeg()
         width, height = LIVE_VIEW_SIZES[str(size.value)]
-        if size.value == "QVGA" and self.widgets["liveviewzoomarea"].value != "0":
+        zoomed = self.widgets["liveviewzoomarea"].value != "0"
+        if size.value == "QVGA" and zoomed:
             height = 216
+        area = self.widgets.get("imagesize")
+        if area is not None and not zoomed:
+            # Unzoomed frames take the image area's shape, in a 4:3 box.
+            area_w, area_h = map(int, area.choices[0].split("x"))
+            if abs(area_w / area_h - 1.5) > 0.01:
+                fitted = min(width, round(0.75 * width * area_w / area_h))
+                width, height = fitted, round(fitted * area_h / area_w)
         return jpeg(width, height)
 
 

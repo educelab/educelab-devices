@@ -14,3 +14,11 @@ def discover_only(monkeypatch):
         )
 
     return limit
+
+
+@pytest.fixture(autouse=True)
+def no_live_view_settle(monkeypatch):
+    """Fakes show a zoom write at once, so don't wait for it."""
+    from educelab.devices.cameras import gphoto2
+
+    monkeypatch.setattr(gphoto2, "LIVE_VIEW_SETTLE_S", 0.0)

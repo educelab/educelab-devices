@@ -71,7 +71,7 @@ def test_refuses_to_overwrite_a_capture(attach, capsys, tmp_path):
 def test_grabs_a_preview(attach, capsys):
     attach(FakeCamera())
     assert main(["dslr", "--preview"]) == 0
-    assert "preview: 64x48" in capsys.readouterr().out
+    assert "preview: 1024x680" in capsys.readouterr().out
 
 
 def test_steps_the_focus_drive(attach, capsys):

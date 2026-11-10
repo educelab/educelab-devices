@@ -3,6 +3,7 @@
 Error codes, timing, and per-body quirks: docs/hardware/gphoto2-cameras.md.
 """
 
+import dataclasses
 import io
 import logging
 import re
@@ -103,6 +104,38 @@ FOCUS_LIMIT_MAX_STEPS = 1_000_000
 # prototype (docs/hardware/gphoto2-cameras.md#live-view).
 _VIEWFINDER_WIDGETS = ("viewfinder", "eosviewfinder", "d1a6")
 
+LIVE_VIEW_SETTLE_S = 0.4
+"""How long after a live-view size, zoom or centre write previews still show
+the old setting (0.2-0.4 s on the Z7 II)."""
+
+# Fractions pick up float error; don't let it choose a looser zoom.
+_ZOOM_SLACK = 1e-9
+
+
+@dataclass(frozen=True)
+class _LiveView:
+    """How a body's live view zooms, for bodies where it was measured
+    (docs/hardware/gphoto2-cameras.md, Z7 II zoom geometry).
+
+    ``liveviewzoomarea`` is the crop's width in sensor pixels, at the sensor's
+    aspect, and ``changeafarea`` its centre as ``"<x>x<y>"`` sensor pixels.
+
+    Attributes:
+        sensor: The sensor as ``(width, height)`` pixels.
+        sizes: Frame width of each ``liveviewsize``.
+    """
+
+    sensor: tuple[int, int]
+    sizes: Mapping[str, int]
+
+
+_LIVE_VIEW = {
+    "Nikon Z7_2": _LiveView((8256, 5504), {"QVGA": 320, "VGA": 640, "XGA": 1024}),
+}
+# Preview sets these, so they're reported read-only on the bodies above.
+_PREVIEW_WIDGETS = ("liveviewsize", "liveviewzoomarea")
+_WHOLE_SENSOR = (0.0, 0.0, 1.0, 1.0)
+
 _DOC = "docs/hardware/gphoto2-cameras.md"
 
 # Read one at a time at open(), which is quick; the whole tree takes seconds.
@@ -175,6 +208,14 @@ class GPhoto2Camera(FileCamera):
         self._crop: HostCrop | None = None
         # The live-view image shape the crop was planned for.
         self._planned_for: tuple[int, int] | None = None
+        # The part of the sensor live-view images show: (x, y, width, height).
+        self._view = _WHOLE_SENSOR
+        # Zoom levels on offer, widest last; empty where preview can't zoom.
+        self._zoom_levels: tuple[int, ...] = ()
+        self._size_choices: tuple[str, ...] = ()
+        # Live-view size and zoom as found, and as preview last set them.
+        self._found: dict[str, WidgetValue] = {}
+        self._set: dict[str, WidgetValue] = {}
 
     @property
     def info(self) -> DeviceInfo:
@@ -346,6 +387,8 @@ class GPhoto2Camera(FileCamera):
         session, self._session = self._session, None
         self._live_view = None
         self._preview_request = self._crop = None
+        self._zoom_levels = ()
+        self._found, self._set = {}, {}
         if session is None:
             return
         try:
@@ -423,6 +466,8 @@ class GPhoto2Camera(FileCamera):
             if native is None:
                 return None
             setting = native
+            if widget.name in _PREVIEW_WIDGETS and self._model in _LIVE_VIEW:
+                setting = dataclasses.replace(setting, read_only=True)
             to_native = _toggle_value if widget.kind == "toggle" else _same
         self._writers[setting.name] = (widget.name, to_native)
         self._sources[setting.name] = (widget.name, canonical)
@@ -443,19 +488,88 @@ class GPhoto2Camera(FileCamera):
         session = self._require_session()
         if self._preview_request is None:
             self._start_live_view(session)
+            if self._zoom_levels:
+                # The zoom centre is refused until live view is running.
+                self._grab_preview(session)
         self._preview_request = (region, max_size)
+        self._view = self._zoom(session, region, max_size)
         # The live-view size is only known from an image, so grab one.
         return self._plan_crop(self._grab_preview(session))
 
     def _stop_preview(self) -> None:
         live_view, self._live_view = self._live_view, None
         self._preview_request = self._crop = None
+        self._view = _WHOLE_SENSOR
+        session = self._require_session()
+        restore = {n: v for n, v in self._found.items() if self._set.get(n) != v}
+        self._zoom_levels = ()
+        self._found, self._set = {}, {}
+        if restore:
+            try:
+                session.set_config(restore)
+            except GPhoto2Error as exc:
+                logger.warning("%r could not restore %s: %s", self, restore, exc)
         if live_view is None:
             return
         try:
-            self._require_session().set_config({live_view: 0})
+            session.set_config({live_view: 0})
         except GPhoto2Error as exc:
             raise self._error(exc, "turning live view off") from exc
+
+    def _zoom(
+        self, session: Session, region: PreviewRegion, max_size: int | None
+    ) -> tuple[float, float, float, float]:
+        """Point live view at the tightest zoom that contains ``region``, at
+        the smallest size that still gives ``max_size`` pixels, and return the
+        part of the sensor its images show."""
+        profile = _LIVE_VIEW.get(self._model or "")
+        if profile is None or not self._zoom_levels:
+            return _WHOLE_SENSOR
+        sensor_w, sensor_h = profile.sensor
+        longest = max(region.width, region.height)
+        # A level is the crop's width in sensor pixels; its height is in
+        # proportion, so it's the same fraction of both.
+        level = next(
+            (n for n in self._zoom_levels if longest <= n / sensor_w + _ZOOM_SLACK), 0
+        )
+        shown = level / sensor_w if level else 1.0
+        widths = sorted((profile.sizes[n], n) for n in self._size_choices)
+        aspect = sensor_h / sensor_w
+        pixels = max(region.width, region.height * aspect) / shown
+        size = next(
+            (n for w, n in widths if max_size is not None and w * pixels >= max_size),
+            widths[-1][1],
+        )
+        wanted: dict[str, WidgetValue] = {
+            "liveviewsize": size,
+            "liveviewzoomarea": str(level),
+        }
+        centre_x = (region.x + region.width / 2) * sensor_w
+        centre_y = (region.y + region.height / 2) * sensor_h
+        if level:
+            wanted["changeafarea"] = f"{round(centre_x)}x{round(centre_y)}"
+        changed = {n: v for n, v in wanted.items() if self._set.get(n) != v}
+        try:
+            # The centre last, and again with every zoom change: the camera
+            # forgets it, and puts a new zoom on the AF point.
+            for name in ("liveviewsize", "liveviewzoomarea"):
+                if name in changed:
+                    session.set_config({name: changed[name]})
+            if level and changed:
+                session.set_config({"changeafarea": wanted["changeafarea"]})
+        except GPhoto2Error as exc:
+            raise self._error(exc, "zooming live view") from exc
+        self._set.update(wanted)
+        if not level:
+            self._set.pop("changeafarea", None)
+        if changed:
+            time.sleep(LIVE_VIEW_SETTLE_S)
+        if not level:
+            return _WHOLE_SENSOR
+        # The camera keeps the crop on the sensor.
+        x = min(max(centre_x / sensor_w - shown / 2, 0.0), 1.0 - shown)
+        y = min(max(centre_y / sensor_h - shown / 2, 0.0), 1.0 - shown)
+        return x, y, shown, shown
 
     def _preview_frame(self, not_before: datetime | None) -> PreviewFrame:
         # Previews carry no time, so not_before goes by arrival: ask for the
@@ -476,14 +590,33 @@ class GPhoto2Camera(FileCamera):
 
     def _plan_crop(self, pixels: npt.NDArray[np.uint8]) -> PreviewGeometry:
         """Plan the host crop for live-view images the size of ``pixels``,
-        which show the whole sensor."""
+        which show the `_view` part of the sensor."""
         assert self._preview_request is not None
         region, max_size = self._preview_request
         height, width = pixels.shape[:2]
         size = (width, height)
-        self._crop = host_crop(region, max_size, sensor=size, frame=size)
+        view_x, view_y, view_w, view_h = self._view
+        # The region within the images, cropped, then put back on the sensor.
+        x = min(max((region.x - view_x) / view_w, 0.0), 1.0)
+        y = min(max((region.y - view_y) / view_h, 0.0), 1.0)
+        within = PreviewRegion(
+            x,
+            y,
+            min(region.width / view_w, 1.0 - x),
+            min(region.height / view_h, 1.0 - y),
+        )
+        crop = host_crop(within, max_size, sensor=size, frame=size)
+        shown = crop.geometry.region
+        on_sensor = PreviewRegion(
+            view_x + shown.x * view_w,
+            view_y + shown.y * view_h,
+            shown.width * view_w,
+            shown.height * view_h,
+        )
+        geometry = dataclasses.replace(crop.geometry, region=on_sensor)
+        self._crop = dataclasses.replace(crop, geometry=geometry)
         self._planned_for = (height, width)
-        return self._crop.geometry
+        return geometry
 
     def _grab_preview(self, session: Session) -> npt.NDArray[np.uint8]:
         try:
@@ -508,6 +641,7 @@ class GPhoto2Camera(FileCamera):
         except GPhoto2Error as exc:
             logger.warning("%r could not read settings for live view: %s", self, exc)
             return
+        self._find_zoom(widgets)
         viewfinder = next((n for n in _VIEWFINDER_WIDGETS if n in widgets), None)
         if viewfinder is None:
             return
@@ -517,6 +651,26 @@ class GPhoto2Camera(FileCamera):
             logger.warning("%r could not turn live view on: %s", self, exc)
             return
         self._live_view = viewfinder
+
+    def _find_zoom(self, widgets: Mapping[str, Widget]) -> None:
+        """Note the zoom levels and sizes of a body whose zoom is known."""
+        profile = _LIVE_VIEW.get(self._model or "")
+        needed = (*_PREVIEW_WIDGETS, "changeafarea")
+        if profile is None or any(name not in widgets for name in needed):
+            return
+        levels = (c for c in widgets["liveviewzoomarea"].choices if c.isdigit())
+        self._zoom_levels = tuple(sorted(n for n in map(int, levels) if n))
+        sizes = widgets["liveviewsize"].choices
+        self._size_choices = tuple(n for n in sizes if n in profile.sizes)
+        if not self._size_choices:
+            self._zoom_levels = ()
+            return
+        self._found = {
+            name: value
+            for name in _PREVIEW_WIDGETS
+            if (value := widgets[name].value) is not None
+        }
+        self._set = dict(self._found)
 
     def _capture_files(self) -> list[CameraFile]:
         session = self._require_session()

@@ -43,6 +43,23 @@ from educelab.devices.errors import (
 from fakes.gphoto2 import FOLDER, NIKON_WIDGETS, FakeCamera, FakeLibrary, jpeg
 
 CENTER = PreviewRegion(0.25, 0.25, 0.5, 0.5)
+# A body with live view but no zoom the driver knows how to use.
+ZOOM_WIDGETS = ("liveviewsize", "liveviewzoomarea", "changeafarea")
+PLAIN_WIDGETS = [w for w in NIKON_WIDGETS if w.name not in ZOOM_WIDGETS]
+
+
+def plain():
+    return FakeCamera(widgets=PLAIN_WIDGETS)
+
+
+def zoom_writes(attached):
+    """What preview wrote to the live-view size, zoom and centre, in order."""
+    return [
+        (name, value)
+        for write in attached.writes
+        for name, value in write.items()
+        if name in ZOOM_WIDGETS
+    ]
 
 
 def fake_sdk():
@@ -1003,7 +1020,7 @@ def test_preview_is_a_decoded_rgb_array():
 
 
 def test_starting_preview_turns_live_view_on_once():
-    attached = FakeCamera()
+    attached = plain()
     with opened(attached) as camera:
         camera.start_preview()
         camera.preview_frame()
@@ -1013,7 +1030,7 @@ def test_starting_preview_turns_live_view_on_once():
 
 
 def test_stopping_preview_turns_live_view_off():
-    attached = FakeCamera()
+    attached = plain()
     with opened(attached) as camera:
         camera.start_preview()
         camera.stop_preview()
@@ -1023,7 +1040,7 @@ def test_stopping_preview_turns_live_view_off():
 
 
 def test_failing_to_turn_live_view_off_raises_and_ends_preview():
-    attached = FakeCamera()
+    attached = plain()
     with opened(attached) as camera:
         camera.start_preview()
         attached.fail_next("set_config", GP_ERROR)
@@ -1034,7 +1051,7 @@ def test_failing_to_turn_live_view_off_raises_and_ends_preview():
 
 @pytest.mark.parametrize("name", ["eosviewfinder", "d1a6"])
 def test_live_view_uses_the_viewfinder_widget_the_camera_has(name):
-    widgets = [w for w in NIKON_WIDGETS if w.name != "viewfinder"]
+    widgets = [w for w in PLAIN_WIDGETS if w.name != "viewfinder"]
     widgets.append(_gphoto2.Widget(name, name, "toggle", 0, section="actions"))
     attached = FakeCamera(widgets=widgets)
     with opened(attached) as camera:
@@ -1043,7 +1060,7 @@ def test_live_view_uses_the_viewfinder_widget_the_camera_has(name):
 
 
 def test_preview_works_without_a_live_view_widget():
-    attached = FakeCamera(widgets=[w for w in NIKON_WIDGETS if w.name != "viewfinder"])
+    attached = FakeCamera(widgets=[w for w in PLAIN_WIDGETS if w.name != "viewfinder"])
     with opened(attached) as camera:
         camera.start_preview()
         assert camera.preview_frame().pixels.ndim == 3
@@ -1052,7 +1069,7 @@ def test_preview_works_without_a_live_view_widget():
 
 
 def test_live_view_that_cannot_be_enabled_still_previews(caplog):
-    attached = FakeCamera()
+    attached = plain()
     with opened(attached) as camera:
         attached.fail_next("set_config", GP_ERROR)
         with caplog.at_level(logging.WARNING, logger=gphoto2.__name__):
@@ -1109,7 +1126,7 @@ def test_failed_preview_raises_device_error():
 
 
 def test_close_turns_live_view_off_and_reopen_turns_it_on_again():
-    attached = FakeCamera()
+    attached = plain()
     camera = opened(attached)
     camera.start_preview()
     camera.close()
@@ -1118,6 +1135,167 @@ def test_close_turns_live_view_off_and_reopen_turns_it_on_again():
     camera.start_preview()
     camera.close()
     assert attached.writes[-2:] == [{"viewfinder": 1}, {"viewfinder": 0}]
+
+
+# --- Live-view zoom (Z7 II) ---------------------------------------------------
+
+SENSOR = (8256, 5504)
+
+
+def test_a_whole_sensor_preview_uses_the_largest_live_view_size():
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        geometry = camera.start_preview()
+        assert zoom_writes(attached) == [("liveviewsize", "XGA")]
+        assert geometry.region.is_full
+        assert (geometry.width, geometry.height) == (1024, 680)
+        assert camera.preview_frame().pixels.shape == (680, 1024, 3)
+
+
+@pytest.mark.parametrize(
+    ("max_size", "size", "expected"),
+    [(None, "XGA", 1024), (2000, "XGA", 1024), (640, "VGA", 640), (200, "QVGA", 160)],
+)
+def test_max_size_picks_the_smallest_live_view_size_that_reaches_it(
+    max_size, size, expected
+):
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        geometry = camera.start_preview(max_size=max_size)
+        assert attached.widgets["liveviewsize"].value == size
+        assert geometry.width == expected
+
+
+@pytest.mark.parametrize(
+    ("side", "level"),
+    [(0.05, "512"), (512 / 8256, "512"), (0.1, "1024"), (0.2, "2048"), (0.3, "0")],
+)
+def test_a_region_uses_the_tightest_zoom_that_contains_it(side, level):
+    attached = FakeCamera()
+    region = PreviewRegion(0.4, 0.4, side, side)
+    with opened(attached) as camera:
+        geometry = camera.start_preview(region)
+        assert attached.widgets["liveviewzoomarea"].value == level
+        assert region.contains(geometry.region)
+        assert geometry.region.width == pytest.approx(side, abs=0.002)
+        frame = camera.preview_frame()
+        assert frame.pixels.shape[:2] == (geometry.height, geometry.width)
+
+
+def test_the_zoom_is_centred_on_the_region_in_sensor_pixels():
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        camera.start_preview(PreviewRegion(0.2, 0.45, 0.1, 0.1))
+        assert attached.af_areas == ["2064x2752"]
+        # Live view first: the centre is refused before it runs.
+        assert zoom_writes(attached) == [
+            ("liveviewsize", "XGA"),
+            ("liveviewzoomarea", "1024"),
+            ("changeafarea", "2064x2752"),
+        ]
+
+
+def test_a_zoomed_preview_is_one_frame_pixel_per_sensor_pixel_at_1024():
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        geometry = camera.start_preview(PreviewRegion(0.45, 0.45, 0.1, 0.1))
+    assert geometry.width == pytest.approx(0.1 * SENSOR[0], abs=2)
+    # The 1,024 x 680 frame is a touch short of the crop's 683 sensor rows.
+    assert geometry.height == pytest.approx(0.1 * SENSOR[1], abs=4)
+
+
+def test_a_zoom_near_the_edge_is_kept_on_the_sensor():
+    attached = FakeCamera()
+    region = PreviewRegion(0.95, 0.0, 0.05, 0.05)
+    with opened(attached) as camera:
+        geometry = camera.start_preview(region)
+        assert region.contains(geometry.region)
+        assert geometry.region.x + geometry.region.width == pytest.approx(1.0)
+        assert geometry.region.y == pytest.approx(0.0, abs=1e-3)
+        # The far corner of a 512 crop held against the top-right corner.
+        assert geometry.width == pytest.approx(0.05 * SENSOR[0] * 2, abs=3)
+
+
+def test_moving_a_zoomed_region_rewrites_only_the_centre():
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        camera.start_preview(PreviewRegion(0.2, 0.45, 0.1, 0.1))
+        attached.writes.clear()
+        geometry = camera.start_preview(PreviewRegion(0.7, 0.45, 0.1, 0.1))
+        assert zoom_writes(attached) == [("changeafarea", "6192x2752")]
+        assert camera.preview_frame().geometry == geometry
+
+
+def test_a_zoom_change_writes_the_centre_again():
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        camera.start_preview(PreviewRegion(0.2, 0.45, 0.1, 0.1))
+        attached.writes.clear()
+        camera.start_preview(PreviewRegion(0.225, 0.475, 0.05, 0.05))
+        assert zoom_writes(attached) == [
+            ("liveviewzoomarea", "512"),
+            ("changeafarea", "2064x2752"),
+        ]
+
+
+def test_the_same_preview_again_writes_nothing_and_does_not_wait(monkeypatch):
+    attached = FakeCamera()
+    waits = []
+    with opened(attached) as camera:
+        camera.start_preview(PreviewRegion(0.2, 0.45, 0.1, 0.1))
+        attached.writes.clear()
+        monkeypatch.setattr(gphoto2.time, "sleep", waits.append)
+        camera.start_preview(PreviewRegion(0.2, 0.45, 0.1, 0.1))
+        assert attached.writes == [] and waits == []
+
+
+def test_preview_waits_for_a_zoom_write_to_show(monkeypatch):
+    attached = FakeCamera()
+    waits = []
+    monkeypatch.setattr(gphoto2, "LIVE_VIEW_SETTLE_S", 0.4)
+    monkeypatch.setattr(gphoto2.time, "sleep", waits.append)
+    with opened(attached) as camera:
+        camera.start_preview(PreviewRegion(0.2, 0.45, 0.1, 0.1))
+        assert waits == [0.4]
+
+
+def test_stopping_puts_the_live_view_size_and_zoom_back():
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        camera.start_preview(PreviewRegion(0.2, 0.45, 0.1, 0.1))
+        camera.stop_preview()
+        assert attached.widgets["liveviewsize"].value == "VGA"
+        assert attached.widgets["liveviewzoomarea"].value == "0"
+        assert attached.writes[-1] == {"viewfinder": 0}
+
+
+def test_live_view_size_and_zoom_are_read_only_where_preview_sets_them():
+    with opened(FakeCamera()) as camera:
+        settings = camera.settings()
+        assert settings["liveviewsize"].read_only
+        assert settings["liveviewzoomarea"].read_only
+        with pytest.raises(ValueError):
+            camera.set_setting("liveviewzoomarea", "512")
+
+
+def test_a_body_whose_zoom_is_unknown_keeps_its_settings_and_crops_on_the_host():
+    attached = FakeCamera(model="Nikon D850")
+    with opened(attached) as camera:
+        assert not camera.settings()["liveviewzoomarea"].read_only
+        geometry = camera.start_preview(PreviewRegion(0.45, 0.45, 0.1, 0.1))
+        assert zoom_writes(attached) == []
+        assert (geometry.width, geometry.height) == (64, 42)
+
+
+def test_a_failed_zoom_write_ends_preview():
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        camera.start_preview()
+        attached.fail_next("set_config", GP_ERROR)
+        with pytest.raises(DeviceError, match="zooming"):
+            camera.start_preview(PreviewRegion(0.2, 0.45, 0.1, 0.1))
+        assert camera.preview is None
+        assert attached.widgets["liveviewsize"].value == "VGA"
 
 
 def test_close_without_preview_leaves_live_view_alone():

@@ -233,6 +233,25 @@ it with the time it arrived.
 These widget names are the prototype's. The Z7 II has `viewfinder`. **verified**. The
 driver no longer turns continuous AF off; it's the caller's setting.
 
+On the Z7 II (`Nikon Z7_2`), preview also drives the zoom, from the geometry measured
+below. Run on the fake only so far:
+
+- **Zoom:** the tightest `liveviewzoomarea` whose crop contains the preview region,
+  or `0` for a region wider than the `2048` crop (0.248 of the sensor).
+- **Centre:** `changeafarea`, at the region's centre in sensor pixels. It's written
+  after live view is running, and again with every zoom change.
+- **Size:** `liveviewsize` `XGA` unless `max_size` asks for less; then the smallest
+  size that still reaches it. The host crops the image to the region and strides it.
+- **Settling:** after any of those writes, `start_preview()` waits 0.4 s
+  (`LIVE_VIEW_SETTLE_S`) before taking the image it reports, so moving a zoomed region
+  costs about that long.
+- **Restore:** `stop_preview()` and `close()` put `liveviewsize` and
+  `liveviewzoomarea` back as found. Both read as read-only settings on this body.
+- **Resolution:** full resolution is only available zoomed. `1024` at `XGA` is about one
+  image pixel per sensor pixel; the whole sensor is at most 1024 px wide.
+
+Other bodies keep their live-view settings writable and are cropped on the host.
+
 - **Best effort.** Most bodies return previews without live view being switched on
   explicitly, so a failure to enable it is logged as a warning and not retried until the
   next `open()`. **assumed**, from the prototype.

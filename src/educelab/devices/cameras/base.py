@@ -1,10 +1,12 @@
 """The camera roles and their value types."""
 
+import math
 import os
 from abc import abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
+from numbers import Integral, Real
 from pathlib import Path, PurePath
 from typing import Any
 
@@ -30,6 +32,8 @@ __all__ = [
     "FileCamera",
     "Frame",
     "FrameCamera",
+    "PreviewGeometry",
+    "PreviewRegion",
     "Rounding",
     "Setting",
     "SettingValue",
@@ -60,6 +64,121 @@ CANONICAL_UNITS: Mapping[str, str | None] = {
     SENSOR_HEIGHT: "px",
 }
 """Unit of each canonical setting. Settings not listed use the camera's own name."""
+
+
+# Slack for float error when a region's far edge lands on the sensor edge.
+_EDGE_TOLERANCE = 1e-9
+
+
+@dataclass(frozen=True)
+class PreviewRegion:
+    """The part of the sensor a preview shows, in fractions of the sensor.
+
+    ``x`` and ``y`` are the top-left corner and ``width`` and ``height`` the
+    size, each from 0.0 to 1.0 of the sensor's width or height. The default is
+    the whole sensor.
+
+    Raises:
+        TypeError: A field isn't a real number.
+        ValueError: The box is empty or reaches outside the sensor.
+    """
+
+    x: float = 0.0
+    y: float = 0.0
+    width: float = 1.0
+    height: float = 1.0
+
+    def __post_init__(self) -> None:
+        for name in ("x", "y", "width", "height"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, Real):
+                raise TypeError(
+                    f"preview region {name} must be a number, not "
+                    f"{type(value).__name__}"
+                )
+            object.__setattr__(self, name, float(value))
+        x, y, w, h = self.x, self.y, self.width, self.height
+        if not all(math.isfinite(v) for v in (x, y, w, h)):
+            raise ValueError(f"preview region must be finite, not {self}")
+        if x < 0 or y < 0 or w <= 0 or h <= 0:
+            raise ValueError(
+                f"preview region needs x, y >= 0 and a positive size, not {self}"
+            )
+        if x + w > 1 + _EDGE_TOLERANCE or y + h > 1 + _EDGE_TOLERANCE:
+            raise ValueError(f"preview region reaches outside the sensor: {self}")
+
+    @classmethod
+    def of(
+        cls, value: "PreviewRegion | tuple[float, float, float, float] | None"
+    ) -> "PreviewRegion":
+        """A region from a region, an ``(x, y, width, height)`` tuple, or
+        ``None`` for the whole sensor."""
+        if value is None:
+            return cls()
+        if isinstance(value, PreviewRegion):
+            return value
+        if not isinstance(value, tuple | list) or len(value) != 4:
+            raise TypeError(
+                "preview region must be a PreviewRegion or (x, y, width, height), "
+                f"not {value!r}"
+            )
+        return cls(*value)
+
+    @property
+    def is_full(self) -> bool:
+        """Whether the region is the whole sensor."""
+        return self == PreviewRegion()
+
+    def contains(self, other: "PreviewRegion") -> bool:
+        """Whether ``other`` lies within this region."""
+        tol = _EDGE_TOLERANCE
+        return (
+            other.x >= self.x - tol
+            and other.y >= self.y - tol
+            and other.x + other.width <= self.x + self.width + tol
+            and other.y + other.height <= self.y + self.height + tol
+        )
+
+
+@dataclass(frozen=True)
+class PreviewGeometry:
+    """What a camera applied for a preview.
+
+    Attributes:
+        region: The sensor region the preview shows, after the camera rounded
+            the requested one to what it can deliver.
+        width: Width of the preview images, in pixels.
+        height: Height of the preview images, in pixels.
+    """
+
+    region: PreviewRegion
+    width: int
+    height: int
+
+    def __post_init__(self) -> None:
+        if self.width <= 0 or self.height <= 0:
+            raise ValueError(
+                f"preview output must be at least 1 x 1, not {self.width} x "
+                f"{self.height}"
+            )
+
+
+def check_max_size(max_size: int | None) -> int | None:
+    """Check a preview's ``max_size``: a positive int, or ``None`` for no cap.
+
+    Raises:
+        TypeError: ``max_size`` isn't an int or ``None``.
+        ValueError: ``max_size`` is less than 1.
+    """
+    if max_size is None:
+        return None
+    if isinstance(max_size, bool) or not isinstance(max_size, Integral):
+        raise TypeError(
+            f"max_size must be an int or None, not {type(max_size).__name__}"
+        )
+    if max_size < 1:
+        raise ValueError(f"max_size must be at least 1, not {max_size}")
+    return int(max_size)
 
 
 @dataclass(frozen=True, eq=False)

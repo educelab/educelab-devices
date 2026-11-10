@@ -64,8 +64,9 @@ Lens caps were on for the 2026-11-10 GenICam runs, and the room lights changed d
 
 ### Tasks
 
-- [ ] Task 2.1: Add `PreviewGeometry` (region in sensor fractions, output `width`/`height`) and region validation in `cameras/base.py`, with unit tests.
-- [ ] Task 2.2: Write the preview contract tests in `tests/contracts/cameras.py`. They cover start, reconfigure, stop as a no-op, `close()` ending preview, `preview_frame()` raising outside preview, capture raising during preview, the reported region lying within the requested one, the output staying within `max_size`, `not_before`, and setting changes applying during preview.
+- [x] Task 2.1: Add `PreviewGeometry` (region in sensor fractions, output `width`/`height`) and region validation in `cameras/base.py`, with unit tests.
+  - The region type is `PreviewRegion(x, y, width, height)`, the glossary's term, as a frozen dataclass; `PreviewRegion.of()` also takes a 4-tuple or `None` (the whole sensor). `check_max_size()` validates `max_size`.
+- [~] Task 2.2: Write the preview contract tests in `tests/contracts/cameras.py`. They cover start, reconfigure, stop as a no-op, `close()` ending preview, `preview_frame()` raising outside preview, capture raising during preview, the reported region lying within the requested one, the output staying within `max_size`, `not_before`, and setting changes applying during preview.
 - [ ] Task 2.3: Add `start_preview()`, `stop_preview()`, the `preview` property and `preview_frame(not_before=None)` to `Camera`, with driver hooks. Make `capture_frame()`/`capture_files()` refuse during preview.
 - [ ] Task 2.4: Simulated cameras: implement region and `max_size` on the host, and pass the contract.
 - [ ] Task 2.5: GenICam core: implement preview with host crop and stride, and `not_before` through `_grab()`. Pass the contract on the fakes for all three backends.

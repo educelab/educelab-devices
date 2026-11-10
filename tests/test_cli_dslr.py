@@ -71,7 +71,33 @@ def test_refuses_to_overwrite_a_capture(attach, capsys, tmp_path):
 def test_grabs_a_preview(attach, capsys):
     attach(FakeCamera())
     assert main(["dslr", "--preview"]) == 0
-    assert "preview: 1024x680" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "preview: 1024x680 RGB8, region 0,0,1,1" in out
+    assert "1 frame(s)" in out
+
+
+def test_previews_a_region_at_a_bounded_size(attach, capsys):
+    (camera,) = attach(FakeCamera())
+    args = ["--preview", "5", "--region", "0.4,0.4,0.1,0.1", "--max-size", "200"]
+    assert main(["dslr", *args]) == 0
+    out = capsys.readouterr().out
+    # Rounded inward to whole pixels of the zoomed frame.
+    assert "region 0.4,0.4,0.1,0.0999" in out and "5 frame(s)" in out
+    assert camera.widgets["liveviewzoomarea"].value == "0"
+    assert {"liveviewzoomarea": "1024"} in camera.writes
+
+
+def test_a_region_off_the_sensor_is_reported(attach, capsys):
+    attach(FakeCamera())
+    assert main(["dslr", "--preview", "--region", "0.9,0.9,0.5,0.5"]) == 1
+    assert "region" in capsys.readouterr().err
+
+
+def test_a_malformed_region_is_a_usage_error(attach, capsys):
+    attach(FakeCamera())
+    with pytest.raises(SystemExit):
+        main(["dslr", "--preview", "--region", "0.4,0.4"])
+    assert "X,Y,W,H" in capsys.readouterr().err
 
 
 def test_steps_the_focus_drive(attach, capsys):

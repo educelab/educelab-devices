@@ -20,6 +20,7 @@ __all__ = [
     "FocusLimitReached",
     "NotConnected",
     "PositionError",
+    "PreviewError",
     "StreamStalled",
     "import_optional",
 ]
@@ -71,6 +72,14 @@ class PositionError(DeviceError):
 
     Raised for targets outside an axis's limits, moves on a stage that needs
     homing first, and moves interrupted by `stop()`.
+    """
+
+
+class PreviewError(DeviceError):
+    """A camera call doesn't fit the camera's preview state.
+
+    Raised for `preview_frame()` when the camera isn't previewing, and for
+    captures while it is. Stop the preview, capture, and start it again.
     """
 
 

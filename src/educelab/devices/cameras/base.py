@@ -1,5 +1,6 @@
 """The camera roles and their value types."""
 
+import logging
 import math
 import os
 from abc import abstractmethod
@@ -14,6 +15,7 @@ import numpy as np
 import numpy.typing as npt
 
 from educelab.devices.device import Device, synchronized
+from educelab.devices.errors import PreviewError
 from educelab.devices.settings import Rounding, Setting, SettingValue
 
 __all__ = [
@@ -38,6 +40,8 @@ __all__ = [
     "Setting",
     "SettingValue",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 # Canonical setting names mean the same thing on every camera.
@@ -181,6 +185,10 @@ def check_max_size(max_size: int | None) -> int | None:
     return int(max_size)
 
 
+PreviewImage = npt.NDArray[np.uint8]
+"""An 8-bit preview image, ``(height, width)`` or ``(height, width, 3)``."""
+
+
 @dataclass(frozen=True, eq=False)
 class Frame:
     """A decoded pixel array from a frame camera.
@@ -252,8 +260,15 @@ class Camera(Device):
     """A device that acquires images from a single sensor.
 
     Use `FrameCamera` or `FileCamera`, depending on what the hardware produces.
-    Drivers implement `_settings()`, `_set_setting()`, and `_preview_frame()`.
+    Drivers implement `_settings()`, `_set_setting()`, and the preview hooks
+    `_start_preview()`, `_stop_preview()` and `_preview_frame()`.
+
+    Preview is an explicit state (ADR 0007): `start_preview()` enters it,
+    `stop_preview()` and `close()` leave it, and captures refuse to run while
+    it's on.
     """
+
+    _preview: PreviewGeometry | None = None
 
     @synchronized
     def settings(self) -> dict[str, Setting]:
@@ -273,6 +288,8 @@ class Camera(Device):
     def set_setting(self, name: str, value: SettingValue) -> None:
         """Change a setting after checking it against the camera's limits.
 
+        Settings can change during preview and apply to preview images.
+
         Raises:
             KeyError: The camera has no such setting.
             TypeError: ``value`` has the wrong type.
@@ -280,10 +297,104 @@ class Camera(Device):
         """
         self._set_setting(name, self._setting(name).validate(value))
 
+    @property
+    def preview(self) -> PreviewGeometry | None:
+        """What the current preview applied, or ``None`` when not previewing."""
+        return self._preview
+
     @synchronized
-    def preview_frame(self) -> npt.NDArray[np.uint8]:
-        """A low-resolution image for framing and focusing, not for capture."""
-        return self._preview_frame()
+    def start_preview(
+        self,
+        region: PreviewRegion | tuple[float, float, float, float] | None = None,
+        max_size: int | None = 1280,
+    ) -> PreviewGeometry:
+        """Start previewing, or change the preview if one is running.
+
+        Args:
+            region: The part of the sensor to show, as a `PreviewRegion` or an
+                ``(x, y, width, height)`` tuple in fractions of the sensor.
+                ``None`` shows the whole sensor.
+            max_size: Longest side of the preview images, in pixels, or
+                ``None`` for no reduction.
+
+        Returns:
+            The region and image size the camera applied. The region lies
+            within the requested one.
+
+        Raises:
+            TypeError, ValueError: ``region`` or ``max_size`` is invalid. The
+                preview is left as it was.
+            DeviceError: The camera couldn't apply the preview. Preview ends.
+        """
+        wanted = PreviewRegion.of(region)
+        cap = check_max_size(max_size)
+        try:
+            geometry = self._start_preview(wanted, cap)
+        except BaseException:
+            self._end_preview()
+            raise
+        self._preview = geometry
+        return geometry
+
+    @synchronized
+    def stop_preview(self) -> None:
+        """Stop previewing. Does nothing when not previewing."""
+        if self._preview is None:
+            return
+        try:
+            self._stop_preview()
+        finally:
+            self._preview = None
+
+    @synchronized
+    def preview_frame(self, *, not_before: datetime | None = None) -> PreviewImage:
+        """The next preview image, for framing and focusing, never a capture.
+
+        Args:
+            not_before: Earliest acceptable image time, as a timezone-aware
+                datetime. Pass the moment the scene or lens was ready (e.g.
+                after a focus step) to skip images taken before it.
+
+        Returns:
+            An 8-bit image, ``(height, width)`` or ``(height, width, 3)``, at
+            the size `preview` reports.
+
+        Raises:
+            PreviewError: The camera isn't previewing.
+        """
+        if self._preview is None:
+            raise PreviewError(f"{self!r} isn't previewing; call start_preview() first")
+        _check_not_before(not_before)
+        return self._preview_frame(not_before)
+
+    def close(self) -> None:
+        """Disconnect from the device, ending any preview first. Does nothing
+        if already closed."""
+        with self._lock:
+            if self._is_open and self._preview is not None:
+                self._end_preview()
+            super().close()
+
+    def _end_preview(self) -> None:
+        """Leave preview on the way out of an error or `close()`, logging
+        rather than raising a failure to stop."""
+        try:
+            self._stop_preview()
+        except Exception as exc:  # noqa: BLE001 - close() and errors must go on
+            logger.warning("%r: stopping preview failed: %s", self, exc)
+        finally:
+            self._preview = None
+
+    def _require_not_previewing(self, call: str) -> None:
+        if self._preview is not None:
+            raise PreviewError(
+                f"{self!r} is previewing; call stop_preview() before {call}(), "
+                "then start_preview() again"
+            )
+
+    def _reset_state(self) -> None:
+        super()._reset_state()
+        self._preview = None
 
     @abstractmethod
     def _settings(self) -> Mapping[str, Setting]: ...
@@ -298,7 +409,18 @@ class Camera(Device):
     def _set_setting(self, name: str, value: SettingValue) -> None: ...
 
     @abstractmethod
-    def _preview_frame(self) -> npt.NDArray[np.uint8]: ...
+    def _start_preview(
+        self, region: PreviewRegion, max_size: int | None
+    ) -> PreviewGeometry:
+        """Apply a preview and report what was applied. Called while
+        previewing too (`preview` is the old geometry), to reconfigure."""
+
+    @abstractmethod
+    def _stop_preview(self) -> None:
+        """Leave preview and restore whatever capture needs."""
+
+    @abstractmethod
+    def _preview_frame(self, not_before: datetime | None) -> PreviewImage: ...
 
 
 class FrameCamera(Camera):
@@ -330,19 +452,14 @@ class FrameCamera(Camera):
 
         Raises:
             DeviceTimeout: No acceptable frame arrived in time.
+            PreviewError: The camera is previewing.
         """
         if timeout is None:
             timeout = self.capture_timeout
         elif not timeout > 0:
             raise ValueError(f"timeout must be positive, not {timeout}")
-        if not_before is not None:
-            if not isinstance(not_before, datetime):
-                raise TypeError(
-                    "not_before must be a timezone-aware datetime, not "
-                    f"{type(not_before).__name__}; use datetime.now(UTC)"
-                )
-            if not_before.tzinfo is None:
-                raise ValueError("not_before must be timezone-aware")
+        _check_not_before(not_before)
+        self._require_not_previewing("capture_frame")
         return self._capture_frame(not_before, timeout)
 
     @abstractmethod
@@ -358,8 +475,25 @@ class FileCamera(Camera):
 
     @synchronized
     def capture_files(self) -> list[CameraFile]:
-        """Capture once and return every file the camera produced for it."""
+        """Capture once and return every file the camera produced for it.
+
+        Raises:
+            PreviewError: The camera is previewing.
+        """
+        self._require_not_previewing("capture_files")
         return list(self._capture_files())
 
     @abstractmethod
     def _capture_files(self) -> list[CameraFile]: ...
+
+
+def _check_not_before(not_before: datetime | None) -> None:
+    if not_before is None:
+        return
+    if not isinstance(not_before, datetime):
+        raise TypeError(
+            "not_before must be a timezone-aware datetime, not "
+            f"{type(not_before).__name__}; use datetime.now(UTC)"
+        )
+    if not_before.tzinfo is None:
+        raise ValueError("not_before must be timezone-aware")

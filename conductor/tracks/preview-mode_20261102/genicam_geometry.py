@@ -82,7 +82,7 @@ def node_type(conn, name: str) -> str | None:
     try:
         if conn.enum_entries(name):
             return "enum"
-    except (DeviceError, TypeError, ValueError):
+    except (DeviceError, TypeError, ValueError, AttributeError):
         pass
     probes = (
         ("int", conn.int_range),
@@ -385,6 +385,23 @@ def selector_values(conn, selector: str) -> list:
 def factors(conn, name: str) -> list[int]:
     if not (conn.has(name) and conn.is_writable(name)):
         return []
+    return _factors(conn, name)
+
+
+def paused_factors(camera, conn, name: str) -> list[int]:
+    """Factors for a node that may only be writable with acquisition stopped
+    (Spinnaker locks binning and decimation while streaming)."""
+    if not conn.has(name):
+        return []
+    if conn.is_writable(name):
+        return _factors(conn, name)
+    with camera._acquisition_paused():
+        if not conn.is_writable(name):
+            return []
+        return _factors(conn, name)
+
+
+def _factors(conn, name: str) -> list[int]:
     low, high, inc = conn.int_range(name)
     return [f for f in (1, 2, 3, 4, 8) if low <= f <= high and (f - low) % inc == 0]
 
@@ -403,11 +420,13 @@ def check_reduction(camera, conn, kind: str) -> None:
             modes = list(conn.enum_entries(mode_node))
         # Some cameras (the CM3) expose only one axis as writable and link
         # the other to it; drive the writable ones and report both.
-        axes = [n for n in (h, v) if factors(conn, n)]
+        steps = {n: paused_factors(camera, conn, n) for n in (h, v)}
+        axes = [n for n in (h, v) if steps[n]]
+        print(f"  writable (streaming or paused): {axes or 'none'}")
         for mode in modes:
             base = None
-            for f in factors(conn, axes[0]) if axes else []:
-                values = {n: f for n in axes if f in factors(conn, n)}
+            for f in steps[axes[0]] if axes else []:
+                values = {n: f for n in axes if f in steps[n]}
                 if mode is not None:
                     values[mode_node] = mode
                     if conn.has(f"{kind}VerticalMode"):

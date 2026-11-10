@@ -95,7 +95,7 @@ def test_color_camera_starts_in_rgb8_with_distinct_channels():
         red, green, blue = frame.pixels.reshape(-1, 3).mean(axis=0)
         assert red > green > blue
         camera.start_preview()
-        assert camera.preview_frame().ndim == 3
+        assert camera.preview_frame().pixels.ndim == 3
         camera.stop_preview()
         camera.set_setting(PIXEL_FORMAT, "Mono8")
         assert camera.capture_frame().pixels.shape == (24, 32)
@@ -232,10 +232,10 @@ def test_preview_shows_the_requested_part_of_the_frame():
     # is brighter than the whole frame.
     with SimulatedCamera(width=64, height=48) as camera:
         camera.start_preview(max_size=None)
-        whole = camera.preview_frame().mean()
+        whole = camera.preview_frame().pixels.mean()
         geometry = camera.start_preview((0.5, 0.5, 0.5, 0.5), max_size=None)
         assert (geometry.width, geometry.height) == (32, 24)
-        assert camera.preview_frame().mean() > whole
+        assert camera.preview_frame().pixels.mean() > whole
 
 
 def test_preview_of_a_cropped_sensor_reports_the_frame_area():
@@ -249,6 +249,6 @@ def test_preview_follows_exposure_changes():
     with SimulatedCamera() as camera:
         camera.start_preview(max_size=64)
         camera.set_setting(EXPOSURE_TIME, 0.001)
-        dim = camera.preview_frame().mean()
+        dim = camera.preview_frame().pixels.mean()
         camera.set_setting(EXPOSURE_TIME, 0.005)
-        assert camera.preview_frame().mean() > dim
+        assert camera.preview_frame().pixels.mean() > dim

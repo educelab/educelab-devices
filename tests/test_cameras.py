@@ -3,7 +3,6 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 
 import numpy as np
-import numpy.typing as npt
 import pytest
 
 from educelab.devices import DeviceInfo
@@ -13,6 +12,7 @@ from educelab.devices.cameras import (
     FileCamera,
     Frame,
     FrameCamera,
+    PreviewFrame,
     PreviewGeometry,
     PreviewRegion,
     Setting,
@@ -66,9 +66,12 @@ class StubCamera(FrameCamera):
         if self.fail_stop:
             raise DeviceError("stop failed")
 
-    def _preview_frame(self, not_before: datetime | None) -> npt.NDArray[np.uint8]:
+    def _preview_frame(self, not_before: datetime | None) -> PreviewFrame:
         self.preview_calls.append(("frame", not_before))
-        return np.zeros((4, 4), dtype=np.uint8)
+        assert self.preview is not None
+        return PreviewFrame(
+            np.zeros((4, 4), np.uint8), "Mono8", datetime.now(UTC), self.preview
+        )
 
     def _capture_frame(self, not_before: datetime | None, timeout: float) -> Frame:
         self.capture_args = (not_before, timeout)

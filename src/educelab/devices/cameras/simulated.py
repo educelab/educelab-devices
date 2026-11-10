@@ -25,8 +25,8 @@ from educelab.devices.cameras.base import (
     FileCamera,
     Frame,
     FrameCamera,
+    PreviewFrame,
     PreviewGeometry,
-    PreviewImage,
     PreviewRegion,
     Setting,
     SettingValue,
@@ -171,11 +171,18 @@ class SimulatedCamera(FrameCamera):
     def _stop_preview(self) -> None:
         self._crop = None
 
-    def _preview_frame(self, not_before: datetime | None) -> PreviewImage:
+    def _preview_frame(self, not_before: datetime | None) -> PreviewFrame:
         assert self._crop is not None
         self._run_auto()
         time.sleep(_wait_for(not_before) + _number(self._store[EXPOSURE_TIME]))
-        return _quantize(self._crop.apply(self._render()), np.uint8)
+        pixel_format = str(self._store[PIXEL_FORMAT].value)
+        dtype = np.uint16 if pixel_format == "Mono16" else np.uint8
+        return PreviewFrame(
+            _quantize(self._crop.apply(self._render()), dtype),
+            pixel_format,
+            datetime.now(UTC),
+            self._crop.geometry,
+        )
 
     def _capture_frame(self, not_before: datetime | None, timeout: float) -> Frame:
         self._run_auto()
@@ -319,10 +326,15 @@ class SimulatedFileCamera(FileCamera):
     def _stop_preview(self) -> None:
         self._crop = None
 
-    def _preview_frame(self, not_before: datetime | None) -> PreviewImage:
+    def _preview_frame(self, not_before: datetime | None) -> PreviewFrame:
         assert self._crop is not None
         time.sleep(_wait_for(not_before) + self._exposure())
-        return _quantize(self._crop.apply(self._render()), np.uint8)
+        return PreviewFrame(
+            _quantize(self._crop.apply(self._render()), np.uint8),
+            "Mono8",
+            datetime.now(UTC),
+            self._crop.geometry,
+        )
 
     def _capture_files(self) -> list[CameraFile]:
         time.sleep(self._exposure())

@@ -209,7 +209,7 @@ code.
 
 | Role | Methods |
 |---|---|
-| `Camera` | `settings()`, `setting(name)`, `set_setting(name, value)`, `preview_frame()` |
+| `Camera` | `settings()`, `setting(name)`, `set_setting(name, value)`, `start_preview(region=None, max_size=None)`, `stop_preview()`, `preview_frame(not_before=None) -> PreviewFrame` |
 | `FrameCamera` | adds `capture_frame(not_before=None, timeout=None) -> Frame`; `not_before` (an aware `datetime`) rejects frames with an earlier `timestamp`, for free-running cameras. Which moment a camera timestamps varies; its hardware doc says |
 | `FileCamera` | adds `capture_files() -> list[CameraFile]`; save with `CameraFile.save(dir, stem)`, which refuses to overwrite unless asked |
 | `FocusDrive` | `step(n)` (positive = toward far), `drive_to_limit("near" \| "far")`, `focus_steps`, `last_limit` |

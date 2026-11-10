@@ -12,6 +12,7 @@ from educelab.devices.cameras import (
     WIDTH,
     CameraFile,
     Frame,
+    PreviewFrame,
     PreviewGeometry,
     PreviewRegion,
 )
@@ -22,11 +23,15 @@ CENTER = PreviewRegion(0.25, 0.25, 0.5, 0.5)
 
 def assert_preview_frame_matches(camera):
     frame = camera.preview_frame()
-    assert isinstance(frame, np.ndarray)
-    assert frame.dtype == np.uint8
-    assert frame.ndim in (2, 3)
-    geometry = camera.preview
-    assert frame.shape[:2] == (geometry.height, geometry.width)
+    assert isinstance(frame, PreviewFrame)
+    assert isinstance(frame.pixels, np.ndarray)
+    assert frame.pixels.ndim in (2, 3)
+    assert frame.pixel_format
+    assert frame.timestamp.tzinfo is not None
+    assert frame.geometry == camera.preview
+    size = (frame.geometry.height, frame.geometry.width)
+    assert frame.pixels.shape[:2] == size
+    return frame
 
 
 class CameraContract(DeviceContract):
@@ -92,9 +97,12 @@ class CameraContract(DeviceContract):
         assert isinstance(geometry, PreviewGeometry)
         assert device.preview == geometry
 
-    def test_preview_frame_is_displayable_at_the_reported_size(self, device):
+    def test_preview_frame_carries_the_geometry_it_shows(self, device):
         device.start_preview()
         assert_preview_frame_matches(device)
+
+    def test_preview_is_not_reduced_unless_asked(self, device):
+        assert device.start_preview() == device.start_preview(max_size=None)
 
     def test_preview_output_fits_max_size(self, device):
         geometry = device.start_preview(max_size=200)
@@ -161,7 +169,9 @@ class CameraContract(DeviceContract):
         device.start_preview()
         device.preview_frame()
         started = time.monotonic()
-        device.preview_frame(not_before=datetime.now(UTC) + timedelta(seconds=0.1))
+        ready = datetime.now(UTC) + timedelta(seconds=0.1)
+        frame = device.preview_frame(not_before=ready)
+        assert frame.timestamp >= ready
         # A frame taken after not_before can't arrive before it.
         assert time.monotonic() - started >= 0.09
 
@@ -217,6 +227,21 @@ class FrameCameraContract(CameraContract):
         if PIXEL_FORMAT not in settings:
             pytest.skip("camera has no pixel_format setting")
         assert device.capture_frame().pixel_format == settings[PIXEL_FORMAT].value
+
+    def test_preview_keeps_the_capture_pixel_format(self, device):
+        settings = device.settings()
+        formats = [None]
+        if PIXEL_FORMAT in settings and settings[PIXEL_FORMAT].choices:
+            formats = list(settings[PIXEL_FORMAT].choices)
+        for pixel_format in formats:
+            if pixel_format is not None:
+                device.set_setting(PIXEL_FORMAT, pixel_format)
+            capture = device.capture_frame()
+            device.start_preview()
+            preview = device.preview_frame()
+            device.stop_preview()
+            assert preview.pixel_format == capture.pixel_format
+            assert preview.pixels.dtype == capture.pixels.dtype
 
     def test_capture_frame_during_preview_raises(self, device):
         device.start_preview()

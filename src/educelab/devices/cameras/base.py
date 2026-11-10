@@ -11,7 +11,6 @@ from numbers import Integral, Real
 from pathlib import Path, PurePath
 from typing import Any
 
-import numpy as np
 import numpy.typing as npt
 
 from educelab.devices.device import Device, synchronized
@@ -34,6 +33,7 @@ __all__ = [
     "FileCamera",
     "Frame",
     "FrameCamera",
+    "PreviewFrame",
     "PreviewGeometry",
     "PreviewRegion",
     "Rounding",
@@ -185,8 +185,23 @@ def check_max_size(max_size: int | None) -> int | None:
     return int(max_size)
 
 
-PreviewImage = npt.NDArray[np.uint8]
-"""An 8-bit preview image, ``(height, width)`` or ``(height, width, 3)``."""
+@dataclass(frozen=True, eq=False)
+class PreviewFrame:
+    """One preview image, with what it shows.
+
+    Attributes:
+        pixels: Image data, shaped ``(height, width)`` or
+            ``(height, width, channels)``, at the camera's own bit depth.
+        pixel_format: Layout of ``pixels``, e.g. ``"Mono16"`` or ``"RGB8"``.
+        timestamp: The time of the image, as a timezone-aware host time. A
+            camera that can't time its frames reports when the image arrived.
+        geometry: The sensor region and size of this image.
+    """
+
+    pixels: npt.NDArray[Any]
+    pixel_format: str
+    timestamp: datetime
+    geometry: PreviewGeometry
 
 
 @dataclass(frozen=True, eq=False)
@@ -265,7 +280,8 @@ class Camera(Device):
 
     Preview is an explicit state (ADR 0007): `start_preview()` enters it,
     `stop_preview()` and `close()` leave it, and captures refuse to run while
-    it's on.
+    it's on. Preview images keep the camera's resolution and pixel format
+    unless the caller asks for less; display scaling is the caller's job.
     """
 
     _preview: PreviewGeometry | None = None
@@ -306,7 +322,7 @@ class Camera(Device):
     def start_preview(
         self,
         region: PreviewRegion | tuple[float, float, float, float] | None = None,
-        max_size: int | None = 1280,
+        max_size: int | None = None,
     ) -> PreviewGeometry:
         """Start previewing, or change the preview if one is running.
 
@@ -314,8 +330,9 @@ class Camera(Device):
             region: The part of the sensor to show, as a `PreviewRegion` or an
                 ``(x, y, width, height)`` tuple in fractions of the sensor.
                 ``None`` shows the whole sensor.
-            max_size: Longest side of the preview images, in pixels, or
-                ``None`` for no reduction.
+            max_size: Longest side of the preview images, in pixels, to have
+                the camera send less data. ``None`` keeps every sensor pixel
+                of the region.
 
         Returns:
             The region and image size the camera applied. The region lies
@@ -347,20 +364,20 @@ class Camera(Device):
             self._preview = None
 
     @synchronized
-    def preview_frame(self, *, not_before: datetime | None = None) -> PreviewImage:
+    def preview_frame(self, *, not_before: datetime | None = None) -> PreviewFrame:
         """The next preview image, for framing and focusing, never a capture.
+
+        Pixels come in the camera's current pixel format, with no conversion.
 
         Args:
             not_before: Earliest acceptable image time, as a timezone-aware
                 datetime. Pass the moment the scene or lens was ready (e.g.
                 after a focus step) to skip images taken before it.
 
-        Returns:
-            An 8-bit image, ``(height, width)`` or ``(height, width, 3)``, at
-            the size `preview` reports.
-
         Raises:
             PreviewError: The camera isn't previewing.
+            DeviceError: ``not_before`` was given and the camera can't time
+                its frames.
         """
         if self._preview is None:
             raise PreviewError(f"{self!r} isn't previewing; call start_preview() first")
@@ -420,7 +437,7 @@ class Camera(Device):
         """Leave preview and restore whatever capture needs."""
 
     @abstractmethod
-    def _preview_frame(self, not_before: datetime | None) -> PreviewImage: ...
+    def _preview_frame(self, not_before: datetime | None) -> PreviewFrame: ...
 
 
 class FrameCamera(Camera):

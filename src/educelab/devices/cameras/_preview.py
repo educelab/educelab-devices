@@ -8,7 +8,7 @@ import numpy.typing as npt
 
 from educelab.devices.cameras.base import PreviewGeometry, PreviewRegion
 
-__all__ = ["HostCrop", "host_crop"]
+__all__ = ["HostCrop", "hardware_roi", "host_crop", "pick_decimation"]
 
 A = TypeVar("A", bound=npt.NDArray[Any])
 
@@ -92,3 +92,65 @@ def _span(
     low = math.ceil(start * sensor - _SNAP)
     high = math.floor((start + size) * sensor + _SNAP)
     return max(low, origin), min(high, origin + frame)
+
+
+def pick_decimation(
+    region: PreviewRegion,
+    max_size: int | None,
+    *,
+    full: tuple[int, int],
+    choices: tuple[int, ...],
+) -> int:
+    """The largest decimation that still leaves ``max_size`` pixels on the
+    region's longest side; 1 when nothing asks for a reduction.
+
+    Args:
+        full: The whole image at decimation 1, as ``(width, height)``.
+        choices: The decimations the camera offers.
+    """
+    if max_size is None:
+        return 1
+    longest = max(region.width * full[0], region.height * full[1])
+    return max((d for d in choices if d > 1 and longest / d >= max_size), default=1)
+
+
+def hardware_roi(
+    region: PreviewRegion,
+    *,
+    full: tuple[int, int],
+    size_inc: tuple[int, int],
+    offset_inc: tuple[int, int],
+    min_size: tuple[int, int] = (1, 1),
+) -> tuple[int, int, int, int]:
+    """The camera ROI to show ``region``, as ``(x, y, width, height)`` pixels.
+
+    The ROI lands on the camera's increments and contains the region, for the
+    host to crop the rest. Its size depends only on the region's size, so
+    moving a region never changes it, and never costs an acquisition restart.
+
+    Args:
+        full: The whole image at the current decimation, ``(width, height)``.
+        size_inc: Increments of ``Width`` and ``Height``.
+        offset_inc: Increments of ``OffsetX`` and ``OffsetY``.
+        min_size: The smallest ``Width`` and ``Height``.
+    """
+    x, width = _roi_axis(
+        region.x, region.width, full[0], size_inc[0], offset_inc[0], min_size[0]
+    )
+    y, height = _roi_axis(
+        region.y, region.height, full[1], size_inc[1], offset_inc[1], min_size[1]
+    )
+    return x, y, width, height
+
+
+def _roi_axis(
+    start: float, size: float, full: int, size_inc: int, offset_inc: int, least: int
+) -> tuple[int, int]:
+    # Room for the offset rounding down by up to one increment.
+    wanted = math.ceil(size * full - _SNAP) + offset_inc
+    most = full // size_inc * size_inc
+    length = min(max(math.ceil(wanted / size_inc) * size_inc, least), most)
+    offset = math.floor(start * full + _SNAP) // offset_inc * offset_inc
+    # Slide back from the far edge rather than shrink.
+    offset = min(offset, (full - length) // offset_inc * offset_inc)
+    return max(offset, 0), length

@@ -99,7 +99,11 @@ def test_max_size_rejects_non_ints(value):
 
 # Host crop and stride (cameras/_preview.py)
 
-from educelab.devices.cameras._preview import host_crop
+from educelab.devices.cameras._preview import (
+    hardware_roi,
+    host_crop,
+    pick_decimation,
+)
 
 
 def test_full_region_on_a_full_frame_keeps_every_pixel():
@@ -166,3 +170,78 @@ def test_region_outside_the_frame_raises():
             frame=(5112, 3840),
             origin=(8, 8),
         )
+
+
+# --- Hardware ROI -------------------------------------------------------------
+
+CM3 = {"full": (2448, 2048), "size_inc": (8, 2), "offset_inc": (2, 2)}
+
+
+def covers(roi, region, full):
+    x, y, width, height = roi
+    return (
+        x <= region.x * full[0] + 1e-6
+        and y <= region.y * full[1] + 1e-6
+        and x + width >= (region.x + region.width) * full[0] - 1e-6
+        and y + height >= (region.y + region.height) * full[1] - 1e-6
+    )
+
+
+def test_roi_of_the_whole_sensor_is_the_whole_image():
+    assert hardware_roi(PreviewRegion(), **CM3) == (0, 0, 2448, 2048)
+
+
+def test_roi_lands_on_the_increments_and_contains_the_region():
+    region = PreviewRegion(0.301, 0.107, 0.25, 0.25)
+    x, y, width, height = roi = hardware_roi(region, **CM3)
+    assert (x % 2, y % 2, width % 8, height % 2) == (0, 0, 0, 0)
+    assert covers(roi, region, CM3["full"])
+    assert width <= 0.25 * 2448 + 2 + 8 and height <= 0.25 * 2048 + 2 + 2
+
+
+def test_moving_a_region_never_changes_the_roi_size():
+    sizes = set()
+    for i in range(200):
+        region = PreviewRegion(0.75 * i / 199, 0.75 * (199 - i) / 199, 0.25, 0.25)
+        roi = hardware_roi(region, **CM3)
+        assert covers(roi, region, CM3["full"])
+        sizes.add(roi[2:])
+    assert len(sizes) == 1
+
+
+def test_roi_at_the_far_edge_slides_back_inside_the_image():
+    x, y, width, height = hardware_roi(PreviewRegion(0.75, 0.75, 0.25, 0.25), **CM3)
+    assert x + width <= 2448 and y + height <= 2048
+    assert covers(
+        (x, y, width, height), PreviewRegion(0.75, 0.75, 0.25, 0.25), (2448, 2048)
+    )
+
+
+def test_roi_is_no_smaller_than_the_camera_allows():
+    roi = hardware_roi(PreviewRegion(0.5, 0.5, 0.001, 0.001), **CM3, min_size=(64, 32))
+    assert roi[2:] == (64, 32)
+
+
+def test_roi_on_an_image_off_the_size_increment_stays_inside_it():
+    # An image 1,222 wide can't be covered in steps of 8; the host crop clips.
+    x, _, width, _ = hardware_roi(
+        PreviewRegion(), full=(1222, 1024), size_inc=(8, 2), offset_inc=(2, 2)
+    )
+    assert (x, width) == (0, 1216)
+
+
+@pytest.mark.parametrize(
+    ("max_size", "expected"),
+    [(None, 1), (4000, 1), (2448, 1), (1224, 2), (1000, 2), (612, 4), (64, 4)],
+)
+def test_decimation_never_goes_below_max_size(max_size, expected):
+    picked = pick_decimation(
+        PreviewRegion(), max_size, full=(2448, 2048), choices=(1, 2, 4)
+    )
+    assert picked == expected
+
+
+def test_decimation_goes_by_the_region_not_the_sensor():
+    region = PreviewRegion(0.25, 0.25, 0.5, 0.5)
+    assert pick_decimation(region, 1000, full=(2448, 2048), choices=(1, 2)) == 1
+    assert pick_decimation(region, 612, full=(2448, 2048), choices=(1, 2)) == 2

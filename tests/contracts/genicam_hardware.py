@@ -364,10 +364,13 @@ class GenICamHardwareTests:
         with pytest.raises(DeviceError, match="not_before"):
             camera.capture_frame(not_before=datetime.now(UTC), timeout=5.0)
 
-    def test_preview_is_small_and_eight_bit(self, camera):
+    def test_preview_has_the_capture_format_and_the_size_asked_for(self, camera):
+        capture = camera.capture_frame()
+        geometry = camera.start_preview(max_size=1280)
         preview = camera.preview_frame()
-        assert preview.dtype == np.uint8
-        assert max(preview.shape[:2]) <= 1280
+        assert preview.pixel_format == capture.pixel_format
+        assert preview.pixels.shape[:2] == (geometry.height, geometry.width)
+        assert max(preview.pixels.shape[:2]) <= 1280
 
     def test_a_second_open_of_the_same_camera_is_busy(self, camera, serial):
         second = self.make(serial)

@@ -550,6 +550,7 @@ class TestAravisCameraContract(FrameCameraContract):
     def test_closing_lets_go_of_the_camera(self, make_device, repository):
         with make_device() as camera:
             camera.capture_frame()
+            camera.start_preview()
             camera.preview_frame()
         assert not repository.cameras[0].opened
         assert repository.cameras[0].held == []

@@ -31,6 +31,7 @@ from typing import Any, Protocol, TypeVar
 import numpy as np
 import numpy.typing as npt
 
+from educelab.devices.cameras._preview import HostCrop, host_crop
 from educelab.devices.cameras.base import (
     EXPOSURE_TIME,
     GAIN,
@@ -41,6 +42,9 @@ from educelab.devices.cameras.base import (
     WIDTH,
     Frame,
     FrameCamera,
+    PreviewFrame,
+    PreviewGeometry,
+    PreviewRegion,
     Setting,
     SettingValue,
 )
@@ -56,7 +60,6 @@ from educelab.devices.errors import (
 
 __all__ = [
     "ARRIVAL_SAMPLES",
-    "PREVIEW_MAX_SIZE",
     "RETRIES_BEFORE_REMEASURE",
     "THROUGHPUT_LIMIT",
     "TIMESTAMP_SAMPLES",
@@ -273,7 +276,6 @@ ARRIVAL_SAMPLES = 20
 RETRIES_BEFORE_REMEASURE = 5
 
 # Longest side of a preview, in pixels; larger frames are subsampled.
-PREVIEW_MAX_SIZE = 1280
 
 # Pixel formats whose arrays the driver knows how to shape. Others (e.g.
 # packed 12-bit) would come back as raw bytes.
@@ -463,6 +465,7 @@ class GenICamCamera(FrameCamera):
         self._fires: deque[float] = deque(maxlen=_FIRES_KEPT)
         self._last_frame_at = -math.inf
         self._trigger_turnaround: float | None = None
+        self._crop: HostCrop | None = None
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__} {self._serial}>"
@@ -913,14 +916,42 @@ class GenICamCamera(FrameCamera):
     def _capture_frame(self, not_before: datetime | None, timeout: float) -> Frame:
         return self._grab(not_before, timeout)
 
-    def _preview_frame(self) -> npt.NDArray[np.uint8]:
-        """The newest frame as 8 bits, subsampled to `PREVIEW_MAX_SIZE`."""
-        frame = self._grab(None, self.capture_timeout)
-        pixels = frame.pixels
-        if pixels.dtype == np.uint16:
-            pixels = pixels >> (frame.metadata["bit_depth"] - 8)
-        stride = -(-max(pixels.shape[:2]) // PREVIEW_MAX_SIZE)
-        return np.ascontiguousarray(pixels[::stride, ::stride], dtype=np.uint8)
+    def _start_preview(
+        self, region: PreviewRegion, max_size: int | None
+    ) -> PreviewGeometry:
+        """Plan a crop and stride of the frames the camera already sends."""
+        conn = self._connection
+
+        def read(node: str, default: int) -> int:
+            return conn.get_int(node) if conn.is_readable(node) else default
+
+        def frames() -> tuple[tuple[int, int], tuple[int, int], tuple[int, int]]:
+            frame = conn.get_int("Width"), conn.get_int("Height")
+            origin = read("OffsetX", 0), read("OffsetY", 0)
+            sensor = (
+                read("SensorWidth", origin[0] + frame[0]),
+                read("SensorHeight", origin[1] + frame[1]),
+            )
+            return sensor, frame, origin
+
+        sensor, frame, origin = self._call("read the frame geometry", frames)
+        self._crop = host_crop(
+            region, max_size, sensor=sensor, frame=frame, origin=origin
+        )
+        return self._crop.geometry
+
+    def _stop_preview(self) -> None:
+        self._crop = None
+
+    def _preview_frame(self, not_before: datetime | None) -> PreviewFrame:
+        assert self._crop is not None
+        frame = self._grab(not_before, self.capture_timeout)
+        return PreviewFrame(
+            np.ascontiguousarray(self._crop.apply(frame.pixels)),
+            frame.pixel_format,
+            frame.timestamp,
+            self._crop.geometry,
+        )
 
     # --- Capture ----------------------------------------------------------------
 

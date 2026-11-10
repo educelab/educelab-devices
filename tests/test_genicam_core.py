@@ -23,6 +23,7 @@ from educelab.devices.cameras import (
     TRIGGER,
     WIDTH,
     GenICamCamera,
+    PreviewRegion,
     _genicam,
 )
 from educelab.devices.cameras._genicam import BufferStatus
@@ -1069,38 +1070,64 @@ def test_ten_bit_frames_capture_and_preview():
         frame = camera.capture_frame()
         assert frame.pixels.dtype == np.uint16
         assert frame.metadata["bit_depth"] == 10
+        camera.start_preview()
         preview = camera.preview_frame()
-    # Scaled by the real depth, not as if it were 16-bit. Consecutive fake
-    # frames differ by 1 in value.
-    assert abs(int(preview.max()) - (int(frame.pixels.max()) >> 2)) <= 1
+    # Left at the camera's depth. Consecutive fake frames differ by 1 in value.
+    assert preview.pixel_format == "Mono10g40IDS"
+    assert preview.pixels.dtype == np.uint16
+    assert abs(int(preview.pixels.max()) - int(frame.pixels.max())) <= 1
 
 
 # --- Preview ------------------------------------------------------------------
 
 
-def test_preview_is_eight_bit(camera):
-    camera.set_setting(PIXEL_FORMAT, "Mono16")
-    preview = camera.preview_frame()
-    assert preview.dtype == np.uint8
-    assert preview.shape == (6, 8)
-
-
-def test_preview_scales_sixteen_bit_frames_down(camera):
+def test_preview_keeps_the_frames_depth_and_size(camera):
     camera.set_setting(PIXEL_FORMAT, "Mono16")
     full = camera.capture_frame().pixels
+    camera.start_preview()
     preview = camera.preview_frame()
+    assert preview.pixel_format == "Mono16"
+    assert preview.pixels.dtype == np.uint16
+    assert preview.pixels.shape == full.shape
     # Consecutive frames differ only by frame number, here at most 1 count.
-    assert abs(int(preview[0, 0]) - int(full[0, 0] >> 8)) <= 1
+    assert abs(int(preview.pixels[0, 0]) - int(full[0, 0])) <= 1
 
 
-def test_preview_of_a_large_sensor_is_reduced():
+def test_preview_of_a_large_sensor_is_reduced_on_request():
     with GenICamCamera(MONO, only(width=4000, height=3000)) as camera:
+        geometry = camera.start_preview(max_size=1280)
         preview = camera.preview_frame()
-    assert max(preview.shape) <= _genicam.PREVIEW_MAX_SIZE
-    assert preview.shape == (750, 1000)
+    assert (geometry.width, geometry.height) == (1000, 750)
+    assert preview.pixels.shape == (750, 1000)
+    assert preview.pixels.flags.c_contiguous
+
+
+def test_preview_crops_to_the_region():
+    with GenICamCamera(MONO, only(width=400, height=300)) as camera:
+        whole = camera.capture_frame().pixels
+        geometry = camera.start_preview((0.5, 0.5, 0.25, 0.5))
+        preview = camera.preview_frame()
+    assert geometry.region == PreviewRegion(0.5, 0.5, 0.25, 0.5)
+    assert preview.pixels.shape == (150, 100)
+    assert abs(int(preview.pixels[0, 0]) - int(whole[150, 200])) <= 1
+
+
+def test_preview_timestamps_come_from_the_camera(camera):
+    camera.start_preview()
+    ready = datetime.now(UTC)
+    assert camera.preview_frame(not_before=ready).timestamp >= ready
+
+
+def test_preview_refuses_not_before_when_frames_cant_be_timed():
+    with GenICamCamera(MONO, only(without=["TimestampLatch"])) as camera:
+        camera.start_preview()
+        assert camera.preview_frame().timestamp.tzinfo is not None
+        with pytest.raises(DeviceError, match="not_before"):
+            camera.preview_frame(not_before=datetime.now(UTC))
 
 
 def test_preview_releases_its_buffer(camera, fake):
+    camera.start_preview()
     camera.preview_frame()
     assert fake.held == []
 
@@ -1553,6 +1580,7 @@ def test_a_pause_in_trigger_mode_primes_the_trigger_again(triggered, fake):
 
 
 def test_preview_in_software_trigger_mode_fires_a_trigger(triggered, fake):
+    triggered.start_preview()
     triggered.preview_frame()
     assert fake.trigger_calls == 1
 

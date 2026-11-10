@@ -345,6 +345,7 @@ class TestSpinnakerCameraContract(FrameCameraContract):
     def test_closing_releases_the_sdk(self, make_device, pyspin):
         with make_device() as camera:
             camera.capture_frame()
+            camera.start_preview()
             camera.preview_frame()
         assert_released(pyspin)
 

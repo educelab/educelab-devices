@@ -486,6 +486,7 @@ class TestGenTLCameraContract(FrameCameraContract):
     def test_closing_releases_every_module(self, make_device, genicam):
         with make_device() as camera:
             camera.capture_frame()
+            camera.start_preview()
             camera.preview_frame()
         assert genicam.open_modules == []
 

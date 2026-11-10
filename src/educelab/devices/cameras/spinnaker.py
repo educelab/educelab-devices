@@ -16,7 +16,6 @@ from typing import Any, Self, TypeVar
 import numpy.typing as npt
 
 from educelab.devices.cameras._genicam import (
-    PREVIEW_MAX_SIZE,
     RETRIES_BEFORE_REMEASURE,
     THROUGHPUT_LIMIT,
     TIMESTAMP_SAMPLES,
@@ -35,7 +34,6 @@ from educelab.devices.errors import (
 
 __all__ = [
     "MIN_SPINNAKER_VERSION",
-    "PREVIEW_MAX_SIZE",
     "PYSPIN_INSTALL_HINT",
     "RETRIES_BEFORE_REMEASURE",
     "THROUGHPUT_LIMIT",

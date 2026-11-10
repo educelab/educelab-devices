@@ -1,9 +1,11 @@
 """Locate each zoomed frame from `z7_live_view.py afmap` in the full frame.
 
     python conductor/tracks/preview-mode_20261102/z7_afmap_match.py z7-afmap
+    python conductor/tracks/preview-mode_20261102/z7_afmap_match.py z7-area-DX \
+        --reference z7-area-FX
 
 Needs opencv-python-headless. For each zoomed frame, tries magnifications
-from 1.2x to 24x, shrinks the frame by each and finds it in the reference
+from 0.95x to 24x, shrinks the frame by each and finds it in the reference
 with normalized cross-correlation. Prints the best box as fractions of the
 frame, with its score; scores under about 0.5 are guesses.
 """
@@ -24,7 +26,7 @@ def gray(path: Path) -> np.ndarray:
 def locate(reference: np.ndarray, zoomed: np.ndarray):
     rh, rw = reference.shape
     best = (-1.0, 0.0, 0, 0)
-    for scale in np.geomspace(1.2, 24, 100):
+    for scale in np.geomspace(0.95, 24, 110):
         w, h = round(zoomed.shape[1] / scale), round(zoomed.shape[0] / scale)
         if w < 16 or h < 12 or w > rw or h > rh:
             continue
@@ -45,8 +47,11 @@ def locate(reference: np.ndarray, zoomed: np.ndarray):
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("directory", type=Path)
+    parser.add_argument(
+        "--reference", type=Path, help="directory whose reference to match against"
+    )
     args = parser.parse_args()
-    reference = gray(args.directory / "reference-start.jpg")
+    reference = gray((args.reference or args.directory) / "reference-start.jpg")
     pattern = re.compile(r"zoom(\d+)-af(\d+)x(\d+)\.jpg")
     rows = []
     for path in args.directory.glob("zoom*-af*.jpg"):

@@ -4,6 +4,13 @@
     python conductor/tracks/preview-mode_20261102/z7_live_view.py zoom --out z7-zoom
     python conductor/tracks/preview-mode_20261102/z7_live_view.py settle --steps 200
     python conductor/tracks/preview-mode_20261102/z7_live_view.py afmap --out z7-afmap
+    python conductor/tracks/preview-mode_20261102/z7_live_view.py area --out z7-area-FX
+
+`area` is run once per image area (FX, DX, 5:4, 1:1, 16:9), with the camera and
+target not moved between runs. Set the area on the camera first, or pass
+`--set NAME=VALUE` to try writing it. It lists the widgets that could report the
+area, then saves an unzoomed frame and zoomed frames at three centres. Match
+each directory against the FX one with `z7_afmap_match.py DIR --reference FX-DIR`.
 
 `viewfinder` asks you what the rear screen and EVF show at each step, so run it
 at the camera. `zoom` saves a JPEG for every size, zoom level and zoom center it
@@ -264,6 +271,55 @@ def run_afmap(camera: GPhoto2Camera, session, out: Path) -> None:
         print(f"restored {original}")
 
 
+AREA_KEYWORDS = ("area", "size", "crop", "dx", "fx", "aspect", "format")
+AREA_CENTRES = ("4128x2752", "2064x1376", "6192x4128")
+
+
+def run_area(camera: GPhoto2Camera, session, out: Path, write: str | None) -> None:
+    """Record what live view covers in the camera's current image area: an
+    unzoomed frame, then zoom 1024 and 2048 at three centres."""
+    out.mkdir(parents=True, exist_ok=True)
+    if write:
+        name, _, value = write.partition("=")
+        try:
+            session.set_config({name: value})
+            print(f"wrote {name}={value!r}")
+        except Exception as exc:  # noqa: BLE001 - recording what fails
+            print(f"writing {name}={value!r} failed: {exc}")
+    print("widgets that could report the image area:")
+    for name, w in sorted(session.config().items()):
+        text = f"{name} {w.label}".lower()
+        if any(k in text for k in AREA_KEYWORDS):
+            choices = f" choices={list(w.choices)}" if w.choices else ""
+            ro = " read-only" if w.read_only else ""
+            print(f"  {name:<22} [{w.label}] {w.value!r}{ro}{choices}")
+    original = {n: session.value(n) for n in ("liveviewsize", "liveviewzoomarea")}
+    try:
+        session.set_config({"liveviewsize": "XGA", "liveviewzoomarea": "0"})
+        data, note = after_change(session, "XGA")
+        width, height, _ = save(out, "reference-start", data)
+        # The same frame under the matcher's pattern, as "zoom 0".
+        save(out, "zoom0-af0x0", data)
+        print(f"unzoomed: {width}x{height}; {note}")
+        for zoom in ("2048", "1024"):
+            session.set_config({"liveviewzoomarea": zoom})
+            after_change(session, "XGA", hold=1.5)
+            for value in AREA_CENTRES:
+                try:
+                    session.set_config({"changeafarea": value})
+                except Exception as exc:  # noqa: BLE001 - recording what fails
+                    print(f"  zoom {zoom} {value:<10} write failed: {exc}")
+                    continue
+                data, note = after_change(session, hold=1.5)
+                width, height, _ = save(out, f"zoom{zoom}-af{value}", data)
+                print(f"  zoom {zoom} {value:<10} {width}x{height}; {note}")
+    finally:
+        try:
+            session.set_config(original)
+        except Exception as exc:  # noqa: BLE001
+            print(f"could not restore {original}: {exc}")
+
+
 def run_settle(
     camera: GPhoto2Camera, session, steps: int, rounds: int, zoom: str
 ) -> None:
@@ -307,7 +363,9 @@ def run_settle(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("check", choices=("viewfinder", "zoom", "settle", "afmap"))
+    checks = ("viewfinder", "zoom", "settle", "afmap", "area")
+    parser.add_argument("check", choices=checks)
+    parser.add_argument("--set", help="area: NAME=VALUE to write before looking")
     parser.add_argument("--port", help="libgphoto2 port; default: the only camera")
     parser.add_argument("--out", type=Path, default=Path("z7-zoom"))
     parser.add_argument("--steps", type=int, default=200, help="settle: focus step")
@@ -328,6 +386,8 @@ def main() -> None:
             run_zoom(camera, session, args.out)
         elif args.check == "afmap":
             run_afmap(camera, session, args.out)
+        elif args.check == "area":
+            run_area(camera, session, args.out, args.set)
         else:
             run_settle(camera, session, args.steps, args.rounds, args.zoom)
     finally:

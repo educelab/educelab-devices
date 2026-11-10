@@ -223,6 +223,14 @@ class FakeCamera:
         # A single-widget read can't see which section a widget is in.
         return None if widget is None else dataclasses.replace(widget, section="")
 
+    def find_widgets(self, names: Iterable[str]) -> dict[str, Widget]:
+        self._call("find_widgets")
+        return {
+            name: dataclasses.replace(self.widgets[name], section="")
+            for name in names
+            if name in self.widgets
+        }
+
     def value(self, name: str) -> WidgetValue | None:
         self._call("value")
         widget = self.widgets.get(name)

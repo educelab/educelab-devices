@@ -272,7 +272,7 @@ camera.stop_preview()
 
   | Change | GenICam cameras | Z7 II |
   |---|---|---|
-  | Start | Immediate for the whole sensor | 4 s the first time in a session, then 1 s |
+  | Start | Immediate for the whole sensor | About 1 s |
   | Move a region of the same size | Immediate (a restart of 0.1–0.4 s on the IDS through IDS peak's GenTL producer) | About 0.5 s |
   | Change the region's size or `max_size` | Restart, 0.1–0.4 s | About 0.5 s, up to 0.8 s |
   | Stop | Restart if a region or `max_size` was used | 0.6 s |

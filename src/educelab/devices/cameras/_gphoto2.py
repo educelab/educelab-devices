@@ -9,7 +9,7 @@ import contextlib
 import logging
 import sys
 import threading
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from types import ModuleType
 from typing import Any, Literal, Protocol
@@ -169,6 +169,14 @@ class Session(Protocol):
 
         ``None`` if the camera has no such widget. The widget's ``section`` is
         empty, since a single read can't see it.
+        """
+        ...
+
+    def find_widgets(self, names: Iterable[str]) -> dict[str, Widget]:
+        """Read several widgets, leaving out any the camera doesn't have.
+
+        Each is read alone where the camera driver allows it; otherwise the
+        whole tree is read once for all of them.
         """
         ...
 
@@ -361,6 +369,26 @@ class _LibSession:
                     raise
                 return flatten_config(gp, self._camera.get_config()).get(name)
             return read_widget(gp, node)
+
+    def find_widgets(self, names: Iterable[str]) -> dict[str, Widget]:
+        gp = self._gp
+        names = tuple(names)
+        found: dict[str, Widget] = {}
+        with _translated(gp):
+            for name in names:
+                try:
+                    node = self._camera.get_single_config(name)
+                except gp.GPhoto2Error as exc:
+                    if exc.code == GP_ERROR_BAD_PARAMETERS:
+                        continue
+                    if exc.code != GP_ERROR_NOT_SUPPORTED:
+                        raise
+                    tree = flatten_config(gp, self._camera.get_config())
+                    return {n: tree[n] for n in names if n in tree}
+                widget = read_widget(gp, node)
+                if widget is not None:
+                    found[name] = widget
+        return found
 
     def value(self, name: str) -> WidgetValue | None:
         gp = self._gp

@@ -159,7 +159,7 @@ Owed hardware checks (Task 5.4): the driver's reported region on the camera in F
   - `--preview [FRAMES]`, `--region X,Y,W,H` and `--max-size PIXELS` on `dslr`, `genicam` and `spinnaker`, from a shared `app/_preview.py`. The GenICam subcommands preview each camera after its captures.
 - [~] Task 5.4: Write `@pytest.mark.hardware` tests for preview (geometry, `not_before` after a focus step on the Z7 II, and a full-sensor versus zoomed region on the CM3 and IDS). Run them, and record the results.
 
-  - Z7 II, run 2026-11-10 in FX: 19 passed, 7 skipped. Zoomed frames sat within 1 pixel of their reported region. The runs found that stopping took 3.6 s and each start 4 s, from whole-tree reads; later starts now take 1.1 s and a stop 0.6 s.
+  - Z7 II, run 2026-11-10 in FX: 19 passed, 7 skipped. Zoomed frames sat within 1 pixel of their reported region. The runs found that stopping took 3.6 s and each start 4 s, from whole-tree reads; later starts now take 1.1 s and a stop 0.6 s. The first start of a session then moved to the same by-name probe (`Session.find_widgets()`), at the maintainer's request; that one is unit-tested but not yet timed on the camera, which had gone off USB.
   - CM3 and IDS: tests written, not yet run.
 
 ### Verification

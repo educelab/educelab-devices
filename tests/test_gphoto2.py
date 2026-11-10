@@ -420,6 +420,30 @@ def test_one_widget_is_read_without_reading_the_tree():
     assert camera.calls == []
 
 
+def test_several_widgets_are_read_one_at_a_time():
+    camera = ConfigCamera()
+    asked = []
+
+    def single(name):
+        asked.append(name)
+        if name != "iso":
+            raise StubGPhoto2Error(_gphoto2.GP_ERROR_BAD_PARAMETERS)
+        return iso_tree().children[0].children[0]
+
+    camera.get_single_config = single
+    found = widget_session(camera).find_widgets(["nosuch", "iso"])
+    assert list(found) == ["iso"]
+    assert asked == ["nosuch", "iso"] and camera.calls == []
+
+
+def test_several_widgets_come_from_one_tree_read_when_unsupported():
+    camera = ConfigCamera(single=False)
+    camera.tree = iso_tree()
+    found = widget_session(camera).find_widgets(["nosuch", "iso", "iso"])
+    assert list(found) == ["iso"]
+    assert camera.calls == [("get tree",)]
+
+
 def test_one_widget_is_read_from_the_tree_when_unsupported():
     camera = ConfigCamera(single=False)
     camera.tree = iso_tree()
@@ -1354,12 +1378,12 @@ def test_a_body_without_imagesize_crops_on_the_host():
         assert zoom_writes(attached) == []
 
 
-def test_only_the_first_preview_of_a_session_reads_the_whole_tree():
+def test_preview_never_reads_the_whole_tree():
     attached = FakeCamera()
     with opened(attached) as camera:
+        trees = attached.calls.count("config")
         camera.start_preview(PreviewRegion(0.2, 0.45, 0.1, 0.1))
         camera.stop_preview()
-        trees = attached.calls.count("config")
         geometry = camera.start_preview(PreviewRegion(0.2, 0.45, 0.1, 0.1))
         camera.stop_preview()
         assert attached.calls.count("config") == trees

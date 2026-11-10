@@ -228,8 +228,6 @@ class GPhoto2Camera(FileCamera):
         # Live-view size and zoom as found, and as preview last set them.
         self._found: dict[str, WidgetValue] = {}
         self._set: dict[str, WidgetValue] = {}
-        # The camera's widget names, from this session's first preview.
-        self._live_view_names: frozenset[str] | None = None
 
     @property
     def info(self) -> DeviceInfo:
@@ -403,7 +401,6 @@ class GPhoto2Camera(FileCamera):
         self._preview_request = self._crop = None
         self._zoom_levels = ()
         self._found, self._set = {}, {}
-        self._live_view_names = None
         if session is None:
             return
         try:
@@ -667,16 +664,13 @@ class GPhoto2Camera(FileCamera):
         Best effort: most bodies still return previews without this, so a
         failure is logged rather than raised.
         """
+        # Probed by name: the whole tree takes seconds on the Z7 II.
+        wanted: tuple[str, ...] = _VIEWFINDER_WIDGETS
+        if self._model in _LIVE_VIEW:
+            wanted += (*_ZOOM_SOURCES, "changeafarea")
         try:
-            names = self._live_view_names
-            if names is None:
-                # The whole tree takes seconds on the Z7 II, so only the
-                # first preview of a session reads it.
-                widgets = session.config()
-                names = self._live_view_names = frozenset(widgets)
-            else:
-                found = {n: session.widget(n) for n in _ZOOM_SOURCES if n in names}
-                widgets = {n: w for n, w in found.items() if w is not None}
+            widgets = session.find_widgets(wanted)
+            names = frozenset(widgets)
             self._find_zoom(names, widgets)
         except GPhoto2Error as exc:
             logger.warning("%r could not read settings for live view: %s", self, exc)
@@ -693,7 +687,7 @@ class GPhoto2Camera(FileCamera):
 
     def _find_zoom(self, names: frozenset[str], widgets: Mapping[str, Widget]) -> None:
         """Note the image area, zoom levels and sizes of a body whose zoom is
-        known. ``names`` are the camera's widgets; ``widgets`` the ones read."""
+        known, from the widgets found on it."""
         profile = _LIVE_VIEW.get(self._model or "")
         needed = (*_ZOOM_SOURCES, "changeafarea")
         if profile is None or any(name not in names for name in needed):

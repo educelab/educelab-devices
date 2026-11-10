@@ -27,10 +27,14 @@ Use throwaway scripts in a scratch directory, not package code. Each finding goe
 
 - [x] Task 1.1: Z7 II: record what `viewfinder=1` (and `0`) does to the rear screen and the EVF, and whether `capture_preview()` alone does the same.
   - The first `capture_preview()` starts live view and blanks the rear screen and EVF ("Connected to PC"); `viewfinder` writes change neither display, and only closing the session brings them back. So `stop_preview()` can't return the operator's screens mid-session. Details in `docs/hardware/gphoto2-cameras.md` (Live view).
-- [~] Task 1.2: Z7 II: check whether `changeafarea` (or another widget) moves the `liveviewzoomarea` crop, and record its coordinate system and limits. Record the exact crop each zoom level gives at each `liveviewsize`.
-- [ ] Task 1.3: Z7 II: after a focus step, check whether the next preview requested can still show the lens from before the step, and how many previews it takes to settle.
-- [~] Task 1.4: CM3-U3-50S5M and IDS U3-36P0XCP: check which of `OffsetX`/`OffsetY` and `Width`/`Height` can be written while streaming, through each backend we support on the bench (Spinnaker, Aravis, GenTL), and record their increments.
-- [~] Task 1.5: CM3 and IDS: record the binning and decimation nodes, modes and selectors, whether each mode averages or sums, whether it changes the frame rate, and the restart cost of switching geometry.
+- [x] Task 1.2: Z7 II: check whether `changeafarea` (or another widget) moves the `liveviewzoomarea` crop, and record its coordinate system and limits. Record the exact crop each zoom level gives at each `liveviewsize`.
+  - The crop is `liveviewzoomarea` sensor pixels wide at 3:2, centred on `changeafarea` (`"<x>x<y>"` in sensor pixels, clamped to the sensor). `changeafarea` reads back `0x0` and is refused until live view runs. Writes show 0.2–0.4 s later. Details in `docs/hardware/gphoto2-cameras.md` (Z7 II zoom geometry).
+- [x] Task 1.3: Z7 II: after a focus step, check whether the next preview requested can still show the lens from before the step, and how many previews it takes to settle.
+  - The first preview requested after `step()` returns (which waits `focus_settle_s()`) already shows the new focus, in 4 of 4 rounds at ±2000 steps. About one fast preview in four or five repeats the previous frame's bytes.
+- [x] Task 1.4: CM3-U3-50S5M and IDS U3-36P0XCP: check which of `OffsetX`/`OffsetY` and `Width`/`Height` can be written while streaming, through each backend we support on the bench (Spinnaker, Aravis, GenTL), and record their increments.
+  - Through Aravis on both cameras: size writes are accepted while streaming but need an acquisition restart (0.1–0.4 s); offsets move with no restart. Spinnaker and GenTL weren't run (no PySpin on the lab Mac): **unknown**. Details in `docs/hardware/usb3-vision.md` (Geometry).
+- [x] Task 1.5: CM3 and IDS: record the binning and decimation nodes, modes and selectors, whether each mode averages or sums, whether it changes the frame rate, and the restart cost of switching geometry.
+  - Binning sums on both (4× the level at 2 × 2); decimation keeps the level. The CM3's throughput limit and its maximum shrink with the payload and don't grow back. Writing the old limit over the lower maximum broke its stream until a pixel format round trip reset it.
 
 Prepared before the rig run, smoke-tested on the fakes only:
 
@@ -47,14 +51,23 @@ Prepared before the rig run, smoke-tested on the fakes only:
   reports each frame's size, mean level and frame rate. It puts the geometry
   back as found, and never touches `TLParamsLocked`.
 
-#### Hardware runs owed (Phase 1)
+#### What Phase 1 means for Phases 3 and 4 (proposed, for review)
 
-Lens caps were on for the 2026-11-10 GenICam runs, and the room lights changed during the Z7 II zoom run, so these wait for a stable, lit scene. All on the lab Mac, through the hardware venv (Python 3.12, Aravis, gphoto2; no PySpin).
+Phase 3 (GenICam):
 
-- Task 1.2: `z7_live_view.py zoom` against a flat, detailed target. The first run's frames lagged the writes by about two settings, so the script now previews for 3 s after each write and records when the size and content change. Whether `liveviewzoomarea` crops on macOS, and whether `changeafarea` moves it, are open; `changeafarea` writes were accepted but read back `0x0`.
-- Task 1.3: `z7_live_view.py settle`, same target, lens in AF-S.
-- Tasks 1.4–1.5: `genicam_geometry.py aravis --exposure <s>` on the IDS and one CM3, uncapped, evenly lit: binning averages or sums, the IDS offset check, and which write lowers the CM3's throughput limit.
-- Spinnaker and GenTL (Task 1.4 asks for every backend): not possible on this Mac without PySpin. Decide whether the Windows rig covers them or they're recorded as unknown.
+- Reduce with **decimation**, not binning: binning sums, so a binned preview is 4× brighter than the capture and saturates in 8 bits. Then stride on the host for the rest of `max_size`.
+- A preview of the same size at a new place only moves the offsets, which needs no restart. A new size, or decimation, needs a stop and start: about 0.1–0.4 s through Aravis.
+- After applying geometry, raise `AcquisitionFrameRate` to its new maximum (`_raise_frame_rate`), since the IDS doesn't do it on its own.
+- On `stop_preview()` and `close()`, restore the capture geometry and then the throughput limit, with a pixel format round trip first if the limit's maximum has shrunk. Never write the limit above its current maximum.
+- Spinnaker and GenTL are unchecked, so the hardware path is enabled on Aravis only, with host crop and stride elsewhere (Task 3.4), unless the Windows rig checks them.
+
+Phase 4 (gphoto2):
+
+- Map the region to the tightest `liveviewzoomarea` whose crop (N sensor pixels wide, 3:2) contains it, centred with `changeafarea`, and host-crop the rest; the reported region is the requested one rounded inward. Regions wider than the `2048` crop (0.248 of the sensor) use zoom `0`.
+- Write `changeafarea` only after live view is running, and every time the zoom changes. Discard previews for about 0.4 s after a zoom, centre or size write.
+- `stop_preview()` can't give the operator the camera's screens back; only `close()` does. Say so in the guide.
+
+The discovery scripts were run from a worktree at e91ee59 (before Phase 2's `Camera` changes) with the hardware venv; logs are in the session scratchpad, and the findings are in the hardware docs.
 
 ### Verification
 

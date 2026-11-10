@@ -297,8 +297,19 @@ def restore(camera, conn, state: dict) -> None:
                 print(
                     f"  restore {name}={state[name]}: {try_write(conn, name, state[name])}"
                 )
-        # Geometry changes can move the throughput limit, and the camera keeps
-        # it across sessions, so it goes back last.
+        # Geometry changes can lower the throughput limit and its maximum, and
+        # the camera keeps both. Writing the old limit over a lowered maximum
+        # left a CM3 streaming mismatched frames, so a pixel format round trip
+        # resets the maximum first. It goes back last.
+        if LIMIT in state and read(conn, LIMIT) != state[LIMIT]:
+            fmt = conn.get_enum("PixelFormat")
+            other = next(e for e in conn.enum_entries("PixelFormat") if e != fmt)
+            conn.set_enum("PixelFormat", other)
+            conn.set_enum("PixelFormat", fmt)
+            high = conn.int_range(LIMIT)[1]
+            if state[LIMIT] > high:
+                print(f"  {LIMIT} max is {high}, below {state[LIMIT]}; leaving it")
+                state = {k: v for k, v in state.items() if k != LIMIT}
         if LIMIT in state and read(conn, LIMIT) != state[LIMIT]:
             print(
                 f"  restore {LIMIT}={state[LIMIT]}: {try_write(conn, LIMIT, state[LIMIT])}"

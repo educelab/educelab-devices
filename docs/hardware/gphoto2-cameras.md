@@ -267,10 +267,38 @@ have it, and it stays off after `close()`.
 
   `liveviewzoomarea` (`0`, `512`, `1024`, `2048`) magnifies without changing the frame
   size: `0` is the whole sensor, `512` the tightest crop, `2048` the loosest. A zoomed
-  XGA frame is the one to score for sharpness. **verified**. Frames came back every
-  15–21 ms, which may be repeats rather than new frames: **unknown**. Comparing
-  consecutive frames' bytes would settle it. The first preview after `open()` takes
-  4–7 s, including a settings read and live-view start.
+  XGA frame is the one to score for sharpness. **verified**. The first preview after
+  `open()` takes 4–7 s, including a settings read and live-view start.
+- **Z7 II zoom geometry** (macOS, 2026-11-10, `z7_live_view.py afmap` and
+  `z7_afmap_match.py`, which finds each zoomed XGA frame in a full-sensor XGA frame by
+  template matching). **verified** unless marked:
+  - The crop is `liveviewzoomarea` **sensor pixels wide**, at the sensor's 3:2 aspect:
+    `2048` showed 0.248 of the sensor's width and height (2048 / 8256), `1024` 0.124,
+    `512` 0.062. So at XGA (1024 px wide), `1024` is about one frame pixel per sensor
+    pixel, `2048` halves, and `512` upsamples by 2. That one-to-one at `1024` is
+    **inferred** from the sizes, not measured.
+  - **`changeafarea` sets the crop's centre**, as `"<x>x<y>"` in sensor pixels
+    (8256 × 5504): `2064x2752` centred the crop at (0.25, 0.50) of the frame,
+    `6192x5504` at (0.75, near the bottom), for every zoom level. Near an edge the
+    crop is clamped to stay on the sensor (`0x0` gave a crop at the top-left corner).
+  - `changeafarea` is write-only in effect: it reads back `0x0` after every write.
+    Before any write, the crop sat off-centre (at the AF point, **assumed**), so a
+    driver should write the centre every time it zooms.
+  - `changeafarea` writes fail with `[-1] Unspecified error` until live view is
+    running, so take a preview first.
+  - A size or zoom write shows in the frames 0.2–0.4 s later; previews taken sooner
+    still show the old setting, so discard frames for about 0.4 s after a change.
+  - QVGA frames are 320×212 at zoom `0` and 320×216 when zoomed. VGA and XGA keep
+    their size.
+- **Repeated frames.** Previews come back every 10–30 ms, faster than the camera
+  makes new ones: about one in four or five has the same bytes as the one before.
+  **verified** (`z7_live_view.py settle`, 2026-11-10).
+- **After a focus step.** With `step(±2000)` at XGA, zoom `1024` on the centre,
+  sharpness moved between about 65 and 51, and the first preview requested after
+  `step()` returned already showed the new focus, in 4 of 4 rounds. `step()` waits
+  `focus_settle_s()` before returning (1.1 s for 2000 steps), so a preview requested
+  after it never showed the old lens position. Whether a preview during that wait
+  would is **unknown**. **verified** (`z7_live_view.py settle --zoom 1024`).
 - **Hold the `CameraFile` until its bytes are copied.** `get_data_and_size()` returns a
   view of the file's buffer that doesn't keep the file alive. Copying from a temporary
   (`bytes(camera.capture_preview().get_data_and_size())`) reads freed memory: on Linux

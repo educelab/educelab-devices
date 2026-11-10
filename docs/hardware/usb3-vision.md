@@ -99,20 +99,21 @@ Spinnaker agrees: on the same rig, an 80 MB/s cap removed the missing trailers t
 
 ## Geometry: ROI, binning, decimation
 
-Discovery for camera preview (`conductor/tracks/preview-mode_20261102/genicam_geometry.py`), through Aravis 0.8.36 on the lab Mac (macOS 27, Python 3.12), 2026-11-10, lens caps on. The driver doesn't change geometry yet; this records what a preview mode can use.
+Discovery for camera preview (`conductor/tracks/preview-mode_20261102/genicam_geometry.py`), through Aravis 0.8.36 on the lab Mac (macOS 27, Python 3.12), 2026-11-10: first with lens caps on, then lit, at fixed exposure and gain (IDS 15 ms, CM3-U3-50S5M 20305114 at 8 ms). Spinnaker and GenTL weren't run (no PySpin on that Mac). The driver doesn't change geometry yet; this records what a preview mode can use.
 
-- **Size changes need an acquisition restart through Aravis.** Both cameras accept `Width`, `Height`, `Binning*` and `Decimation*` writes while streaming, but Aravis then completes no frame at the new size: its buffers are sized for the old payload, and the frames come back `INCOMPLETE`. Stopping and starting acquisition (`_acquisition_paused`) fixes it. On the CM3 the stop/start took 0.09–0.16 s and the first frame came 15–160 ms later. [V]
-- **Offsets can move while streaming.** On the CM3, `OffsetX`/`OffsetY` writes took effect with no restart: the next frame at the same size came 11 ms later, and the image shifted by exactly the 32 px written (phase correlation). Not yet checked cleanly on the IDS. [V on the CM3]
-- **The CM3 can lower its own throughput limit.** After a binning sweep (1, 2, 4 and back to 1), `DeviceLinkThroughputLimit` read 120.576 MB/s instead of the 180.864 it started at, and the camera kept it into the next session, as it keeps any limit ([spinnaker.md](spinnaker.md)). Which write lowers it isn't isolated yet. Anything that changes geometry should restore the limit afterwards. [V]
-- **Frame rate follows the size on the CM3:** halving the ROI doubled the rate (35.7 to 69.8 frames/s at 15 ms auto exposure). The IDS's rate is capped at 8 frames/s at full size by `AcquisitionFrameRate`; whether its maximum rises with a smaller ROI is unchecked. [V on the CM3]
+- **Size changes need an acquisition restart through Aravis.** Both cameras accept `Width`, `Height`, `Binning*` and `Decimation*` writes while streaming, but Aravis then completes no frame at the new size: its buffers are sized for the old payload, and the frames come back `INCOMPLETE`. Stopping and starting acquisition (`_acquisition_paused`) fixes it. The stop/start took 0.09–0.16 s on the CM3 and 0.11–0.42 s on the IDS, and the first frame came 13–160 ms (CM3) or 70–240 ms (IDS) after it. [V]
+- **Offsets move while streaming.** On both cameras, `OffsetX`/`OffsetY` writes took effect with no restart: the next frame came one frame period later (11 ms on the CM3 at 70 frames/s, 160 ms on the IDS at 6.4), and the image shifted by exactly the 32 px written (phase correlation). [V]
+- **Binning sums; decimation keeps the level.** 2 × 2 binning raised the mean level 3.99× on the IDS and 3.90× on the CM3 (4 × 4: 6.1×, saturated). The IDS's mode node says `Sum` and can't be changed; the CM3 has no mode node. Decimation kept it within 3% (0.97× on both). So a binned preview is 4× brighter than the capture unless the driver divides it back down, and an 8-bit binned frame saturates where the capture doesn't. Decimation needs no correction. [V]
+- **Frame rate.** On the CM3 the rate follows the size: half the ROI or 2 × 2 binning or decimation doubled it (35.7 to 70 frames/s). The IDS's `AcquisitionFrameRate` maximum rose (6.4 to 12.5 for half the ROI, 24.8 for 2 × 2 binning, 22.5 for decimation), but the rate itself stayed at 6.4 until written. [V]
+- **The CM3's throughput limit shrinks with the payload and doesn't grow back.** Each smaller geometry lowered `DeviceLinkThroughputLimit` and its maximum (half ROI 88.32 MB/s, 4 × 4 binning 7.36). Back at full size the maximum stayed lower (120.576 instead of 180.864), capping full frames at 23.3 frames/s instead of 35.7. The camera keeps it into later sessions, as it keeps any limit ([spinnaker.md](spinnaker.md)). A pixel format round trip (Mono16 then Mono8) reset the maximum and the limit to 180.864. [V]
+- **Writing the limit above the shrunken maximum breaks the stream.** The camera accepted 180.864 MB/s over a 120.576 maximum, and then sent payloads that didn't match `Width` × `Height`. Aravis rejected every frame (`size-mismatch`), and reopening didn't help. Writing the limit at its maximum, or the pixel format round trip, fixed it. [V]
 
 | | CM3-U3-50S5M | IDS U3-36P0XCP |
 |---|---|---|
 | `Width` / `Height` step | 8 / 2 | 12 / 2 |
 | `OffsetX` / `OffsetY` step | 2 / 2 | 8 / 2 |
-| Binning | `BinningVertical` 1, 2 or 4 (3 refused); `BinningHorizontal` read-only, follows it. No selector or mode node | `BinningHorizontal`/`Vertical` 1–2, `BinningSelector` `Sensor` only, mode `Sum` only (writing it fails, even paused) |
-| Decimation | `DecimationVertical` 1–2; `DecimationHorizontal` read-only, follows it | `DecimationHorizontal`/`Vertical` 1–2, `DecimationSelector` `Sensor` only |
-| Averages or sums | unknown, needs a lit scene | unknown; the mode node says `Sum`, unconfirmed by levels |
+| Binning | `BinningVertical` 1, 2 or 4 (3 refused); `BinningHorizontal` read-only, follows it. No selector or mode node. Sums | `BinningHorizontal`/`Vertical` 1–2, `BinningSelector` `Sensor` only, mode `Sum` only (writing it fails, even paused). Sums |
+| Decimation | `DecimationVertical` 1–2; `DecimationHorizontal` read-only, follows it. Keeps the level | `DecimationHorizontal`/`Vertical` 1–2, `DecimationSelector` `Sensor` only. Keeps the level |
 
 ## Hazards
 

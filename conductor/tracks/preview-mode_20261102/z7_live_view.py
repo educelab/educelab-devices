@@ -3,6 +3,7 @@
     python conductor/tracks/preview-mode_20261102/z7_live_view.py viewfinder
     python conductor/tracks/preview-mode_20261102/z7_live_view.py zoom --out z7-zoom
     python conductor/tracks/preview-mode_20261102/z7_live_view.py settle --steps 200
+    python conductor/tracks/preview-mode_20261102/z7_live_view.py afmap --out z7-afmap
 
 `viewfinder` asks you what the rear screen and EVF show at each step, so run it
 at the camera. `zoom` saves a JPEG for every size, zoom level and zoom center it
@@ -226,11 +227,55 @@ def run_zoom(camera: GPhoto2Camera, session, out: Path) -> None:
         print(f"restored {original}")
 
 
-def run_settle(camera: GPhoto2Camera, session, steps: int, rounds: int) -> None:
+AF_X = (0, 2064, 4128, 6192, 8256)
+AF_Y = (0, 2752, 5504)
+
+
+def run_afmap(camera: GPhoto2Camera, session, out: Path) -> None:
+    """Save a full-sensor XGA reference, then a frame for each zoom level at
+    each changeafarea point of a grid, for matching against the reference."""
+    out.mkdir(parents=True, exist_ok=True)
+    original = {n: session.value(n) for n in ("liveviewsize", "liveviewzoomarea")}
+    try:
+        session.set_config({"liveviewsize": "XGA", "liveviewzoomarea": "0"})
+        data, note = after_change(session, "XGA")
+        save(out, "reference-start", data)
+        print(f"reference: {note}")
+        for zoom in ("2048", "1024", "512"):
+            session.set_config({"liveviewzoomarea": zoom})
+            after_change(session, "XGA", hold=1.5)
+            for y in AF_Y:
+                for x in AF_X:
+                    value = f"{x}x{y}"
+                    try:
+                        session.set_config({"changeafarea": value})
+                    except Exception as exc:  # noqa: BLE001 - recording what fails
+                        print(f"  zoom {zoom} {value:<10} write failed: {exc}")
+                        continue
+                    data, note = after_change(session, hold=1.5)
+                    save(out, f"zoom{zoom}-af{x}x{y}", data)
+                    print(f"  zoom {zoom} {value:<10} {note}")
+        session.set_config({"liveviewzoomarea": "0"})
+        data, note = after_change(session, "XGA")
+        save(out, "reference-end", data)
+        print(f"reference again: {note}")
+    finally:
+        session.set_config({k: v for k, v in original.items() if v is not None})
+        print(f"restored {original}")
+
+
+def run_settle(
+    camera: GPhoto2Camera, session, steps: int, rounds: int, zoom: str
+) -> None:
     focus = camera.focus
     if focus is None:
         raise SystemExit("this camera has no focus drive")
-    session.set_config({"liveviewsize": "XGA"})
+    session.set_config({"liveviewsize": "XGA", "liveviewzoomarea": zoom})
+    after_change(session, "XGA", hold=1.5)
+    if zoom != "0":
+        # Refused ([-1]) until live view is running, so after a preview.
+        session.set_config({"changeafarea": "4128x2752"})  # sensor centre
+        after_change(session, hold=1.5)
     print("baseline: 10 previews, no focus change")
     last = None
     for i in range(10):
@@ -262,11 +307,12 @@ def run_settle(camera: GPhoto2Camera, session, steps: int, rounds: int) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("check", choices=("viewfinder", "zoom", "settle"))
+    parser.add_argument("check", choices=("viewfinder", "zoom", "settle", "afmap"))
     parser.add_argument("--port", help="libgphoto2 port; default: the only camera")
     parser.add_argument("--out", type=Path, default=Path("z7-zoom"))
     parser.add_argument("--steps", type=int, default=200, help="settle: focus step")
     parser.add_argument("--rounds", type=int, default=4, help="settle: moves")
+    parser.add_argument("--zoom", default="0", help="settle: liveviewzoomarea")
     args = parser.parse_args()
 
     camera = GPhoto2Camera(args.port)
@@ -280,8 +326,10 @@ def main() -> None:
             run_viewfinder(camera, session)
         elif args.check == "zoom":
             run_zoom(camera, session, args.out)
+        elif args.check == "afmap":
+            run_afmap(camera, session, args.out)
         else:
-            run_settle(camera, session, args.steps, args.rounds)
+            run_settle(camera, session, args.steps, args.rounds, args.zoom)
     finally:
         camera.close()
 

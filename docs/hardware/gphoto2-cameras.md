@@ -252,6 +252,13 @@ below. Run on the fake only so far:
 
 Other bodies keep their live-view settings writable and are cropped on the host.
 
+**Image area: not handled yet.** The zoom geometry was measured with the FX image
+area (8256 × 5504). The Z7 II's other image areas (DX, 5:4, 1:1, 16:9) change what a
+capture covers, so in those the driver's region is **wrong**: it still assumes the
+full sensor. Which widget reports the image area, what unzoomed live view covers in
+each, and whether `liveviewzoomarea` and `changeafarea` stay in full-sensor pixels are
+all **unknown**.
+
 - **Best effort.** Most bodies return previews without live view being switched on
   explicitly, so a failure to enable it is logged as a warning and not retried until the
   next `open()`. **assumed**, from the prototype.

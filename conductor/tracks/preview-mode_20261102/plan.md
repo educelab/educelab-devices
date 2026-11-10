@@ -141,6 +141,8 @@ Scope as amended after Phase 1.
 - [x] Task 4.2: Report `liveviewzoomarea` and `liveviewsize` read-only through `settings()`.
   - Only on bodies in the table. Elsewhere preview doesn't touch them, so they stay writable.
 
+Open, from the maintainer (2026-11-10): the Z7 II's image area modes (DX, 5:4, 1:1, 16:9) change the native output size, and the table assumes FX. Discovery owed before this is right: which widget reports the image area; what unzoomed live view covers in each; whether `liveviewzoomarea` and `changeafarea` stay in full-sensor pixels. Then key the geometry by image area, with the region as a fraction of what captures cover, and crop on the host in any area not measured. A read-only widget listing was tried on 2026-11-10 and the camera didn't answer (`[-105] Unknown model`).
+
 Owed hardware checks (Task 5.4): the reported region against a template match at each zoom, including the clamp at the sensor edge; that 0.4 s is enough after a centre-only write; the size and zoom restore on stop.
 
 ### Verification

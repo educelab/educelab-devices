@@ -120,6 +120,9 @@ class _LiveView:
     ``liveviewzoomarea`` is the crop's width in sensor pixels, at the sensor's
     aspect, and ``changeafarea`` its centre as ``"<x>x<y>"`` sensor pixels.
 
+    Measured with the FX image area only. Other image areas (DX, 5:4, 1:1,
+    16:9) change what captures and live view cover, and aren't handled yet.
+
     Attributes:
         sensor: The sensor as ``(width, height)`` pixels.
         sizes: Frame width of each ``liveviewsize``.

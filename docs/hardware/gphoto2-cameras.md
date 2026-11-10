@@ -250,11 +250,10 @@ below:
   costs about that long (0.46 s measured; 0.8 s when the zoom level changes too).
 - **Starting and stopping:** `start_preview()` probes the widgets it needs by name
   and `stop_preview()` writes one widget at a time, so neither reads the whole config
-  tree. Measured before the probe: a start that read the tree took 4.0 s, one that
-  read three widgets singly 1.1 s, and a stop 0.6 s (3.6 s when it wrote two widgets
-  in one call, which reads the tree first). **verified**. With the probe every start
-  reads seven widgets singly; that it stays near 1 s is **assumed**, not yet timed.
-  On a camera driver without single-widget reads, the probe reads the tree once.
+  tree. A start takes 0.95–1.1 s, the first in a session included, and a stop 0.6 s.
+  Before, a start that read the tree took 4.0 s, and a stop that wrote two widgets
+  in one call 3.6 s, since that reads the tree first. **verified**. On a camera
+  driver without single-widget reads, the probe reads the tree once.
 - **Restore:** `stop_preview()` and `close()` put `liveviewsize` and
   `liveviewzoomarea` back as found. Both read as read-only settings on this body.
 - **Resolution:** full resolution is only available zoomed. `1024` at `XGA` is about one

@@ -4,18 +4,27 @@
   "type": "feature",
   "status": "in_progress",
   "created": "2026-11-02T00:00:00Z",
-  "updated": "2026-11-04T00:00:00Z",
+  "updated": "2026-11-10T00:00:00Z",
   "phases": {
     "total": 5,
     "completed": 0
   },
   "tasks": {
     "total": 21,
-    "completed": 0
+    "completed": 9
   },
-  "current_phase": 1,
-  "current_task": "1.1",
+  "current_phase": 2,
+  "current_task": "2.5",
   "commits": [
-    "adc8c90: Prepare the preview-mode hardware discovery runs"
+    "8deb075: Prepare the preview-mode hardware discovery runs",
+    "c97e118: Record the discovery prep commit in the preview-mode metadata",
+    "5139a8f: Record the architecture review's preview inputs in the preview-mode plan",
+    "25e29d7: Record the Z7 II live-view display behavior; fix the geometry discovery script",
+    "e91ee59: Record the Aravis ROI and binning findings; list the Phase 1 runs still owed",
+    "816bb29: Add PreviewRegion and PreviewGeometry to the camera base",
+    "ff38b86: Write the camera preview contract",
+    "923a6dc: Make preview an explicit state on the Camera base",
+    "4691ac6: Preview the simulated cameras with a shared host crop and stride",
+    "486dbba: Record the preview discovery: Z7 II zoom geometry, GenICam binning and ROI"
   ]
 }

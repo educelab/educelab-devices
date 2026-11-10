@@ -11,7 +11,7 @@
 | [x] | [acroname-hub_20261012](./tracks/_archive/acroname-hub_20261012/index.md) | Acroname USB Hub | 2026-10-12 | 2026-10-21 |
 | [ ] | [docs-site_20261012](./tracks/docs-site_20261012/index.md) | Documentation Site and Machine Setup | 2026-10-12 | 2026-10-23 |
 | [x] | [usb3-vision-camera_20261021](./tracks/_archive/usb3-vision-camera_20261021/index.md) | USB3 Vision Camera | 2026-10-21 | 2026-10-23 |
-| [~] | [preview-mode_20261102](./tracks/preview-mode_20261102/index.md) | Camera Preview Mode | 2026-11-02 | 2026-11-04 |
+| [~] | [preview-mode_20261102](./tracks/preview-mode_20261102/index.md) | Camera Preview Mode | 2026-11-02 | 2026-11-10 |
 | [x] | [gphoto2-single-setting_20261102](./tracks/gphoto2-single-setting_20261102/index.md) | gphoto2 Single-Setting Reads | 2026-11-02 | 2026-11-04 |
 | [x] | [genicam-deepening_20261104](./tracks/genicam-deepening_20261104/index.md) | GenICam Deepening | 2026-11-04 | 2026-11-06 |
 | [ ] | [cli-missing-sdks_20261104](./tracks/cli-missing-sdks_20261104/index.md) | CLI Errors and Missing SDKs | 2026-11-04 | 2026-11-04 |

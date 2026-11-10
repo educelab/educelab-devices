@@ -136,8 +136,45 @@ def save(out: Path, name: str, data: bytes) -> tuple[int, int, float]:
     return gray.shape[1], gray.shape[0], sharpness(gray)
 
 
+SIZE_PIXELS = {"QVGA": (320, 216), "VGA": (640, 424), "XGA": (1024, 680)}
+
+
+def thumb(data: bytes) -> np.ndarray:
+    with Image.open(io.BytesIO(data)) as image:
+        return np.asarray(image.convert("L").resize((32, 32)), dtype=np.float64)
+
+
+def after_change(session, size: str | None = None, hold: float = 3.0):
+    """Preview for `hold` seconds after a write. Returns the last frame and a
+    note of when the frame size matched `size` and when the content last
+    changed, so the saved frame reflects the write and the lag is recorded."""
+    want = SIZE_PIXELS.get(size) if size else None
+    started = time.monotonic()
+    sized_at = changed_at = None
+    data, last, count = b"", None, 0
+    while time.monotonic() - started < hold:
+        data, _ = preview(session)
+        count += 1
+        now = time.monotonic() - started
+        with Image.open(io.BytesIO(data)) as image:
+            dims = image.size
+        if want and sized_at is None and dims == want:
+            sized_at = now
+        t = thumb(data)
+        if last is not None and np.abs(t - last).mean() > 2.0:
+            changed_at = now
+        last = t
+    note = f"{count} frames in {hold:.0f} s"
+    if want:
+        note += (
+            f"; size {'never matched' if sized_at is None else f'+{sized_at:.2f} s'}"
+        )
+    note += f"; content last changed {'never' if changed_at is None else f'+{changed_at:.2f} s'}"
+    return data, note
+
+
 def settle_frames(session, n: int = 3) -> bytes:
-    """Discard a few frames after a change so the saved one reflects it."""
+    """Discard a few frames so the next one is fresh (no setting change)."""
     data = b""
     for _ in range(n):
         data, _ = preview(session)
@@ -156,9 +193,10 @@ def run_zoom(camera: GPhoto2Camera, session, out: Path) -> None:
             session.set_config({"liveviewsize": size})
             for zoom in ZOOMS:
                 session.set_config({"liveviewzoomarea": zoom})
-                data = settle_frames(session)
+                data, note = after_change(session, size)
                 w, h, s = save(out, f"{size}-zoom{zoom}", data)
                 print(f"  {size:<5} zoom {zoom:<5} {w}x{h} {len(data):>7} B  {s:9.1f}")
+                print(f"        {note}")
 
         if center is None:
             print("\nno changeafarea widget; skipping zoom-center checks")
@@ -173,8 +211,9 @@ def run_zoom(camera: GPhoto2Camera, session, out: Path) -> None:
             except Exception as exc:  # noqa: BLE001 - recording what fails
                 print(f"  {value:<10} write failed: {exc}")
                 continue
-            data = settle_frames(session)
+            data, note = after_change(session)
             w, h, s = save(out, f"XGA-zoom512-af{value}", data)
+            print(f"             {note}")
             reads = session.value("changeafarea")
             print(f"  {value:<10} reads {reads!r}; {w}x{h} sharpness {s:.1f}")
     finally:

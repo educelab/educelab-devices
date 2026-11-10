@@ -29,8 +29,8 @@ Use throwaway scripts in a scratch directory, not package code. Each finding goe
   - The first `capture_preview()` starts live view and blanks the rear screen and EVF ("Connected to PC"); `viewfinder` writes change neither display, and only closing the session brings them back. So `stop_preview()` can't return the operator's screens mid-session. Details in `docs/hardware/gphoto2-cameras.md` (Live view).
 - [~] Task 1.2: Z7 II: check whether `changeafarea` (or another widget) moves the `liveviewzoomarea` crop, and record its coordinate system and limits. Record the exact crop each zoom level gives at each `liveviewsize`.
 - [ ] Task 1.3: Z7 II: after a focus step, check whether the next preview requested can still show the lens from before the step, and how many previews it takes to settle.
-- [ ] Task 1.4: CM3-U3-50S5M and IDS U3-36P0XCP: check which of `OffsetX`/`OffsetY` and `Width`/`Height` can be written while streaming, through each backend we support on the bench (Spinnaker, Aravis, GenTL), and record their increments.
-- [ ] Task 1.5: CM3 and IDS: record the binning and decimation nodes, modes and selectors, whether each mode averages or sums, whether it changes the frame rate, and the restart cost of switching geometry.
+- [~] Task 1.4: CM3-U3-50S5M and IDS U3-36P0XCP: check which of `OffsetX`/`OffsetY` and `Width`/`Height` can be written while streaming, through each backend we support on the bench (Spinnaker, Aravis, GenTL), and record their increments.
+- [~] Task 1.5: CM3 and IDS: record the binning and decimation nodes, modes and selectors, whether each mode averages or sums, whether it changes the frame rate, and the restart cost of switching geometry.
 
 Prepared before the rig run, smoke-tested on the fakes only:
 
@@ -46,6 +46,15 @@ Prepared before the rig run, smoke-tested on the fakes only:
   retries any that fail with acquisition paused, timing the restart. It
   reports each frame's size, mean level and frame rate. It puts the geometry
   back as found, and never touches `TLParamsLocked`.
+
+#### Hardware runs owed (Phase 1)
+
+Lens caps were on for the 2026-11-10 GenICam runs, and the room lights changed during the Z7 II zoom run, so these wait for a stable, lit scene. All on the lab Mac, through the hardware venv (Python 3.12, Aravis, gphoto2; no PySpin).
+
+- Task 1.2: `z7_live_view.py zoom` against a flat, detailed target. The first run's frames lagged the writes by about two settings, so the script now previews for 3 s after each write and records when the size and content change. Whether `liveviewzoomarea` crops on macOS, and whether `changeafarea` moves it, are open; `changeafarea` writes were accepted but read back `0x0`.
+- Task 1.3: `z7_live_view.py settle`, same target, lens in AF-S.
+- Tasks 1.4–1.5: `genicam_geometry.py aravis --exposure <s>` on the IDS and one CM3, uncapped, evenly lit: binning averages or sums, the IDS offset check, and which write lowers the CM3's throughput limit.
+- Spinnaker and GenTL (Task 1.4 asks for every backend): not possible on this Mac without PySpin. Decide whether the Windows rig covers them or they're recorded as unknown.
 
 ### Verification
 

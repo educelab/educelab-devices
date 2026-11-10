@@ -97,6 +97,23 @@ Five CM3-U3-50S5M at 20 ms exposure through `AravisCamera` (async) on the lab Ma
 
 Spinnaker agrees: on the same rig, an 80 MB/s cap removed the missing trailers there too, and its all-camera Mono16 capture median was 249 ms ([spinnaker.md](spinnaker.md), USB topology). Uncapped, five cameras through Spinnaker took 286 ms a round.
 
+## Geometry: ROI, binning, decimation
+
+Discovery for camera preview (`conductor/tracks/preview-mode_20261102/genicam_geometry.py`), through Aravis 0.8.36 on the lab Mac (macOS 27, Python 3.12), 2026-11-10, lens caps on. The driver doesn't change geometry yet; this records what a preview mode can use.
+
+- **Size changes need an acquisition restart through Aravis.** Both cameras accept `Width`, `Height`, `Binning*` and `Decimation*` writes while streaming, but Aravis then completes no frame at the new size: its buffers are sized for the old payload, and the frames come back `INCOMPLETE`. Stopping and starting acquisition (`_acquisition_paused`) fixes it. On the CM3 the stop/start took 0.09–0.16 s and the first frame came 15–160 ms later. [V]
+- **Offsets can move while streaming.** On the CM3, `OffsetX`/`OffsetY` writes took effect with no restart: the next frame at the same size came 11 ms later, and the image shifted by exactly the 32 px written (phase correlation). Not yet checked cleanly on the IDS. [V on the CM3]
+- **The CM3 can lower its own throughput limit.** After a binning sweep (1, 2, 4 and back to 1), `DeviceLinkThroughputLimit` read 120.576 MB/s instead of the 180.864 it started at, and the camera kept it into the next session, as it keeps any limit ([spinnaker.md](spinnaker.md)). Which write lowers it isn't isolated yet. Anything that changes geometry should restore the limit afterwards. [V]
+- **Frame rate follows the size on the CM3:** halving the ROI doubled the rate (35.7 to 69.8 frames/s at 15 ms auto exposure). The IDS's rate is capped at 8 frames/s at full size by `AcquisitionFrameRate`; whether its maximum rises with a smaller ROI is unchecked. [V on the CM3]
+
+| | CM3-U3-50S5M | IDS U3-36P0XCP |
+|---|---|---|
+| `Width` / `Height` step | 8 / 2 | 12 / 2 |
+| `OffsetX` / `OffsetY` step | 2 / 2 | 8 / 2 |
+| Binning | `BinningVertical` 1, 2 or 4 (3 refused); `BinningHorizontal` read-only, follows it. No selector or mode node | `BinningHorizontal`/`Vertical` 1–2, `BinningSelector` `Sensor` only, mode `Sum` only (writing it fails, even paused) |
+| Decimation | `DecimationVertical` 1–2; `DecimationHorizontal` read-only, follows it | `DecimationHorizontal`/`Vertical` 1–2, `DecimationSelector` `Sensor` only |
+| Averages or sums | unknown, needs a lit scene | unknown; the mode node says `Sum`, unconfirmed by levels |
+
 ## Hazards
 
 - **Aravis sync USB mode** is not safe on any OS; the driver uses async everywhere.

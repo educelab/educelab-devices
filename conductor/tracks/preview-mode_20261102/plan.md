@@ -113,14 +113,22 @@ Scope as amended after Phase 1.
 
 ### Tasks
 
-- [ ] Task 3.1: Add the core's geometry mapping: region fractions to ROI rounded to the node increments, and `max_size` to binning or decimation and then host stride. Tests on the fake node map.
-- [ ] Task 3.2: Make the core's acquisition mode explicit (free-run, software trigger, preview). Apply the geometry at `start_preview()`, restarting acquisition only when a locked node changes, and restore the capture geometry at `stop_preview()` and `close()`.
-- [ ] Task 3.3: Keep the canonical `width`/`height` reporting the capture size during preview. Keep timestamps and `not_before` correct across geometry restarts.
-- [ ] Task 3.4: Enable each path per model and per backend according to the Phase 1 findings.
+- [x] Task 3.1: Add the core's geometry mapping: region fractions to ROI rounded to the node increments, and `max_size` to binning or decimation and then host stride. Tests on the fake node map.
+  - `hardware_roi()` and `pick_decimation()` in `cameras/_preview.py`. The ROI contains the region and the host crops the rest. Its size depends only on the region's size, so a pan never changes it. Decimation is the largest that still leaves `max_size` pixels, and never binning.
+- [x] Task 3.2: Apply the geometry at `start_preview()`, restarting acquisition only when a locked node changes, and restore the capture geometry at `stop_preview()` and `close()`.
+  - A full-sensor, full-resolution preview writes nothing to the camera. A same-size move writes only the offsets, live where the camera allows it and paused where it doesn't. Stopping restores the geometry and then the throughput limit, in one pause, with a pixel format round trip when the limit's maximum has shrunk; the limit is never written above its maximum.
+  - Open now puts a leftover ROI or decimation back on the whole image, so a preview cut short by a crash can't leave the next session capturing a crop.
+  - Not done: making the acquisition mode explicit. Preview turned out not to be a third mode; it grabs through whichever of free-run or software trigger is on, so the refactor would only have churned timing code that has no hardware run behind it yet.
+- [x] Task 3.3: Keep the canonical `width`/`height` reporting the capture size during preview. Keep timestamps and `not_before` correct across geometry restarts.
+  - After any geometry change, frames stamped before it are dropped, so a frame never carries a geometry it wasn't taken with. A camera that can't time frames drops the ones already waiting instead.
+- [x] Task 3.4: Enable each path per model and per backend according to the Phase 1 findings.
+  - By what the camera reports, not a table: the hardware path needs writable `Width`, `Height`, `OffsetX` and `OffsetY` before acquisition starts, decimation needs a writable `DecimationVertical`, and offsets move live only while they read as writable. Phase 1 found the path works on every camera and backend checked.
+
+Owed hardware checks (Task 5.4): `Width`, the offsets and their maxima are in decimated pixels after a decimation write (assumed, on both cameras); the ROI reset at open; the first frame after a live offset write shows the new offsets; the CM3's limit comes back after a decimated preview; the IDS through IDS peak's producer moves with a restart.
 
 ### Verification
 
-- [ ] The core and backend tests pass, and the contract still passes.
+- [x] The core and backend tests pass, and the contract still passes. (2560 passed, 2026-11-10, including the contract on ROI fakes and an ROI preview through each backend's fake.)
 
 ## Phase 4: gphoto2 zoom and size
 

@@ -177,7 +177,6 @@ def run_zoom(camera: GPhoto2Camera, session, out: Path) -> None:
             w, h, s = save(out, f"XGA-zoom512-af{value}", data)
             reads = session.value("changeafarea")
             print(f"  {value:<10} reads {reads!r}; {w}x{h} sharpness {s:.1f}")
-        ask("Did the zoomed view move between the changeafarea writes")
     finally:
         session.set_config({k: v for k, v in original.items() if v is not None})
         if center is not None and center.value:

@@ -25,8 +25,9 @@ Use throwaway scripts in a scratch directory, not package code. Each finding goe
 
 ### Tasks
 
-- [~] Task 1.1: Z7 II: record what `viewfinder=1` (and `0`) does to the rear screen and the EVF, and whether `capture_preview()` alone does the same.
-- [ ] Task 1.2: Z7 II: check whether `changeafarea` (or another widget) moves the `liveviewzoomarea` crop, and record its coordinate system and limits. Record the exact crop each zoom level gives at each `liveviewsize`.
+- [x] Task 1.1: Z7 II: record what `viewfinder=1` (and `0`) does to the rear screen and the EVF, and whether `capture_preview()` alone does the same.
+  - The first `capture_preview()` starts live view and blanks the rear screen and EVF ("Connected to PC"); `viewfinder` writes change neither display, and only closing the session brings them back. So `stop_preview()` can't return the operator's screens mid-session. Details in `docs/hardware/gphoto2-cameras.md` (Live view).
+- [~] Task 1.2: Z7 II: check whether `changeafarea` (or another widget) moves the `liveviewzoomarea` crop, and record its coordinate system and limits. Record the exact crop each zoom level gives at each `liveviewsize`.
 - [ ] Task 1.3: Z7 II: after a focus step, check whether the next preview requested can still show the lens from before the step, and how many previews it takes to settle.
 - [ ] Task 1.4: CM3-U3-50S5M and IDS U3-36P0XCP: check which of `OffsetX`/`OffsetY` and `Width`/`Height` can be written while streaming, through each backend we support on the bench (Spinnaker, Aravis, GenTL), and record their increments.
 - [ ] Task 1.5: CM3 and IDS: record the binning and decimation nodes, modes and selectors, whether each mode averages or sums, whether it changes the frame rate, and the restart cost of switching geometry.

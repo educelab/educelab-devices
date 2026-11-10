@@ -244,6 +244,19 @@ have it, and it stays off after `close()`.
   left running. A failure there is logged, not raised.
 - Preview images are JPEG on Nikon and Canon bodies. On the Z7 II, previews come back
   without `viewfinder` being set, so libgphoto2 starts live view itself. **verified**.
+- **Z7 II displays during live view** (macOS, firmware V1.62, libgphoto2 2.5 via
+  python-gphoto2, 2026-11-10, `z7_live_view.py viewfinder`). **verified**:
+  - At open, `viewfinder` reads `0` and the rear screen and EVF show the scene.
+  - The first `capture_preview()` starts live view on the host: `viewfinder` then reads
+    `1`, and both displays show "Connected to PC" and go blank. The first preview took
+    0.38 s, later ones 15–70 ms.
+  - Live view stays on with no previews (10 s idle); the displays stay blank.
+  - Writing `viewfinder=1` or `viewfinder=0` changes neither display. `0` reads back
+    `0`, but the next preview sets it to `1` again.
+  - Closing the session (`gp_camera_exit`) brings both displays back on their own.
+  - So the operator loses the camera's screens from the first preview until `close()`,
+    and `viewfinder=0` doesn't give them back. Whether `viewfinder=0` stops the sensor
+    (heat, power) is **unknown**.
 - **Z7 II sizes and zoom**, both native settings (`dslr-liveview-linux-1.log`):
 
   | `liveviewsize` | Frame | JPEG |

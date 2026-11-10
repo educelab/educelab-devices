@@ -70,8 +70,9 @@ Lens caps were on for the 2026-11-10 GenICam runs, and the room lights changed d
   - Committed red: the drivers pass it from Tasks 2.3–2.6. `not_before` is checked by elapsed time, since `preview_frame()` returns a bare array and every fake runs on the real clock. Wrong-state calls raise a new `PreviewError(DeviceError)`, following `PositionError`. Setting changes are checked by writing every choice during preview and confirming frames stay `uint8` at the reported size.
 - [x] Task 2.3: Add `start_preview()`, `stop_preview()`, the `preview` property and `preview_frame(not_before=None)` to `Camera`, with driver hooks. Make `capture_frame()`/`capture_files()` refuse during preview.
   - `Camera.close()` stops preview before `Device.close()` runs `_close()`, logging a failure to stop; `_reset_state()` also clears it. A failed `_start_preview()` ends preview rather than leaving a half-applied one. `preview_frame()` takes `not_before` keyword-only, like `capture_frame()`.
-- [~] Task 2.4: Simulated cameras: implement region and `max_size` on the host, and pass the contract.
-- [ ] Task 2.5: GenICam core: implement preview with host crop and stride, and `not_before` through `_grab()`. Pass the contract on the fakes for all three backends.
+- [x] Task 2.4: Simulated cameras: implement region and `max_size` on the host, and pass the contract.
+  - The host crop and stride is a shared helper, `cameras/_preview.py` (`host_crop`), for the GenICam fallback and gphoto2 too. It rounds the region inward to whole pixels and clips it to the part of the sensor the frames cover, so the reported region always lies within the requested one. A `SimulatedCamera` with a larger `sensor_size` now takes its frames from the middle of the sensor.
+- [~] Task 2.5: GenICam core: implement preview with host crop and stride, and `not_before` through `_grab()`. Pass the contract on the fakes for all three backends.
 - [ ] Task 2.6: gphoto2: switch live view on and off at `start_preview()`/`stop_preview()`, stop touching continuous AF, and implement `not_before` by arrival. Pass the contract on the fake.
 
 ### Verification

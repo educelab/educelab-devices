@@ -11,6 +11,7 @@ from typing import Any, TypeVar
 import numpy as np
 import numpy.typing as npt
 
+from educelab.devices.cameras._preview import HostCrop, host_crop
 from educelab.devices.cameras.base import (
     EXPOSURE_TIME,
     GAIN,
@@ -24,6 +25,9 @@ from educelab.devices.cameras.base import (
     FileCamera,
     Frame,
     FrameCamera,
+    PreviewGeometry,
+    PreviewImage,
+    PreviewRegion,
     Setting,
     SettingValue,
 )
@@ -40,7 +44,6 @@ T = TypeVar("T", bound=np.unsignedinteger[Any])
 # Exposure that renders the test pattern at roughly half brightness, at 0 dB.
 _REFERENCE_EXPOSURE_S = 0.01
 _NOISE_SIGMA = 0.01
-_PREVIEW_STRIDE = 4
 # A real shutter at Bulb stays open while the button is held. Simulate a short hold.
 _BULB_EXPOSURE_S = _REFERENCE_EXPOSURE_S
 _VENDOR = "EduceLab"
@@ -59,7 +62,8 @@ class SimulatedCamera(FrameCamera):
     """A frame camera that renders a noisy gradient.
 
     Brightness scales with ``exposure_time`` and ``gain``, and each capture
-    takes ``exposure_time`` seconds.
+    or preview image takes ``exposure_time`` seconds. Preview crops and
+    strides the rendered frame on the host.
 
     With ``auto``, it also offers ``ExposureAuto`` and ``GainAuto`` (``Off`` or
     ``Continuous``), as GenICam cameras do, both starting at ``Continuous``.
@@ -77,8 +81,8 @@ class SimulatedCamera(FrameCamera):
             in it, as GenICam colour cameras do.
         auto: Offer auto exposure and auto gain.
         sensor_size: The whole sensor as ``(width, height)``, for a camera
-            whose frames are cropped from a larger sensor. Defaults to the
-            frame size.
+            whose frames are cropped from the middle of a larger sensor.
+            Defaults to the frame size.
     """
 
     def __init__(
@@ -99,6 +103,8 @@ class SimulatedCamera(FrameCamera):
             )
         self._width = width
         self._height = height
+        self._sensor = (sensor_width, sensor_height)
+        self._crop: HostCrop | None = None
         self._color = color
         self._rng = np.random.default_rng(seed)
         # Separate, so turning auto on doesn't change the noise.
@@ -146,16 +152,36 @@ class SimulatedCamera(FrameCamera):
                 self._store[locked], read_only=value != "Off"
             )
 
-    def _preview_frame(self) -> npt.NDArray[np.uint8]:
-        return _quantize(self._render(_PREVIEW_STRIDE), np.uint8)
+    def _start_preview(
+        self, region: PreviewRegion, max_size: int | None
+    ) -> PreviewGeometry:
+        origin = (
+            (self._sensor[0] - self._width) // 2,
+            (self._sensor[1] - self._height) // 2,
+        )
+        self._crop = host_crop(
+            region,
+            max_size,
+            sensor=self._sensor,
+            frame=(self._width, self._height),
+            origin=origin,
+        )
+        return self._crop.geometry
+
+    def _stop_preview(self) -> None:
+        self._crop = None
+
+    def _preview_frame(self, not_before: datetime | None) -> PreviewImage:
+        assert self._crop is not None
+        self._run_auto()
+        time.sleep(_wait_for(not_before) + _number(self._store[EXPOSURE_TIME]))
+        return _quantize(self._crop.apply(self._render()), np.uint8)
 
     def _capture_frame(self, not_before: datetime | None, timeout: float) -> Frame:
         self._run_auto()
         # Frames are rendered on demand, so only a future not_before needs a wait.
         exposure = _number(self._store[EXPOSURE_TIME])
-        wait = 0.0
-        if not_before is not None:
-            wait = max((not_before - datetime.now(UTC)).total_seconds(), 0.0)
+        wait = _wait_for(not_before)
         if wait + exposure > timeout:
             raise DeviceTimeout(f"{self!r} has no frame within {timeout:g} s")
         time.sleep(wait + exposure)
@@ -200,9 +226,9 @@ class SimulatedCamera(FrameCamera):
         value = min(max(value, setting.minimum), setting.maximum)
         self._store[name] = dataclasses.replace(setting, value=value)
 
-    def _render(self, stride: int = 1) -> npt.NDArray[np.float64]:
+    def _render(self) -> npt.NDArray[np.float64]:
         """The image in the current pixel format's shape: height × width × 3 for
-        RGB8. Every ``stride``-th pixel is kept, before tinting.
+        RGB8.
         """
         image = _render(
             self._width,
@@ -210,7 +236,7 @@ class SimulatedCamera(FrameCamera):
             _number(self._store[EXPOSURE_TIME]),
             _number(self._store[GAIN]),
             self._rng,
-        )[::stride, ::stride]
+        )
         if self._store[PIXEL_FORMAT].value == "RGB8":
             return image[..., np.newaxis] * _RGB_TINT
         return image
@@ -220,7 +246,8 @@ class SimulatedFileCamera(FileCamera):
     """A file camera that produces one 8-bit PGM file per capture.
 
     Files are named ``SIM_0001.pgm``, ``SIM_0002.pgm``, and so on. Each
-    capture takes ``exposure_time`` seconds.
+    capture or preview image takes ``exposure_time`` seconds. Preview crops
+    and strides the rendered image on the host.
 
     It can start like a DSLR at Bulb or Auto ISO, where ``exposure_time`` or
     ``iso`` reads as ``None`` until a value is written.
@@ -245,6 +272,7 @@ class SimulatedFileCamera(FileCamera):
         super().__init__()
         self._width = width
         self._height = height
+        self._crop: HostCrop | None = None
         self._rng = np.random.default_rng(seed)
         self._file_count = 0
         self._store = {
@@ -281,9 +309,20 @@ class SimulatedFileCamera(FileCamera):
         logger.debug("%s = %r", name, value)
         self._store[name] = dataclasses.replace(self._store[name], value=value)
 
-    def _preview_frame(self) -> npt.NDArray[np.uint8]:
-        image = self._render()[::_PREVIEW_STRIDE, ::_PREVIEW_STRIDE]
-        return _quantize(image, np.uint8)
+    def _start_preview(
+        self, region: PreviewRegion, max_size: int | None
+    ) -> PreviewGeometry:
+        size = (self._width, self._height)
+        self._crop = host_crop(region, max_size, sensor=size, frame=size)
+        return self._crop.geometry
+
+    def _stop_preview(self) -> None:
+        self._crop = None
+
+    def _preview_frame(self, not_before: datetime | None) -> PreviewImage:
+        assert self._crop is not None
+        time.sleep(_wait_for(not_before) + self._exposure())
+        return _quantize(self._crop.apply(self._render()), np.uint8)
 
     def _capture_files(self) -> list[CameraFile]:
         time.sleep(self._exposure())
@@ -309,6 +348,14 @@ class SimulatedFileCamera(FileCamera):
     def _exposure(self) -> float:
         setting = self._store[EXPOSURE_TIME]
         return _BULB_EXPOSURE_S if setting.value is None else _number(setting)
+
+
+def _wait_for(not_before: datetime | None) -> float:
+    """Seconds until ``not_before``. Images are rendered on demand, so only a
+    future ``not_before`` needs a wait."""
+    if not_before is None:
+        return 0.0
+    return max((not_before - datetime.now(UTC)).total_seconds(), 0.0)
 
 
 def _number(setting: Setting) -> float:

@@ -516,3 +516,16 @@ def test_el_devices_discover_lists_gentl_cameras(
     out = capsys.readouterr().out
     assert "gentl: 2 found" in out
     assert re.search(rf"U3-36P0XCP-M +{MONO} +IDS-{MONO}", out)
+
+
+def test_an_roi_preview_resizes_the_stream_and_puts_it_back():
+    sim = FakeCamera(MONO, width=320, height=240, roi=True, decimation=2)
+    with make(MONO, FakeGenicam([sim])) as camera:
+        geometry = camera.start_preview((0.25, 0.25, 0.25, 0.25), max_size=40)
+        assert sim.get("DecimationVertical") == 2
+        frame = camera.preview_frame()
+        assert frame.pixels.shape == (geometry.height, geometry.width)
+        moved = camera.start_preview((0.5, 0.5, 0.25, 0.25), max_size=40)
+        assert camera.preview_frame().geometry == moved
+        camera.stop_preview()
+        assert camera.capture_frame().pixels.shape == (240, 320)

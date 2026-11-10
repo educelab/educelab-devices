@@ -31,7 +31,12 @@ from typing import Any, Protocol, TypeVar
 import numpy as np
 import numpy.typing as npt
 
-from educelab.devices.cameras._preview import HostCrop, host_crop
+from educelab.devices.cameras._preview import (
+    HostCrop,
+    hardware_roi,
+    host_crop,
+    pick_decimation,
+)
 from educelab.devices.cameras.base import (
     EXPOSURE_TIME,
     GAIN,
@@ -466,6 +471,15 @@ class GenICamCamera(FrameCamera):
         self._last_frame_at = -math.inf
         self._trigger_turnaround: float | None = None
         self._crop: HostCrop | None = None
+        # Set when the camera takes an ROI: the geometry captures use.
+        self._capture_geometry: _Geometry | None = None
+        self._decimations: tuple[int, ...] = (1,)
+        self._limits: dict[int, _GeometryLimits] = {}
+        # What preview last wrote, or None while the capture geometry stands.
+        self._applied: _Geometry | None = None
+        self._limit_before_preview: int | None = None
+        # Frames from before this show the previous preview geometry.
+        self._preview_floor: datetime | None = None
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__} {self._serial}>"
@@ -627,6 +641,9 @@ class GenICamCamera(FrameCamera):
         self._timestamp_offset = None
         self._timestamp_source = None
         self._arrival_gaps.clear()
+        self._crop = self._applied = self._capture_geometry = None
+        self._limit_before_preview = self._preview_floor = None
+        self._limits = {}
         return problems
 
     def _not_found_message(self) -> str:
@@ -658,6 +675,7 @@ class GenICamCamera(FrameCamera):
             (n for n in _EXPOSURE_NODES if self._connection.has(n)), None
         )
         self._self_slowing = self._vendor in _SELF_SLOWING_VENDORS
+        self._setup_geometry()
         self._descriptors = self._describe_settings()
         # Another program may have left the camera slowed down.
         self._raise_frame_rate()
@@ -842,9 +860,9 @@ class GenICamCamera(FrameCamera):
             gain,
             _Enum("GainAuto", "GainAuto", _AUTO_MODES),
             _Enum(PIXEL_FORMAT, "PixelFormat", _PIXEL_FORMATS, paused=True),
-            # Read-only even where the camera could crop: the driver sets no ROI.
-            _ReadOnly(WIDTH, ("Width",), "px", integer=True),
-            _ReadOnly(HEIGHT, ("Height",), "px", integer=True),
+            # Read-only even where the camera could crop: only preview sets an ROI.
+            _FrameSize(WIDTH, "Width"),
+            _FrameSize(HEIGHT, "Height"),
             _ReadOnly(SENSOR_WIDTH, ("SensorWidth",), "px", integer=True),
             _ReadOnly(SENSOR_HEIGHT, ("SensorHeight",), "px", integer=True),
             _ThroughputLimit(),
@@ -916,7 +934,73 @@ class GenICamCamera(FrameCamera):
     def _capture_frame(self, not_before: datetime | None, timeout: float) -> Frame:
         return self._grab(not_before, timeout)
 
+    # --- Preview ---------------------------------------------------------------
+
+    def _setup_geometry(self) -> None:
+        """Before acquisition starts, find out whether the camera takes an ROI
+        and put it back on the whole image.
+
+        A camera keeps its ROI until it's power-cycled, so a preview cut short
+        by a crash would otherwise leave this session capturing a crop.
+        """
+        conn = self._connection
+        self._capture_geometry = self._applied = None
+        self._limits = {}
+        self._decimations = (1,)
+        nodes = ("Width", "Height", "OffsetX", "OffsetY")
+        if not all(conn.is_writable(node) for node in nodes):
+            return
+        try:
+            if conn.is_writable("DecimationVertical"):
+                low, high, _ = self._int_range("DecimationVertical")
+                self._decimations = tuple(d for d in (1, 2, 4, 8) if low <= d <= high)
+            limits = self._enter_decimation(1)
+            width, height = limits.full
+            self._write_geometry(_Geometry(1, 0, 0, width, height), decimate=False)
+        except DeviceError as exc:
+            logger.warning("%r: previews will crop on the host: %s", self, exc)
+            return
+        self._capture_geometry = _Geometry(1, 0, 0, width, height)
+
     def _start_preview(
+        self, region: PreviewRegion, max_size: int | None
+    ) -> PreviewGeometry:
+        capture = self._capture_geometry
+        if capture is None:
+            return self._start_host_preview(region, max_size)
+        decimation = pick_decimation(
+            region, max_size, full=self._limits[1].full, choices=self._decimations
+        )
+        current = self._applied or capture
+        if self._applied is None:
+            self._limit_before_preview = self._read_limit()
+        target = None
+        if decimation in self._limits:
+            target = self._limits[decimation].roi(region, decimation)
+        if target is None or target.size != current.size:
+            # Marked first, so a failure part-way still restores the camera.
+            self._applied = current
+            with self._acquisition_paused():
+                limits = self._enter_decimation(decimation)
+                target = limits.roi(region, decimation)
+                self._write_geometry(target, decimate=False)
+            self._raise_frame_rate()
+        elif target != current:
+            self._applied = current
+            self._move(target)
+        if target != current:
+            self._applied = target
+            self._preview_floor = datetime.fromtimestamp(host_time(), UTC)
+        self._crop = host_crop(
+            region,
+            max_size,
+            sensor=self._limits[decimation].full,
+            frame=(target.width, target.height),
+            origin=(target.x, target.y),
+        )
+        return self._crop.geometry
+
+    def _start_host_preview(
         self, region: PreviewRegion, max_size: int | None
     ) -> PreviewGeometry:
         """Plan a crop and stride of the frames the camera already sends."""
@@ -941,10 +1025,22 @@ class GenICamCamera(FrameCamera):
         return self._crop.geometry
 
     def _stop_preview(self) -> None:
-        self._crop = None
+        self._crop = self._preview_floor = None
+        applied, self._applied = self._applied, None
+        limit, self._limit_before_preview = self._limit_before_preview, None
+        capture = self._capture_geometry
+        if applied is None or capture is None:
+            return
+        with self._acquisition_paused():
+            self._write_geometry(capture, decimate=True)
+            self._restore_limit(limit)
+        self._raise_frame_rate()
 
     def _preview_frame(self, not_before: datetime | None) -> PreviewFrame:
         assert self._crop is not None
+        floor = self._preview_floor
+        if floor is not None and self._timestamp_offset is not None:
+            not_before = floor if not_before is None else max(not_before, floor)
         frame = self._grab(not_before, self.capture_timeout)
         return PreviewFrame(
             np.ascontiguousarray(self._crop.apply(frame.pixels)),
@@ -952,6 +1048,96 @@ class GenICamCamera(FrameCamera):
             frame.timestamp,
             self._crop.geometry,
         )
+
+    def _enter_decimation(self, decimation: int) -> "_GeometryLimits":
+        """Switch decimation with acquisition stopped, and learn the image
+        size and increments there the first time."""
+        self._set_int("OffsetX", 0)
+        self._set_int("OffsetY", 0)
+        conn = self._connection
+        for node in ("DecimationVertical", "DecimationHorizontal"):
+            # The CM3's horizontal node is read-only and follows the vertical.
+            if len(self._decimations) > 1 and conn.is_writable(node):
+                self._set_int(node, decimation)
+        if decimation not in self._limits:
+            width, height = self._int_range("Width"), self._int_range("Height")
+            self._limits[decimation] = _GeometryLimits(
+                full=(width[1], height[1]),
+                size_inc=(width[2], height[2]),
+                offset_inc=(
+                    self._int_range("OffsetX")[2],
+                    self._int_range("OffsetY")[2],
+                ),
+                min_size=(width[0], height[0]),
+            )
+        return self._limits[decimation]
+
+    def _write_geometry(self, geometry: "_Geometry", *, decimate: bool) -> None:
+        """Write an ROI with acquisition stopped: the size while the offsets
+        are zero, so it always fits."""
+        if decimate:
+            self._enter_decimation(geometry.decimation)
+        self._set_int("Width", geometry.width)
+        self._set_int("Height", geometry.height)
+        self._set_int("OffsetX", geometry.x)
+        self._set_int("OffsetY", geometry.y)
+
+    def _move(self, target: "_Geometry") -> None:
+        """Move an ROI of the same size, without a restart where the camera
+        takes offsets while streaming."""
+        conn = self._connection
+
+        def write() -> None:
+            self._set_int("OffsetX", target.x)
+            self._set_int("OffsetY", target.y)
+
+        if conn.is_writable("OffsetX") and conn.is_writable("OffsetY"):
+            write()
+            # For a camera that can't time frames: drop the ones already here.
+            self._discard_waiting_frames()
+        else:
+            # IDS peak's GenTL producer locks offsets while streaming.
+            with self._acquisition_paused():
+                write()
+
+    def _read_limit(self) -> int | None:
+        """The throughput limit in B/s, if the camera has one switched on."""
+        conn, node = self._connection, "DeviceLinkThroughputLimit"
+        if not (conn.is_readable(node) and _ThroughputLimit()._active(self)):
+            return None
+        return self._call(f"read {node}", lambda: conn.get_int(node))
+
+    def _restore_limit(self, saved: int | None) -> None:
+        """Put back the throughput limit a smaller payload lowered, with
+        acquisition stopped. Never written above its maximum, which breaks
+        the CM3's stream (usb3-vision.md, Geometry).
+        """
+        conn, node = self._connection, "DeviceLinkThroughputLimit"
+        try:
+            if saved is None or self._read_limit() in (None, saved):
+                return
+            low, high, inc = self._int_range(node)
+            if high < saved:
+                # The CM3's maximum only comes back with a pixel format write.
+                formats = self._enum_choices("PixelFormat", _PIXEL_FORMATS)
+                current = self._read_enum("PixelFormat")
+                other = next((f for f in formats if f != current), None)
+                if other is not None:
+                    self._set_enum("PixelFormat", other)
+                    self._set_enum("PixelFormat", current)
+                low, high, inc = self._int_range(node)
+            if conn.is_writable(node):
+                self._set_int(node, _snap(min(saved, high), low, high, inc))
+        except DeviceError as exc:
+            logger.warning("%r: throughput limit not restored: %s", self, exc)
+
+    def _int_range(self, name: str) -> tuple[int, int, int]:
+        conn = self._connection
+        return self._call(f"read the limits of {name}", lambda: conn.int_range(name))
+
+    def _set_int(self, name: str, value: int) -> None:
+        conn = self._connection
+        self._call(f"set {name} to {value}", lambda: conn.set_int(name, value))
 
     # --- Capture ----------------------------------------------------------------
 
@@ -1249,6 +1435,42 @@ class GenICamCamera(FrameCamera):
         )
 
 
+@dataclass(frozen=True)
+class _Geometry:
+    """An ROI, in pixels of the image at its decimation."""
+
+    decimation: int
+    x: int
+    y: int
+    width: int
+    height: int
+
+    @property
+    def size(self) -> tuple[int, int, int]:
+        """What can't change without an acquisition restart."""
+        return self.decimation, self.width, self.height
+
+
+@dataclass(frozen=True)
+class _GeometryLimits:
+    """The whole image and the ROI increments at one decimation."""
+
+    full: tuple[int, int]
+    size_inc: tuple[int, int]
+    offset_inc: tuple[int, int]
+    min_size: tuple[int, int]
+
+    def roi(self, region: PreviewRegion, decimation: int) -> _Geometry:
+        x, y, width, height = hardware_roi(
+            region,
+            full=self.full,
+            size_inc=self.size_inc,
+            offset_inc=self.offset_inc,
+            min_size=self.min_size,
+        )
+        return _Geometry(decimation, x, y, width, height)
+
+
 # --- Settings ----------------------------------------------------------------
 
 
@@ -1408,6 +1630,22 @@ class _Enum(_Descriptor):
 
 
 @dataclass(frozen=True)
+class _FrameSize(_Descriptor):
+    """A capture's width or height: the node, or the capture geometry on a
+    camera whose ROI preview changes."""
+
+    name: str
+    node: str
+
+    def read(self, camera: GenICamCamera) -> Setting | None:
+        capture = camera._capture_geometry
+        if capture is not None:
+            value = capture.width if self.node == "Width" else capture.height
+            return Setting(self.name, value, unit="px", read_only=True)
+        return _ReadOnly(self.name, (self.node,), "px", integer=True).read(camera)
+
+
+@dataclass(frozen=True)
 class _ReadOnly(_Descriptor):
     """A number read from the first of ``nodes`` the camera can read."""
 
@@ -1517,6 +1755,9 @@ class _ThroughputLimit(_Descriptor):
                         f"{camera!r} won't accept {node}, even stopped"
                     )
                 write()
+        if camera._limit_before_preview is not None:
+            # Set during preview, so this is what stopping should leave.
+            camera._limit_before_preview = native
         camera._raise_frame_rate()
 
     def _active(self, camera: GenICamCamera) -> bool:

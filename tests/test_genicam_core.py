@@ -1,5 +1,6 @@
 """The shared GenICam camera core, tested against the in-memory fake backend."""
 
+import logging
 import math
 import pickle
 import time
@@ -1132,6 +1133,253 @@ def test_preview_releases_its_buffer(camera, fake):
     assert fake.held == []
 
 
+# --- Preview with a hardware ROI ----------------------------------------------
+
+CM3 = {
+    "width": 2448,
+    "height": 2048,
+    "roi": True,
+    "decimation": 2,
+    "decimation_horizontal_follows": True,
+}
+QUARTER = PreviewRegion(0.25, 0.25, 0.25, 0.25)
+
+
+@pytest.fixture
+def roi_fake():
+    return FakeCamera(MONO, **CM3)
+
+
+@pytest.fixture
+def roi_camera(roi_fake):
+    with GenICamCamera(MONO, FakeBackend([roi_fake])) as camera:
+        roi_fake.writes.clear()
+        yield camera
+
+
+def geometry_of(fake):
+    names = ("OffsetX", "OffsetY", "Width", "Height")
+    return tuple(fake.get(name) for name in names)
+
+
+def restarts(fake):
+    """Node writes that needed acquisition stopped."""
+    return [name for name, _ in fake.writes if name in ("Width", "Height")]
+
+
+def test_full_preview_at_full_resolution_touches_nothing(roi_camera, roi_fake):
+    geometry = roi_camera.start_preview()
+    assert (geometry.width, geometry.height) == (2448, 2048)
+    assert geometry.region.is_full
+    roi_camera.preview_frame()
+    roi_camera.stop_preview()
+    assert roi_fake.writes == []
+
+
+def test_a_region_becomes_a_camera_roi(roi_camera, roi_fake):
+    geometry = roi_camera.start_preview(QUARTER)
+    x, y, width, height = geometry_of(roi_fake)
+    assert (x, y) == (612, 512)
+    # The region, plus room for the offset increment, on the size increment.
+    assert (width, height) == (616, 514)
+    assert geometry.region == QUARTER
+    assert (geometry.width, geometry.height) == (612, 512)
+    frame = roi_camera.preview_frame()
+    assert frame.pixels.shape == (512, 612)
+    assert frame.geometry == geometry
+
+
+def test_moving_a_region_writes_only_offsets(roi_camera, roi_fake):
+    roi_camera.start_preview(QUARTER)
+    roi_fake.writes.clear()
+    for step in range(1, 20):
+        moved = PreviewRegion(0.25 + step / 100, 0.25 + step / 150, 0.25, 0.25)
+        geometry = roi_camera.start_preview(moved)
+        assert moved.contains(geometry.region)
+        assert roi_camera.preview_frame().geometry == geometry
+    assert {name for name, _ in roi_fake.writes} == {"OffsetX", "OffsetY"}
+    assert roi_fake.streaming
+
+
+def test_asking_for_the_same_preview_again_writes_nothing(roi_camera, roi_fake):
+    first = roi_camera.start_preview(QUARTER)
+    roi_fake.writes.clear()
+    assert roi_camera.start_preview(QUARTER) == first
+    assert roi_fake.writes == []
+
+
+def test_offsets_locked_while_streaming_move_with_a_restart():
+    fake = FakeCamera(MONO, **CM3, offsets_while_streaming=False)
+    with GenICamCamera(MONO, FakeBackend([fake])) as camera:
+        camera.start_preview(QUARTER)
+        geometry = camera.start_preview(PreviewRegion(0.5, 0.5, 0.25, 0.25))
+        assert geometry_of(fake)[:2] == (1224, 1024)
+        assert camera.preview_frame().geometry == geometry
+
+
+def test_max_size_decimates_and_strides_the_rest(roi_camera, roi_fake):
+    geometry = roi_camera.start_preview(max_size=400)
+    assert roi_fake.get("DecimationVertical") == 2
+    assert geometry_of(roi_fake) == (0, 0, 1224, 1024)
+    # 1,224 decimated pixels, then every 4th on the host.
+    assert (geometry.width, geometry.height) == (306, 256)
+    assert roi_camera.preview_frame().pixels.shape == (256, 306)
+
+
+def test_max_size_above_half_the_region_leaves_decimation_off(roi_camera, roi_fake):
+    geometry = roi_camera.start_preview(max_size=2000)
+    assert roi_fake.get("DecimationVertical") == 1
+    assert (geometry.width, geometry.height) == (1224, 1024)
+
+
+def test_a_decimated_region_is_placed_in_decimated_pixels(roi_camera, roi_fake):
+    geometry = roi_camera.start_preview(PreviewRegion(0.5, 0.5, 0.5, 0.5), max_size=612)
+    assert roi_fake.get("DecimationVertical") == 2
+    # Slid back from the far edge to make room for the offset increment.
+    assert geometry_of(roi_fake)[:2] == (608, 510)
+    assert geometry.region == PreviewRegion(0.5, 0.5, 0.5, 0.5)
+    assert (geometry.width, geometry.height) == (612, 512)
+
+
+def test_stopping_restores_the_capture_geometry(roi_camera, roi_fake):
+    roi_camera.start_preview(QUARTER, max_size=100)
+    roi_camera.stop_preview()
+    assert roi_fake.get("DecimationVertical") == 1
+    assert geometry_of(roi_fake) == (0, 0, 2448, 2048)
+    assert roi_camera.capture_frame().pixels.shape == (2048, 2448)
+
+
+def test_closing_restores_the_capture_geometry(roi_fake):
+    with GenICamCamera(MONO, FakeBackend([roi_fake])) as camera:
+        camera.start_preview(QUARTER, max_size=100)
+    assert roi_fake.get("DecimationVertical") == 1
+    assert geometry_of(roi_fake) == (0, 0, 2448, 2048)
+
+
+def test_a_failed_geometry_write_ends_preview_and_restores(roi_camera, roi_fake):
+    roi_fake.failures["write OffsetX"] = FakeCameraError("io", "refused")
+    with pytest.raises(DeviceError, match="OffsetX"):
+        roi_camera.start_preview(QUARTER)
+    assert roi_camera.preview is None
+    del roi_fake.failures["write OffsetX"]
+    roi_camera.start_preview()
+    roi_camera.stop_preview()
+    assert geometry_of(roi_fake) == (0, 0, 2448, 2048)
+    assert roi_camera.capture_frame().pixels.shape == (2048, 2448)
+
+
+def test_size_settings_report_captures_during_an_roi_preview(roi_camera):
+    roi_camera.start_preview(QUARTER, max_size=100)
+    assert roi_camera.setting(WIDTH).value == 2448
+    assert roi_camera.setting(HEIGHT).value == 2048
+
+
+def test_open_puts_a_leftover_roi_back_on_the_whole_image(roi_fake):
+    # As a preview cut short by a crash leaves it: cameras keep their ROI.
+    roi_fake.opened = True
+    roi_fake.write("DecimationVertical", 2)
+    roi_fake.write("Width", 400)
+    roi_fake.write("OffsetX", 200)
+    roi_fake.opened = False
+    with GenICamCamera(MONO, FakeBackend([roi_fake])) as camera:
+        assert camera.capture_frame().pixels.shape == (2048, 2448)
+    assert roi_fake.get("DecimationVertical") == 1
+
+
+def test_frames_from_before_a_move_are_not_shown_as_the_new_region(
+    roi_camera, roi_fake
+):
+    roi_camera.start_preview(QUARTER)
+    roi_camera.preview_frame()
+    before_move = roi_fake.device_time_ns() - 50_000_000
+    roi_camera.start_preview(PreviewRegion(0.5, 0.5, 0.25, 0.25))
+    roi_fake.queue_frames(FrameSpec(timestamp_ns=before_move))
+    grabbed = roi_fake.frames_grabbed
+    roi_camera.preview_frame()
+    # The stale frame is dropped, by time or as already waiting.
+    assert roi_fake.frames_grabbed >= grabbed + 1
+    assert all(spec.timestamp_ns != before_move for spec in roi_fake.queue)
+
+
+def test_preview_in_trigger_mode_with_an_roi(roi_camera, roi_fake):
+    roi_camera.set_setting(TRIGGER, "Software")
+    geometry = roi_camera.start_preview(QUARTER)
+    assert roi_camera.preview_frame().pixels.shape == (512, 612)
+    assert roi_camera.start_preview(PreviewRegion(0.5, 0.5, 0.25, 0.25)) != geometry
+    assert roi_camera.preview_frame().pixels.shape == (512, 612)
+
+
+def test_pixel_format_can_change_during_an_roi_preview(roi_camera, roi_fake):
+    geometry = roi_camera.start_preview(QUARTER)
+    roi_camera.set_setting(PIXEL_FORMAT, "Mono16")
+    frame = roi_camera.preview_frame()
+    assert frame.pixels.dtype == np.uint16
+    assert frame.geometry == geometry
+    assert geometry_of(roi_fake)[2:] == (616, 514)
+
+
+def test_a_shrunken_throughput_limit_is_put_back_after_preview():
+    fake = FakeCamera(MONO, **CM3, limit_shrinks=True)
+    with GenICamCamera(MONO, FakeBackend([fake])) as camera:
+        camera.set_setting(THROUGHPUT_LIMIT, 300.0)
+        before = fake.get("DeviceLinkThroughputLimit")
+        camera.start_preview(QUARTER, max_size=100)
+        assert fake.get("DeviceLinkThroughputLimit") < before
+        camera.stop_preview()
+        assert fake.get("DeviceLinkThroughputLimit") == before
+        # The round trip that resets the maximum leaves the format as it was.
+        assert fake.get("PixelFormat") == "Mono8"
+        limit = fake.nodes["DeviceLinkThroughputLimit"]
+        assert all(
+            value <= fake.THROUGHPUT_MAX
+            for name, value in fake.writes
+            if name == limit.name
+        )
+
+
+def test_a_limit_set_during_preview_survives_stopping():
+    fake = FakeCamera(MONO, **CM3, limit_shrinks=True)
+    with GenICamCamera(MONO, FakeBackend([fake])) as camera:
+        camera.set_setting(THROUGHPUT_LIMIT, 300.0)
+        camera.start_preview(QUARTER)
+        camera.set_setting(THROUGHPUT_LIMIT, 20.0)
+        camera.stop_preview()
+        assert camera.setting(THROUGHPUT_LIMIT).value == pytest.approx(20.0, abs=0.01)
+
+
+def test_a_limit_that_cannot_be_restored_is_logged_not_raised(caplog):
+    fake = FakeCamera(MONO, **CM3, limit_shrinks=True)
+    with GenICamCamera(MONO, FakeBackend([fake])) as camera:
+        camera.set_setting(THROUGHPUT_LIMIT, 300.0)
+        camera.start_preview(QUARTER, max_size=100)
+        name = "write DeviceLinkThroughputLimit"
+        fake.failures[name] = FakeCameraError("io", "refused")
+        with caplog.at_level(logging.WARNING):
+            camera.stop_preview()
+        assert "throughput limit not restored" in caplog.text
+        assert geometry_of(fake) == (0, 0, 2448, 2048)
+        del fake.failures[name]
+
+
+def test_a_camera_without_decimation_strides_on_the_host():
+    fake = FakeCamera(MONO, width=2448, height=2048, roi=True)
+    with GenICamCamera(MONO, FakeBackend([fake])) as camera:
+        geometry = camera.start_preview(max_size=400)
+        assert (geometry.width, geometry.height) == (350, 293)
+        assert geometry_of(fake) == (0, 0, 2448, 2048)
+
+
+def test_ids_increments_are_read_from_the_camera():
+    fake = FakeCamera(
+        MONO, width=4200, height=2160, roi=True, size_inc=(12, 2), offset_inc=(8, 2)
+    )
+    with GenICamCamera(MONO, FakeBackend([fake])) as camera:
+        geometry = camera.start_preview(QUARTER)
+        x, y, width, height = geometry_of(fake)
+        assert (x % 8, y % 2, width % 12, height % 2) == (0, 0, 0, 0)
+        assert geometry.region == QUARTER
+
+
 # --- Throughput limit ---------------------------------------------------------
 
 
@@ -1589,7 +1837,7 @@ def test_preview_in_software_trigger_mode_fires_a_trigger(triggered, fake):
 
 
 class TestGenICamCameraContract(FrameCameraContract):
-    camera_options: ClassVar[dict[str, bool]] = {}
+    camera_options: ClassVar[dict[str, object]] = {}
 
     @pytest.fixture
     def make_device(self):
@@ -1600,16 +1848,39 @@ class TestGenICamCameraContract(FrameCameraContract):
 class TestGenICamCameraContractManualExposure(TestGenICamCameraContract):
     """The same rules with auto exposure and gain off, so their ranges apply."""
 
-    camera_options: ClassVar[dict[str, bool]] = {"auto": False}
+    camera_options: ClassVar[dict[str, object]] = {"auto": False}
 
 
 class TestGenICamCameraContractThroughputMode(TestGenICamCameraContract):
     """The same rules on a camera whose throughput limit has a mode and only takes
     writes while stopped."""
 
-    camera_options: ClassVar[dict[str, bool]] = {
+    camera_options: ClassVar[dict[str, object]] = {
         "throughput_mode": True,
         "throughput_while_streaming": False,
+    }
+
+
+class TestGenICamCameraContractHardwareRoi(TestGenICamCameraContract):
+    """The same rules on a camera that previews through its ROI and decimation."""
+
+    camera_options: ClassVar[dict[str, object]] = {
+        "width": 320,
+        "height": 240,
+        "roi": True,
+        "decimation": 2,
+    }
+
+
+class TestGenICamCameraContractLockedOffsets(TestGenICamCameraContract):
+    """The same rules where even the offsets need acquisition stopped, as
+    through IDS peak's GenTL producer."""
+
+    camera_options: ClassVar[dict[str, object]] = {
+        "width": 320,
+        "height": 240,
+        "roi": True,
+        "offsets_while_streaming": False,
     }
 
 

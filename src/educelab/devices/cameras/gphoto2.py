@@ -585,6 +585,10 @@ class GPhoto2Camera(FileCamera):
                     session.set_config({name: changed[name]})
             if level and changed:
                 session.set_config({"changeafarea": wanted["changeafarea"]})
+            if level and "liveviewzoomarea" in changed:
+                # The Z7 II misplaces a centre written while the zoom is still
+                # changing, in the smaller image areas; a second write lands.
+                session.set_config({"changeafarea": wanted["changeafarea"]})
         except GPhoto2Error as exc:
             raise self._error(exc, "zooming live view") from exc
         self._set.update(wanted)

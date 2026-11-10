@@ -242,7 +242,8 @@ below:
 - **Zoom:** the tightest `liveviewzoomarea` whose crop contains the preview region,
   or `0` for a region the `2048` crop can't hold.
 - **Centre:** `changeafarea`, at the region's centre in pixels of the image area. It's
-  written after live view is running, and again with every zoom change.
+  written after live view is running, and again with every zoom change. With a new
+  zoom level it's written twice (see the zoom geometry below).
 - **Size:** `liveviewsize` `XGA` unless `max_size` asks for less; then the smallest
   size that still reaches it. The host crops the image to the region and strides it.
 - **Settling:** after any of those writes, `start_preview()` waits 0.4 s
@@ -354,6 +355,14 @@ offer. **verified**:
     driver should write the centre every time it zooms.
   - `changeafarea` writes fail with `[-1] Unspecified error` until live view is
     running, so take a preview first.
+  - **A centre written while the zoom is still changing is misplaced** in the smaller
+    image areas. In DX, entering zoom from the unzoomed view, the write blocked for
+    0.1–0.4 s and the crop landed about 1.5 times as far from the middle as asked
+    (0.75 gave 0.89), as if the centre were in FX pixels. It never corrected itself.
+    A second write straight after returned in 0.01 s and landed, in 12 of 12 trials
+    over three zoom levels; so did one write 0.5 s after the zoom write, but 0.2 s
+    was too soon on a session's first zoom. Moving between zoom levels didn't show
+    it. FX hides it, since the two scales are the same there.
   - A size or zoom write shows in the frames 0.2–0.4 s later; previews taken sooner
     still show the old setting, so discard frames for about 0.4 s after a change.
   - QVGA frames are 320×212 at zoom `0` and 320×216 when zoomed. VGA and XGA keep

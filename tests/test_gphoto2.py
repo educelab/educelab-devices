@@ -1225,11 +1225,12 @@ def test_the_zoom_is_centred_on_the_region_in_sensor_pixels():
     attached = FakeCamera()
     with opened(attached) as camera:
         camera.start_preview(PreviewRegion(0.2, 0.45, 0.1, 0.1))
-        assert attached.af_areas == ["2064x2752"]
+        assert attached.af_areas == ["2064x2752"] * 2
         # Live view first: the centre is refused before it runs.
         assert zoom_writes(attached) == [
             ("liveviewsize", "XGA"),
             ("liveviewzoomarea", "1024"),
+            ("changeafarea", "2064x2752"),
             ("changeafarea", "2064x2752"),
         ]
 
@@ -1274,6 +1275,7 @@ def test_a_zoom_change_writes_the_centre_again():
         assert zoom_writes(attached) == [
             ("liveviewzoomarea", "512"),
             ("changeafarea", "2064x2752"),
+            ("changeafarea", "2064x2752"),
         ]
 
 
@@ -1296,6 +1298,17 @@ def test_preview_waits_for_a_zoom_write_to_show(monkeypatch):
     with opened(attached) as camera:
         camera.start_preview(PreviewRegion(0.2, 0.45, 0.1, 0.1))
         assert waits == [0.4]
+
+
+def test_a_new_zoom_gets_its_centre_twice():
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        camera.start_preview()
+        camera.start_preview(PreviewRegion(0.2, 0.45, 0.1, 0.1))
+        assert len(attached.af_areas) == 2 and len(set(attached.af_areas)) == 1
+        # Moving at the same zoom needs only one.
+        camera.start_preview(PreviewRegion(0.5, 0.45, 0.1, 0.1))
+        assert len(attached.af_areas) == 3
 
 
 @pytest.mark.parametrize("name", IMAGE_AREAS)
@@ -1356,7 +1369,7 @@ def test_a_region_is_a_fraction_of_the_image_area_not_the_sensor():
         # wouldn't be on the full sensor.
         camera.start_preview(PreviewRegion(0.1, 0.1, 0.3, 0.3))
         assert attached.widgets["liveviewzoomarea"].value == "2048"
-        assert attached.af_areas == ["1352x900"]
+        assert attached.af_areas == ["1352x900"] * 2
 
 
 def test_a_region_too_tall_for_a_zoom_uses_the_next_one():
@@ -1402,7 +1415,7 @@ def test_a_later_preview_sees_a_new_image_area():
             if widget.name == "imagesize":
                 attached.widgets["imagesize"] = widget
         camera.start_preview(PreviewRegion(0.1, 0.1, 0.3, 0.3))
-        assert attached.af_areas == ["1352x900"]
+        assert attached.af_areas == ["1352x900"] * 2
 
 
 def test_stopping_puts_the_live_view_size_and_zoom_back():

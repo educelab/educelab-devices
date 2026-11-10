@@ -247,18 +247,30 @@ below:
   size that still reaches it. The host crops the image to the region and strides it.
 - **Settling:** after any of those writes, `start_preview()` waits 0.4 s
   (`LIVE_VIEW_SETTLE_S`) before taking the image it reports, so moving a zoomed region
-  costs about that long (0.46 s measured; 0.83 s when the zoom level changes too).
+  costs about that long (0.46 s measured; 0.8 s when the zoom level changes too).
+- **Starting and stopping:** the first `start_preview()` of a session reads the whole
+  config tree (4.0 s). Later ones read three widgets singly (1.1 s), and
+  `stop_preview()` writes one widget at a time (0.6 s). Writing two widgets in one
+  call reads the whole tree first, which made stopping take 3.6 s. **verified**.
 - **Restore:** `stop_preview()` and `close()` put `liveviewsize` and
   `liveviewzoomarea` back as found. Both read as read-only settings on this body.
 - **Resolution:** full resolution is only available zoomed. `1024` at `XGA` is about one
   image pixel per sensor pixel; the whole image area is at most 1024 px wide.
 
-Checked on the camera in 16:9 (2026-11-10): for regions of 0.3, 0.2, 0.1 and 0.05 of
-the area, the region the driver reported was within 0.003 of where the frame matched
-in an unzoomed frame, and the size and zoom were back at `VGA` and `0` after
-`stop_preview()`. **verified**. A fifth region over a blank part of the target
-couldn't be matched. The other four areas are checked against the measurements
-below in the driver's tests, not yet on the camera.
+Checked on the camera (2026-11-10, macOS). **verified**:
+
+- In 16:9, for regions of 0.3, 0.2, 0.1 and 0.05 of the area, the region the driver
+  reported was within 0.003 of where the frame matched in an unzoomed frame.
+- In FX, the hardware tests found each zoomed frame within 1 pixel of an unzoomed
+  XGA frame (0.0015 of it) of its reported region, at zooms `2048`, `1024` and `512`,
+  including a region against the top edge. Regions over plain wall or repeating mesh
+  couldn't be placed and were skipped.
+- The size and zoom were back at `VGA` and `0` after `stop_preview()`, and a capture
+  worked after a zoomed preview.
+- A preview asked for with `not_before` after a focus step came back stamped after it.
+
+DX, 5:4 and 1:1 are checked against the measurements below in the driver's tests, not
+on the camera.
 
 Other bodies, and a Z7 II without `imagesize`, keep their live-view settings writable
 and are cropped on the host.
@@ -496,12 +508,18 @@ The lab's reference body.
 settings and whether it has a focus drive, then runs whichever checks are asked for:
 `--exposure SECONDS` sets the nearest shutter speed, `--capture DIR` captures once and
 saves every file under the camera's names (creating `DIR` if needed, refusing to
-overwrite), `--preview` grabs one live-view frame and prints its size, and
+overwrite), `--preview [FRAMES]` previews (with `--region X,Y,W,H` and `--max-size PIXELS`) and
+prints the region and size the camera applied and the frame rate, and
 `--focus-steps N` moves focus, reporting a limit if it hits one. Add `-v`
 (`el-devices -v dslr …`) to log libgphoto2's traffic. The `hardware`-marked tests in
 `tests/test_gphoto2_hardware.py` cover identity, settings, exposure, Bulb, capture (RAW
-and RAW + JPEG, repeated, after an idle gap), preview, aperture with live view, and
-focus.
+and RAW + JPEG, repeated, after an idle gap), preview (whole sensor, zoomed regions
+against an unzoomed frame, restore, capture afterwards, `not_before` after a focus
+step), aperture with live view, and focus. The zoom tests need a still scene with
+distinct shapes all over the frame.
+
+Run 2026-11-10 on macOS 27 (Python 3.12, firmware V1.62), image area FX: 19 passed, 7
+skipped (Bulb, which needs the shutter at Bulb, and six zoom regions over plain wall).
 
 Last run 2026-10-20 on Linux aarch64 (Python 3.14, python-gphoto2 2.6.4, libgphoto2
 2.5.34), Z7 II `…03057001` with a Nikkor Z 24–120 mm f/4 in M and AF-S:

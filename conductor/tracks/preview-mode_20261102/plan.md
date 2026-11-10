@@ -153,10 +153,14 @@ Owed hardware checks (Task 5.4): the driver's reported region on the camera in F
 
 ### Tasks
 
-- [ ] Task 5.1: Update `docs/guide.md` with the preview state, `PreviewGeometry`, `not_before`, and the snapshot pattern (stop, capture, start).
-- [ ] Task 5.2: Update the hardware docs (`gphoto2-cameras.md`, `spinnaker.md`, `usb3-vision.md`, `ids-u3-36p0xcp.md`) with each camera's preview mechanism.
-- [ ] Task 5.3: Move `el-devices dslr --preview` and any GenICam subcommands to the new API, with region and size options.
-- [ ] Task 5.4: Write `@pytest.mark.hardware` tests for preview (geometry, `not_before` after a focus step on the Z7 II, and a full-sensor versus zoomed region on the CM3 and IDS). Run them, and record the results.
+- [x] Task 5.1: Update `docs/guide.md` with the preview state, `PreviewGeometry`, `not_before`, and the snapshot pattern (stop, capture, start).
+- [x] Task 5.2: Update the hardware docs (`gphoto2-cameras.md`, `spinnaker.md`, `usb3-vision.md`, `ids-u3-36p0xcp.md`) with each camera's preview mechanism.
+- [x] Task 5.3: Move `el-devices dslr --preview` and any GenICam subcommands to the new API, with region and size options.
+  - `--preview [FRAMES]`, `--region X,Y,W,H` and `--max-size PIXELS` on `dslr`, `genicam` and `spinnaker`, from a shared `app/_preview.py`. The GenICam subcommands preview each camera after its captures.
+- [~] Task 5.4: Write `@pytest.mark.hardware` tests for preview (geometry, `not_before` after a focus step on the Z7 II, and a full-sensor versus zoomed region on the CM3 and IDS). Run them, and record the results.
+
+  - Z7 II, run 2026-11-10 in FX: 19 passed, 7 skipped. Zoomed frames sat within 1 pixel of their reported region. The runs found that stopping took 3.6 s and each start 4 s, from whole-tree reads; later starts now take 1.1 s and a stop 0.6 s.
+  - CM3 and IDS: tests written, not yet run.
 
 ### Verification
 

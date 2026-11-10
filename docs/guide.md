@@ -240,6 +240,60 @@ On Windows before Python 3.13, `datetime.now()` and `time.time()` tick every 15.
 so a `not_before` taken from them can be up to 15.6 ms early, letting through a frame
 exposed that much before the request. Python 3.13 and later don't have this problem.
 
+### Preview
+
+Preview is a state every camera has, for framing a shot and judging focus
+([ADR 0007](adr/0007-preview-is-an-explicit-camera-state.md)). `start_preview()` enters
+it, `stop_preview()` and `close()` leave it, and `camera.preview` is the current
+`PreviewGeometry`, or `None`.
+
+```python
+camera.start_preview()                    # the whole sensor, every pixel
+frame = camera.preview_frame()            # blocks for the next image
+show(frame.pixels, frame.pixel_format)    # scale for display yourself
+camera.stop_preview()
+```
+
+- **Images are not converted.** `PreviewFrame.pixels` is at the camera's resolution
+  and in its current pixel format, so a Mono16 camera previews in 16 bits. Scaling for
+  a screen, zoom, pan, histograms and focus scores are the caller's.
+- **Zoom and pan on the host when you can.** A full-resolution preview of the whole
+  sensor never touches the camera's geometry, so cropping it yourself is instant.
+- **Ask for less to move less data.** `start_preview(region, max_size)` takes a
+  `PreviewRegion` (or an `(x, y, width, height)` tuple) in fractions of the sensor,
+  and a cap on the longest side in pixels. Use them for thumbnails of several cameras
+  on one link, or for full-resolution pixels from a camera that only gives them
+  zoomed (the Z7 II).
+- **Each frame says what it shows.** `frame.geometry` is the region and size of that
+  image, and `frame.timestamp` when it was taken. The region a camera applies lies
+  within the one asked for, rounded to what it can deliver.
+- **Changing a preview** is another `start_preview()` call. What it costs depends on
+  the camera:
+
+  | Change | GenICam cameras | Z7 II |
+  |---|---|---|
+  | Start | Immediate for the whole sensor | 4 s the first time in a session, then 1 s |
+  | Move a region of the same size | Immediate (a restart of 0.1–0.4 s on the IDS through IDS peak's GenTL producer) | About 0.5 s |
+  | Change the region's size or `max_size` | Restart, 0.1–0.4 s | About 0.5 s, up to 0.8 s |
+  | Stop | Restart if a region or `max_size` was used | 0.6 s |
+
+- **Captures refuse during preview**, with `PreviewError`. To capture, stop, capture
+  and start again, and show the captured image meanwhile:
+
+  ```python
+  camera.stop_preview()
+  frame = camera.capture_frame()
+  camera.start_preview(region, max_size)
+  ```
+
+- **Settings can change during preview** and apply to the next images. `width` and
+  `height` keep describing captures.
+- **`preview_frame(not_before=...)`** skips images from before a moment, such as the
+  end of a focus step. A camera that can't time its frames raises `DeviceError`
+  instead, as it does for `capture_frame()`.
+- **On a gphoto2 body** the camera's own screens go blank while live view runs, and on
+  the Z7 II they stay blank until `close()`, not `stop_preview()`.
+
 ### GenICam cameras
 
 `SpinnakerCamera`, `AravisCamera` and `GenTLCamera` are all `GenICamCamera`s, which

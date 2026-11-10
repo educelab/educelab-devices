@@ -99,7 +99,7 @@ Spinnaker agrees: on the same rig, an 80 MB/s cap removed the missing trailers t
 
 ## Geometry: ROI, binning, decimation
 
-Discovery for camera preview (`conductor/tracks/preview-mode_20261102/genicam_geometry.py`), through Aravis 0.8.36 on the lab Mac (macOS 27, Python 3.12), 2026-11-10: first with lens caps on, then lit, at fixed exposure and gain (IDS 15 ms, CM3-U3-50S5M 20305114 at 8 ms). The same CM3 was also run through Spinnaker 4.4.0.246 and GenTL (FLIR's producer, genicam 1.6.0). The IDS was run through GenTL (IDS peak's `ids_u3vgentlk.cti`) on the Windows rig, Python 3.12.10, in a dim scene (mean level 3). Preview uses these: an ROI for the region, decimation for `max_size`, offsets alone for a move, and a restore of the geometry and throughput limit on stop. The driver's use of them has only run on fakes so far.
+Discovery for camera preview (`conductor/tracks/preview-mode_20261102/genicam_geometry.py`), through Aravis 0.8.36 on the lab Mac (macOS 27, Python 3.12), 2026-11-10: first with lens caps on, then lit, at fixed exposure and gain (IDS 15 ms, CM3-U3-50S5M 20305114 at 8 ms). The same CM3 was also run through Spinnaker 4.4.0.246 and GenTL (FLIR's producer, genicam 1.6.0). The IDS was run through GenTL (IDS peak's `ids_u3vgentlk.cti`) on the Windows rig, Python 3.12.10, in a dim scene (mean level 3). Preview uses these (see Preview below). The driver's use of them has only run on fakes so far.
 
 - **Size changes need an acquisition restart on every backend.** Spinnaker and GenTL lock `Width`, `Height`, `BinningVertical` and `DecimationVertical` while the CM3 streams (`AccessException`: not writable) and write them with acquisition stopped: the stop/start took 0.12–0.14 s and the first frame came 16–164 ms later, with no incomplete frames. Through Aravis, both cameras accept `Width`, `Height`, `Binning*` and `Decimation*` writes while streaming, but Aravis then completes no frame at the new size: its buffers are sized for the old payload, and the frames come back `INCOMPLETE`. Stopping and starting acquisition (`_acquisition_paused`) fixes it. The stop/start took 0.09–0.16 s on the CM3 and 0.11–0.42 s on the IDS, and the first frame came 13–160 ms (CM3) or 70–240 ms (IDS) after it. [V]
 - **IDS's producer locks everything while streaming, offsets included.** Through GenTL on the IDS, `Width`, `Height`, `OffsetX`, `OffsetY`, binning, decimation, `PixelFormat` and `DeviceLinkThroughputLimit` all read as not writable during acquisition, and wrote fine paused: stop/start 0.14–0.36 s, first frame 46–141 ms later. So on that combination even moving a preview needs a restart. The same producer reports no frame arrival times, so the camera opens without a timestamp offset and can't honor `not_before` ("can't latch its timestamp or time arrivals"). [V]
@@ -115,6 +115,35 @@ Discovery for camera preview (`conductor/tracks/preview-mode_20261102/genicam_ge
 | `OffsetX` / `OffsetY` step | 2 / 2 | 8 / 2 |
 | Binning | `BinningVertical` 1, 2 or 4 (3 refused); `BinningHorizontal` read-only, follows it. No selector or mode node. Sums | `BinningHorizontal`/`Vertical` 1–2, `BinningSelector` `Sensor` only, mode `Sum` only (writing it fails, even paused). Sums |
 | Decimation | `DecimationVertical` 1–2; `DecimationHorizontal` read-only, follows it. Keeps the level | `DecimationHorizontal`/`Vertical` 1–2, `DecimationSelector` `Sensor` only. Keeps the level |
+
+## Preview
+
+How `start_preview(region, max_size)` maps onto a camera, on every backend:
+
+- **Nothing asked for, nothing written.** The whole sensor at full resolution is the
+  capture geometry, so starting and stopping that preview doesn't touch the camera.
+- **Region:** `OffsetX`, `OffsetY`, `Width` and `Height`, as the smallest ROI on the
+  camera's increments that contains it; the host crops the rest. The ROI's size
+  depends only on the region's size, so moving a region writes only the offsets.
+- **`max_size`:** `DecimationVertical` (and `DecimationHorizontal` where it's
+  writable), at the largest factor that still leaves `max_size` pixels, then every
+  n-th pixel on the host. Never binning, which sums and would brighten the preview.
+- **Restarts:** size and decimation are written with acquisition stopped. Offsets are
+  written live where the camera allows it, and stopped where it doesn't (the IDS
+  through IDS peak's GenTL producer).
+- **After a change,** frames stamped before it are dropped, so a frame's geometry is
+  always the one it was taken with. A camera that can't time frames drops the frames
+  already waiting.
+- **Stop and close** put the capture geometry back, then the throughput limit: never
+  above its maximum, and after a pixel format round trip if the maximum has shrunk.
+- **Open** puts a leftover ROI or decimation back on the whole image, since a camera
+  keeps them until it's power-cycled.
+- **Without the nodes** (`Width`, `Height` and the offsets writable before acquisition
+  starts), the camera sends whole frames and the host crops and strides them.
+
+`el-devices genicam --preview [FRAMES] --region X,Y,W,H --max-size PIXELS` (and the
+same on `el-devices spinnaker`) previews each camera after its captures, and prints
+the geometry applied, the start and stop times and the frame rate.
 
 ## Hazards
 

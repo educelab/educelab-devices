@@ -131,8 +131,12 @@ class View:
     def mouse(self, event: int, px: int, py: int, flags: int, _: object) -> None:
         width, height = self.size
         if event == cv2.EVENT_MOUSEWHEEL:
-            step = 0.8 if cv2.getMouseWheelDelta(flags) > 0 else 1.25
-            self.zoom(step, (px / width, py / height))
+            # The scroll amount is the signed high half of the flags; OpenCV 5
+            # has no getMouseWheelDelta() in Python.
+            delta = (flags >> 16) & 0xFFFF
+            delta -= 0x10000 if delta >= 0x8000 else 0
+            if delta:
+                self.zoom(0.8 if delta > 0 else 1.25, (px / width, py / height))
         elif event == cv2.EVENT_LBUTTONDOWN:
             self.drag_from = (px, py)
         elif event == cv2.EVENT_LBUTTONUP:

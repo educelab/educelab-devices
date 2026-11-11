@@ -55,6 +55,7 @@ ENUMS = {
     "TriggerSelector": ("FrameStart", "AcquisitionStart", "FrameBurstStart"),
     "TriggerSource": ("Software", "Line0", "Line1", "Line2", "Line3"),
     "DeviceLinkThroughputLimitMode": ("Off", "On"),
+    "AcquisitionFrameRateAuto": ("Off", "Continuous"),
 }
 
 # (dtype, channels) of each pixel format's array.
@@ -220,6 +221,9 @@ class FakeCamera:
         rate_caps_exposure: The longest exposure is one frame period, which
             shrinks with the image's height and cuts a longer exposure short,
             as on the CM3.
+        rate_auto: Add the CM3's ``AcquisitionFrameRateAuto``, on, and an
+            ``AcquisitionFrameRate`` that is writable while it's off. Implies
+            ``rate_caps_exposure``: the frame period is then the set rate's.
     """
 
     # Made-up figures, roughly a USB3 camera; nothing tests them against hardware.
@@ -263,6 +267,7 @@ class FakeCamera:
         offsets_while_streaming: bool = True,
         limit_shrinks: bool = False,
         rate_caps_exposure: bool = False,
+        rate_auto: bool = False,
     ) -> None:
         self.arrival_latency = arrival_latency
         self.ids_nodes = ids_nodes
@@ -275,7 +280,7 @@ class FakeCamera:
         self.vendor = vendor
         self.size_inc = size_inc
         self.limit_shrinks = limit_shrinks
-        self.rate_caps_exposure = rate_caps_exposure
+        self.rate_caps_exposure = rate_caps_exposure or rate_auto
         self.decimation_horizontal_follows = decimation_horizontal_follows
         # Every node write, in order, for tests that count camera traffic.
         self.writes: list[tuple[str, Any]] = []
@@ -487,6 +492,19 @@ class FakeCamera:
         if ids_nodes:
             rate = self.MAX_FRAME_RATE
             nodes.append(Node("AcquisitionFrameRate", "float", rate, 0.1, rate))
+        if rate_auto:
+            rate = self.MAX_FRAME_RATE
+            nodes.append(enum("AcquisitionFrameRateAuto", "Continuous"))
+            nodes.append(
+                Node(
+                    "AcquisitionFrameRate",
+                    "float",
+                    rate,
+                    1.0,
+                    rate,
+                    access=when_off("AcquisitionFrameRateAuto"),
+                )
+            )
         dropped = set(without)
         if ids_nodes:
             dropped.add("AcquisitionResultingFrameRate")
@@ -599,8 +617,10 @@ class FakeCamera:
             value = math.floor(value / step) * step
         node.value = value
         self.writes.append((name, value))
-        if name == self.exposure_node and self.has("AcquisitionFrameRate"):
+        if name == self.exposure_node and self.ids_nodes:
             self._fit_frame_rate(value)
+        if name.startswith("AcquisitionFrameRate") and self.rate_caps_exposure:
+            self._fit_geometry()
         if name.startswith("Decimation"):
             self._decimate(name, value)
         if name in ("Width", "Height", "OffsetX", "OffsetY") or name.startswith("Dec"):
@@ -750,9 +770,16 @@ class FakeCamera:
             if self.has(offset):
                 self.nodes[offset].maximum = full - self.get(size)
         if self.rate_caps_exposure:
-            rows = self.get("Height") / self.full_size[1]
+            fastest = self.MAX_FRAME_RATE * self.full_size[1] / self.get("Height")
+            if self.has("AcquisitionFrameRateAuto"):
+                rate = self.nodes["AcquisitionFrameRate"]
+                rate.maximum = fastest
+                if self.get("AcquisitionFrameRateAuto") == "Off":
+                    fastest = rate.value = min(rate.value, fastest)
+                else:
+                    rate.value = fastest
             exposure = self.nodes[self.exposure_node]
-            exposure.maximum = 1e6 / self.MAX_FRAME_RATE * rows
+            exposure.maximum = 1e6 / fastest
             exposure.value = min(exposure.value, exposure.maximum)
         if self.limit_shrinks:
             limit = self.nodes["DeviceLinkThroughputLimit"]

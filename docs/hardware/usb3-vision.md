@@ -145,16 +145,29 @@ How `start_preview(region, max_size)` maps onto a camera, on every backend:
   frame period: 27.9 ms for the whole image, 14.2 ms for half its height or for
   decimation by 2, 3.2 ms for a tenth. A smaller image cut a longer exposure to that
   (10 ms became 3.2 ms for a 0.1 region), and putting the whole image back left it
-  cut. So after a size change the driver re-reads the exposure, and if the camera no
-  longer allows it, puts the whole image back and has the host crop and stride whole
-  frames instead. It remembers the longest exposure of each size, so the next such
-  preview doesn't restart acquisition to find out. The IDS kept its exposure through
-  every preview. **verified** (CM3 `20305122` through Spinnaker and Aravis, IDS
-  through Aravis, 2026-11-11).
-  - With auto exposure on, the exposure is the camera's, and the driver leaves it.
-  - During a region or `max_size` preview on the CM3, `exposure_time` can't be set
-    above that image's frame period. Stop the preview, or preview the whole sensor,
-    to set a longer one.
+  cut. So before the image shrinks, the driver holds the frame rate where it is:
+  - It turns `AcquisitionFrameRateAuto` `Off` and writes the rate it read to
+    `AcquisitionFrameRate`. `Off` alone brings back the last rate set by hand.
+  - The preview then runs at the whole image's rate (35.7 frames/s), and
+    `exposure_time` keeps the range it has for captures, so it can still be set
+    during the preview.
+  - Stop and close turn the automatic mode back on. A rate already set by hand is
+    left alone. A session that crashes mid-preview leaves the rate fixed, at the
+    whole image's value, until the mode is set again or the camera is power-cycled.
+  - The rate could be raised to what the exposure allows (49 frames/s held a 20 ms
+    exposure), but the exposure's limit would shrink with it; the driver doesn't.
+  - With the rate fixed after the image had shrunk, the exposure could be written
+    back; the driver fixes it first, so the exposure never moves.
+
+  **verified** (CM3 `20305122` through Spinnaker, Aravis and FLIR's GenTL producer,
+  2026-11-11).
+- **Without those nodes,** the driver re-reads the exposure after a size change. If
+  the camera no longer allows it, the driver puts the whole image back and has the
+  host crop and stride whole frames. It remembers the longest exposure of each size,
+  so the next such preview doesn't restart acquisition to find out. Unit-tested
+  only: no camera here needs it. The IDS kept its exposure through every preview
+  (**verified**, through Aravis).
+- **With auto exposure on,** the exposure is the camera's, and the driver leaves it.
 
 `el-devices genicam --preview [FRAMES] --region X,Y,W,H --max-size PIXELS` (and the
 same on `el-devices spinnaker`) previews each camera after its captures, and prints

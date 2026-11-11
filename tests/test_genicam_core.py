@@ -1337,9 +1337,10 @@ def test_a_shrunken_throughput_limit_is_put_back_after_preview():
         )
 
 
-def capped_camera(exposure_us):
+def capped_camera(exposure_us, **options):
     """A fake CM3 whose frame rate caps the exposure, set to ``exposure_us``."""
-    fake = FakeCamera(MONO, **CM3, auto=False, rate_caps_exposure=True)
+    options = {"rate_caps_exposure": True, **options}
+    fake = FakeCamera(MONO, **CM3, auto=False, **options)
     fake._fit_geometry()
     fake.nodes["ExposureTime"].value = exposure_us
     return fake
@@ -1379,6 +1380,55 @@ def test_a_size_known_to_cut_the_exposure_is_not_tried_again():
         camera.set_setting(EXPOSURE_TIME, 0.002)
         camera.start_preview(QUARTER)
         assert geometry_of(fake)[2:] == (616, 514)
+
+
+@pytest.mark.parametrize("request_", [(QUARTER, None), (None, 600)])
+def test_preview_holds_the_frame_rate_so_the_exposure_stays(request_):
+    fake = capped_camera(20_000.0, rate_auto=True)
+    with GenICamCamera(MONO, FakeBackend([fake])) as camera:
+        camera.start_preview(*request_)
+        # The camera sends the smaller image, at the whole image's frame rate.
+        assert geometry_of(fake) != (0, 0, 2448, 2048)
+        assert fake.get("AcquisitionFrameRateAuto") == "Off"
+        assert fake.get("AcquisitionFrameRate") == fake.MAX_FRAME_RATE
+        assert fake.get("ExposureTime") == 20_000.0
+        # A longer exposure can still be set, as far as captures allow.
+        camera.set_setting(EXPOSURE_TIME, 0.028)
+        camera.stop_preview()
+        assert fake.get("AcquisitionFrameRateAuto") == "Continuous"
+        assert fake.get("ExposureTime") == 28_000.0
+        assert geometry_of(fake) == (0, 0, 2448, 2048)
+
+
+def test_the_frame_rate_is_held_once_and_released_by_close():
+    fake = capped_camera(20_000.0, rate_auto=True)
+    camera = GenICamCamera(MONO, FakeBackend([fake]))
+    camera.open()
+    camera.start_preview(QUARTER)
+    camera.start_preview(QUARTER, max_size=100)
+    writes = [value for name, value in fake.writes if name.endswith("RateAuto")]
+    assert writes == ["Off"]
+    camera.close()
+    assert fake.get("AcquisitionFrameRateAuto") == "Continuous"
+
+
+def test_a_frame_rate_already_set_by_hand_is_left_alone():
+    fake = capped_camera(20_000.0, rate_auto=True)
+    fake.nodes["AcquisitionFrameRateAuto"].value = "Off"
+    fake.nodes["AcquisitionFrameRate"].value = 20.0
+    with GenICamCamera(MONO, FakeBackend([fake])) as camera:
+        camera.start_preview(QUARTER)
+        camera.stop_preview()
+        assert not [name for name, _ in fake.writes if "FrameRate" in name]
+        assert fake.get("AcquisitionFrameRate") == 20.0
+
+
+def test_a_whole_sensor_preview_does_not_touch_the_frame_rate():
+    fake = capped_camera(20_000.0, rate_auto=True)
+    with GenICamCamera(MONO, FakeBackend([fake])) as camera:
+        camera.start_preview()
+        camera.stop_preview()
+        assert not [name for name, _ in fake.writes if "FrameRate" in name]
 
 
 def test_auto_exposure_is_left_to_the_camera_during_preview():

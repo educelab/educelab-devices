@@ -317,6 +317,7 @@ _GAIN_MANTISSA_BITS = 4
 _SELF_SLOWING_VENDORS = frozenset({_IDS})
 # "Once" isn't offered: it reverts to "Off" by itself, so it never reads back.
 _AUTO_MODES = ("Off", "Continuous")
+_RATE_AUTO = "AcquisitionFrameRateAuto"
 # A geometry change re-rounds the exposure a little; less than this is a cut.
 _EXPOSURE_KEPT = 0.99
 _US_PER_S = 1e6
@@ -480,6 +481,8 @@ class GenICamCamera(FrameCamera):
         # What preview last wrote, or None while the capture geometry stands.
         self._applied: _Geometry | None = None
         self._limit_before_preview: int | None = None
+        # The frame rate's automatic mode, while preview holds the rate fixed.
+        self._rate_auto: str | None = None
         # The longest exposure seen at each ROI size, in the node's unit.
         self._exposure_caps: dict[tuple[int, int, int], float] = {}
         # Frames from before this show the previous preview geometry.
@@ -647,6 +650,7 @@ class GenICamCamera(FrameCamera):
         self._arrival_gaps.clear()
         self._crop = self._applied = self._capture_geometry = None
         self._limit_before_preview = self._preview_floor = None
+        self._rate_auto = None
         self._limits = {}
         self._exposure_caps = {}
         return problems
@@ -991,6 +995,7 @@ class GenICamCamera(FrameCamera):
         if target is None or target.size != current.size:
             # Marked first, so a failure part-way still restores the camera.
             self._applied = current
+            self._hold_frame_rate()
             with self._acquisition_paused():
                 limits = self._enter_decimation(decimation)
                 target = limits.roi(region, decimation)
@@ -1029,6 +1034,38 @@ class GenICamCamera(FrameCamera):
             self._keep_exposure(exposure, None)
             self._preview_floor = datetime.fromtimestamp(host_time(), UTC)
         return self._start_host_preview(region, max_size)
+
+    def _hold_frame_rate(self) -> None:
+        """Fix an automatic frame rate where it is before the image shrinks.
+
+        Left alone, the CM3 speeds up for a smaller image, and its longest
+        exposure is one frame period, so it cuts a longer one short
+        (usb3-vision.md, Preview).
+        """
+        conn, auto, node = self._connection, _RATE_AUTO, "AcquisitionFrameRate"
+        if self._rate_auto is not None or not conn.is_writable(auto):
+            return
+        try:
+            mode = self._read_enum(auto)
+            if mode == "Off" or "Off" not in conn.enum_entries(auto):
+                return
+            rate = self._call(f"read {node}", lambda: conn.get_float(node))
+            self._set_enum(auto, "Off")
+            self._rate_auto = mode
+            # Off brings back the last rate set by hand, not the current one.
+            self._call(f"set {node}", lambda: conn.set_float(node, rate))
+        except DeviceError as exc:
+            logger.warning("%r: frame rate not held: %s", self, exc)
+
+    def _release_frame_rate(self) -> None:
+        """Hand the frame rate back to the camera, if preview took it."""
+        mode, self._rate_auto = self._rate_auto, None
+        if mode is None:
+            return
+        try:
+            self._set_enum(_RATE_AUTO, mode)
+        except DeviceError as exc:
+            logger.warning("%r: frame rate left fixed: %s", self, exc)
 
     def _set_exposure(self) -> float | None:
         """The exposure in the node's unit, if it's the caller's to set rather
@@ -1093,6 +1130,7 @@ class GenICamCamera(FrameCamera):
         with self._acquisition_paused():
             self._write_geometry(capture, decimate=True)
             self._restore_limit(limit)
+        self._release_frame_rate()
         self._raise_frame_rate()
 
     def _preview_frame(self, not_before: datetime | None) -> PreviewFrame:

@@ -300,7 +300,10 @@ streamed out by the device", in Spinnaker's `Camera.h`.
 
 A frame-rate setting (`AcquisitionFrameRateEnable` and `AcquisitionFrameRate` in the
 4.4.0 headers) is not exposed; the throughput limit covers the bandwidth problem. Older
-models may use other node names.
+models may use other node names. The CM3-U3-50S5M has `AcquisitionFrameRateAuto`
+(`Off`, `Continuous`) and `AcquisitionFrameRate`, writable while that is `Off`; preview
+holds the rate with them
+([usb3-vision.md](usb3-vision.md#preview)).
 
 **Exposure limits** (CM3-U3-50S5M, verified 2026-10-19):
 

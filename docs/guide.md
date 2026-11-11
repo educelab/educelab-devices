@@ -278,9 +278,9 @@ camera.stop_preview()
   | Stop | Restart if a region or `max_size` was used | 0.6 s |
 
 - **Preview leaves the exposure alone.** A camera whose frame rate caps the exposure
-  (the CM3) would have to shorten a long exposure to send a smaller image, so it
-  sends whole frames instead and the host reduces them: the preview looks the same
-  but saves no bandwidth. With auto exposure on, the exposure is the camera's.
+  (the CM3) would speed up for a smaller image and shorten a long exposure, so the
+  driver holds its frame rate at the whole image's for the length of the preview.
+  With auto exposure on, the exposure is the camera's.
 - **Captures refuse during preview**, with `PreviewError`. To capture, stop, capture
   and start again, and show the captured image meanwhile:
 

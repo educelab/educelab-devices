@@ -105,6 +105,7 @@ class View:
         self.size = (1, 1)
         self.changed_at: float | None = None
         self.drag_from: tuple[int, int] | None = None
+        self.pointer = (0, 0)
 
     def set(self, x: float, y: float, side: float) -> None:
         side = min(max(side, SMALLEST), 1.0)
@@ -131,13 +132,22 @@ class View:
     def mouse(self, event: int, px: int, py: int, flags: int, _: object) -> None:
         width, height = self.size
         if event == cv2.EVENT_MOUSEWHEEL:
-            # The scroll amount is the signed high half of the flags; OpenCV 5
-            # has no getMouseWheelDelta() in Python.
-            delta = (flags >> 16) & 0xFFFF
-            delta -= 0x10000 if delta >= 0x8000 else 0
-            if delta:
-                self.zoom(0.8 if delta > 0 else 1.25, (px / width, py / height))
-        elif event == cv2.EVENT_LBUTTONDOWN:
+            if sys.platform == "darwin":
+                # OpenCV's Cocoa window passes the scroll amount as y, in
+                # points, in place of the pointer's position.
+                notches, px, py = py / 40, *self.pointer
+            else:
+                # Elsewhere it is the signed high half of the flags, 120 a notch.
+                delta = (flags >> 16) & 0xFFFF
+                notches = (delta - (0x10000 if delta >= 0x8000 else 0)) / 120
+            if notches:
+                factor = 0.8 ** min(max(notches, -3.0), 3.0)
+                self.zoom(factor, (px / width, py / height))
+            return
+        if event == cv2.EVENT_MOUSEHWHEEL:
+            return
+        self.pointer = (px, py)
+        if event == cv2.EVENT_LBUTTONDOWN:
             self.drag_from = (px, py)
         elif event == cv2.EVENT_LBUTTONUP:
             self.drag_from = None

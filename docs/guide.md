@@ -248,9 +248,9 @@ it, `stop_preview()` and `close()` leave it, and `camera.preview` is the current
 `PreviewGeometry`, or `None`.
 
 ```python
-camera.start_preview()                    # the whole sensor, every pixel
-frame = camera.preview_frame()            # blocks for the next image
-show(frame.pixels, frame.pixel_format)    # scale for display yourself
+camera.start_preview()  # the whole sensor, every pixel
+frame = camera.preview_frame()  # blocks for the next image
+show(frame.pixels, frame.pixel_format)  # scale for display yourself
 camera.stop_preview()
 ```
 
@@ -281,6 +281,10 @@ camera.stop_preview()
   (the CM3) would speed up for a smaller image and shorten a long exposure, so the
   driver holds its frame rate at the whole image's for the length of the preview.
   With auto exposure on, the exposure is the camera's.
+- **To look at a preview,** `el-devices preview <backend>` shows one in a window,
+  with scroll to zoom, drag to move and `c` to capture. It's a development tool
+  that needs OpenCV (`pip install "educelab-devices[viewer]"`); the subcommand
+  isn't listed without it.
 - **Captures refuse during preview**, with `PreviewError`. To capture, stop, capture
   and start again, and show the captured image meanwhile:
 

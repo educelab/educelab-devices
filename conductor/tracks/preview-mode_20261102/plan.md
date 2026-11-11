@@ -165,6 +165,8 @@ Owed hardware checks (Task 5.4): the driver's reported region on the camera in F
   - CM3 (`20305122`) through Spinnaker, Aravis and FLIR's GenTL producer, and IDS through Aravis, on the lab Mac, 2026-11-11: the eight preview tests pass on each, and the full hardware suites pass through Spinnaker and Aravis. Found and fixed: a smaller image raised the CM3's frame rate, which cut a long exposure short and left it cut after stopping. Preview now holds the frame rate at the whole image's, so the exposure stays and the camera still sends the smaller image; a camera without the frame-rate nodes falls back to cropping whole frames on the host.
   - Windows rig through GenTL, 2026-11-11 (`hardware_tests.py` in this folder): all five CM3s through FLIR's producer, 8 passed each; the IDS through IDS peak's producer, 6 passed and 2 skipped (the moved region's content, on a flat scene, and `not_before`, which that producer can't time). Recorded in `usb3-vision.md`, Hardware runs.
 
+- [x] Task 5.5: Add `el-devices preview`, a viewer for checking framing, zoom and focus by eye (added at the maintainer's request). OpenCV comes from the `[viewer]` extra, and the subcommand is only registered when `cv2` can be found. Tried with the simulated camera only.
+
 ### Verification
 
 - [ ] The maintainer confirms preview and zoom on the Z7 II, the CM3 and the IDS.

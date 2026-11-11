@@ -10,11 +10,11 @@
     "completed": 4
   },
   "tasks": {
-    "total": 21,
-    "completed": 21
+    "total": 22,
+    "completed": 22
   },
   "current_phase": 5,
-  "current_task": "5.4",
+  "current_task": "5.5",
   "commits": [
     "8deb075: Prepare the preview-mode hardware discovery runs",
     "c97e118: Record the discovery prep commit in the preview-mode metadata",

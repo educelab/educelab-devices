@@ -31,6 +31,8 @@ foldio360 = ["bleak>=3.0.2"]
 gentl = ["genicam>=1.6"]
 gphoto2 = ["gphoto2>=2.5; sys_platform != 'win32'", "Pillow>=10"]
 serial = ["pyserial>=3.5"]
+# For `el-devices preview`, a development tool; not part of [all].
+viewer = ["opencv-python>=4.8"]
 all = ["educelab-devices[acroname,foldio360,gentl,gphoto2,serial]"]
 
 [project.scripts]

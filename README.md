@@ -64,6 +64,7 @@ el-devices spinnaker             # benchmark the attached Spinnaker cameras
 el-devices genicam --backend aravis   # ...or USB3 Vision cameras (aravis|gentl)
 el-devices simulate              # exercise every simulated device
 el-devices simulate stage light  # ...or only some roles
+el-devices preview simulated    # look at a camera's preview (needs the [viewer] extra)
 el-devices -v <command>          # log device traffic
 ```
 

@@ -33,6 +33,7 @@ from educelab.devices.cameras._genicam import RETRIES_BEFORE_REMEASURE
 from educelab.devices.errors import DeviceBusy, DeviceError, DeviceTimeout
 
 CENTER = PreviewRegion(0.25, 0.25, 0.5, 0.5)
+SMALL = PreviewRegion(0.45, 0.45, 0.1, 0.1)
 
 
 def correlation(a, b) -> float:
@@ -103,6 +104,13 @@ class GenICamHardwareTests:
                 f"{camera!r} has no timestamp latch and its library reports no "
                 "arrival times, so its frames can't be timed (usb3-vision.md)"
             )
+
+    @staticmethod
+    def steady(camera: GenICamCamera) -> None:
+        """Turn auto exposure and gain off, so the level holds between frames."""
+        for name in ("ExposureAuto", "GainAuto"):
+            if name in camera.settings():
+                camera.set_setting(name, "Off")
 
     @staticmethod
     def fresh(camera: GenICamCamera) -> datetime | None:
@@ -376,10 +384,12 @@ class GenICamHardwareTests:
             camera.capture_frame(not_before=datetime.now(UTC), timeout=5.0)
 
     @pytest.fixture
-    def preview(self, camera):
-        """The camera, with preview stopped again after the test."""
-        yield camera
-        camera.stop_preview()
+    def preview(self, restore):
+        """The camera with a steady exposure, so frames compare, and preview
+        stopped again after the test."""
+        self.steady(restore)
+        yield restore
+        restore.stop_preview()
 
     def test_a_whole_sensor_preview_is_the_capture_frame(self, preview):
         capture = preview.capture_frame()
@@ -440,15 +450,31 @@ class GenICamHardwareTests:
         elapsed = time.perf_counter() - started
         frame = preview.preview_frame()
         ratio = frame.pixels.mean() / max(whole.mean(), 1e-9)
-        rate = preview.setting("resulting_frame_rate").value
+        rate = preview.settings().get("resulting_frame_rate")
         print(
             f"\nmax_size=600 in {elapsed:.3f} s: {geometry.width}x{geometry.height}, "
-            f"level {ratio:.3f}x the capture's, {rate:.1f} frames/s"
+            f"level {ratio:.3f}x the capture's, "
+            f"{rate.value if rate else 'unknown'} frames/s"
         )
         assert max(geometry.width, geometry.height) <= 600
         assert frame.pixels.shape[:2] == (geometry.height, geometry.width)
         # Decimation keeps the level; binning would be about 4x.
         assert 0.8 < ratio < 1.25
+
+    def test_preview_leaves_the_exposure_alone(self, preview):
+        # A smaller image runs faster, and on the CM3 the frame period caps
+        # the exposure (usb3-vision.md, Preview).
+        exposure = preview.setting(EXPOSURE_TIME).value
+        for request in ((SMALL, None), (None, 300), (CENTER, 300)):
+            geometry = preview.start_preview(*request)
+            preview.preview_frame()
+            now = preview.setting(EXPOSURE_TIME).value
+            print(
+                f"\n{request}: {geometry.width}x{geometry.height}, {now * 1e3:.3f} ms"
+            )
+            assert now == pytest.approx(exposure, rel=0.01)
+        preview.stop_preview()
+        assert preview.setting(EXPOSURE_TIME).value == pytest.approx(exposure, rel=0.01)
 
     def test_stopping_preview_restores_captures_and_the_link(self, preview):
         before = preview.capture_frame()
@@ -467,8 +493,9 @@ class GenICamHardwareTests:
         if settings.get(THROUGHPUT_LIMIT) and settings[THROUGHPUT_LIMIT].value:
             limit = settings[THROUGHPUT_LIMIT].value
             assert now[THROUGHPUT_LIMIT].value == pytest.approx(limit, rel=0.01)
-        rate = settings["resulting_frame_rate"].value
-        assert now["resulting_frame_rate"].value == pytest.approx(rate, rel=0.1)
+        if "resulting_frame_rate" in settings:
+            rate = settings["resulting_frame_rate"].value
+            assert now["resulting_frame_rate"].value == pytest.approx(rate, rel=0.1)
 
     def test_preview_frames_honor_not_before(self, preview):
         self.require_timing(preview)
@@ -483,8 +510,12 @@ class GenICamHardwareTests:
         deeper = [f for f in formats if f in ("Mono16", "Mono10g40IDS")]
         if "Mono8" not in formats or not deeper:
             pytest.skip(f"needs Mono8 and a deeper mono format, not {formats}")
+        self.steady(restore)
         restore.set_setting(PIXEL_FORMAT, "Mono8")
         eight = restore.capture_frame(not_before=self.fresh(restore)).pixels
+        again = restore.capture_frame(not_before=self.fresh(restore)).pixels
+        noise = np.abs(again.astype(np.int64) - eight).mean()
+        print(f"\nMono8 frames differ by {noise:.2f} counts from one to the next")
         for name in deeper:
             restore.set_setting(PIXEL_FORMAT, name)
             frame = restore.capture_frame(not_before=self.fresh(restore))
@@ -501,7 +532,7 @@ class GenICamHardwareTests:
                 f"{np.mean(as_eight >= 255):.4f} in {name}"
             )
             # A still, lit scene: only noise between the two frames.
-            assert diff.mean() < 3
+            assert diff.mean() < max(3, 2 * noise)
 
     def test_a_second_open_of_the_same_camera_is_busy(self, camera, serial):
         second = self.make(serial)

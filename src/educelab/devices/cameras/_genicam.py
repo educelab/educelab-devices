@@ -317,6 +317,8 @@ _GAIN_MANTISSA_BITS = 4
 _SELF_SLOWING_VENDORS = frozenset({_IDS})
 # "Once" isn't offered: it reverts to "Off" by itself, so it never reads back.
 _AUTO_MODES = ("Off", "Continuous")
+# A geometry change re-rounds the exposure a little; less than this is a cut.
+_EXPOSURE_KEPT = 0.99
 _US_PER_S = 1e6
 
 THROUGHPUT_LIMIT = "throughput_limit"
@@ -478,6 +480,8 @@ class GenICamCamera(FrameCamera):
         # What preview last wrote, or None while the capture geometry stands.
         self._applied: _Geometry | None = None
         self._limit_before_preview: int | None = None
+        # The longest exposure seen at each ROI size, in the node's unit.
+        self._exposure_caps: dict[tuple[int, int, int], float] = {}
         # Frames from before this show the previous preview geometry.
         self._preview_floor: datetime | None = None
 
@@ -644,6 +648,7 @@ class GenICamCamera(FrameCamera):
         self._crop = self._applied = self._capture_geometry = None
         self._limit_before_preview = self._preview_floor = None
         self._limits = {}
+        self._exposure_caps = {}
         return problems
 
     def _not_found_message(self) -> str:
@@ -946,6 +951,7 @@ class GenICamCamera(FrameCamera):
         conn = self._connection
         self._capture_geometry = self._applied = None
         self._limits = {}
+        self._exposure_caps = {}
         self._decimations = (1,)
         nodes = ("Width", "Height", "OffsetX", "OffsetY")
         if not all(conn.is_writable(node) for node in nodes):
@@ -972,11 +978,16 @@ class GenICamCamera(FrameCamera):
             region, max_size, full=self._limits[1].full, choices=self._decimations
         )
         current = self._applied or capture
-        if self._applied is None:
-            self._limit_before_preview = self._read_limit()
         target = None
         if decimation in self._limits:
             target = self._limits[decimation].roi(region, decimation)
+        exposure = self._set_exposure()
+        if exposure is not None and target is not None:
+            cap = self._exposure_caps.get(target.size)
+            if cap is not None and cap < exposure * _EXPOSURE_KEPT:
+                return self._start_whole_frame_preview(region, max_size, exposure)
+        if self._applied is None:
+            self._limit_before_preview = self._read_limit()
         if target is None or target.size != current.size:
             # Marked first, so a failure part-way still restores the camera.
             self._applied = current
@@ -985,6 +996,13 @@ class GenICamCamera(FrameCamera):
                 target = limits.roi(region, decimation)
                 self._write_geometry(target, decimate=False)
             self._raise_frame_rate()
+            if exposure is not None and not self._keep_exposure(exposure, target):
+                logger.info(
+                    "%r: a smaller image would shorten the exposure; "
+                    "cropping whole frames instead",
+                    self,
+                )
+                return self._start_whole_frame_preview(region, max_size, exposure)
         elif target != current:
             self._applied = current
             self._move(target)
@@ -999,6 +1017,47 @@ class GenICamCamera(FrameCamera):
             origin=(target.x, target.y),
         )
         return self._crop.geometry
+
+    def _start_whole_frame_preview(
+        self, region: PreviewRegion, max_size: int | None, exposure: float
+    ) -> PreviewGeometry:
+        """Preview from whole frames, for an exposure too long for the frame
+        rate of a smaller image (the CM3; usb3-vision.md, Preview)."""
+        changed = self._applied is not None
+        self._stop_preview()
+        if changed:
+            self._keep_exposure(exposure, None)
+            self._preview_floor = datetime.fromtimestamp(host_time(), UTC)
+        return self._start_host_preview(region, max_size)
+
+    def _set_exposure(self) -> float | None:
+        """The exposure in the node's unit, if it's the caller's to set rather
+        than the camera's (auto exposure)."""
+        conn, node = self._connection, self._exposure_node
+        if node is None or not (conn.is_readable(node) and conn.is_writable(node)):
+            return None
+        return self._call(f"read {node}", lambda: conn.get_float(node))
+
+    def _keep_exposure(self, exposure: float, target: "_Geometry | None") -> bool:
+        """Put the exposure back if a geometry change cut it. False if the
+        camera no longer allows one that long."""
+        conn, node = self._connection, self._exposure_node
+        assert node is not None
+        try:
+            now, (_, high) = self._call(
+                f"read {node}", lambda: (conn.get_float(node), conn.float_range(node))
+            )
+            if target is not None:
+                self._exposure_caps[target.size] = high
+            if now >= exposure * _EXPOSURE_KEPT:
+                return True
+            if high < exposure * _EXPOSURE_KEPT:
+                return False
+            self._call(f"set {node}", lambda: conn.set_float(node, exposure))
+        except DeviceError as exc:
+            logger.warning("%r: exposure not kept: %s", self, exc)
+            return False
+        return True
 
     def _start_host_preview(
         self, region: PreviewRegion, max_size: int | None

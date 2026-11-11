@@ -217,6 +217,9 @@ class FakeCamera:
             acquiring (not through IDS peak's GenTL producer).
         limit_shrinks: The throughput limit and its maximum drop with the
             payload and only a pixel format write resets them, as on the CM3.
+        rate_caps_exposure: The longest exposure is one frame period, which
+            shrinks with the image's height and cuts a longer exposure short,
+            as on the CM3.
     """
 
     # Made-up figures, roughly a USB3 camera; nothing tests them against hardware.
@@ -259,6 +262,7 @@ class FakeCamera:
         decimation_horizontal_follows: bool = False,
         offsets_while_streaming: bool = True,
         limit_shrinks: bool = False,
+        rate_caps_exposure: bool = False,
     ) -> None:
         self.arrival_latency = arrival_latency
         self.ids_nodes = ids_nodes
@@ -271,6 +275,7 @@ class FakeCamera:
         self.vendor = vendor
         self.size_inc = size_inc
         self.limit_shrinks = limit_shrinks
+        self.rate_caps_exposure = rate_caps_exposure
         self.decimation_horizontal_follows = decimation_horizontal_follows
         # Every node write, in order, for tests that count camera traffic.
         self.writes: list[tuple[str, Any]] = []
@@ -744,6 +749,11 @@ class FakeCamera:
             self.nodes[size].maximum = (full - at) // inc * inc
             if self.has(offset):
                 self.nodes[offset].maximum = full - self.get(size)
+        if self.rate_caps_exposure:
+            rows = self.get("Height") / self.full_size[1]
+            exposure = self.nodes[self.exposure_node]
+            exposure.maximum = 1e6 / self.MAX_FRAME_RATE * rows
+            exposure.value = min(exposure.value, exposure.maximum)
         if self.limit_shrinks:
             limit = self.nodes["DeviceLinkThroughputLimit"]
             needed = payload_size(self) * self.MAX_FRAME_RATE * 2

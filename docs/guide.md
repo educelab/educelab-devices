@@ -277,6 +277,10 @@ camera.stop_preview()
   | Change the region's size or `max_size` | Restart, 0.1–0.4 s | About 0.5 s, up to 0.8 s |
   | Stop | Restart if a region or `max_size` was used | 0.6 s |
 
+- **Preview leaves the exposure alone.** A camera whose frame rate caps the exposure
+  (the CM3) would have to shorten a long exposure to send a smaller image, so it
+  sends whole frames instead and the host reduces them: the preview looks the same
+  but saves no bandwidth. With auto exposure on, the exposure is the camera's.
 - **Captures refuse during preview**, with `PreviewError`. To capture, stop, capture
   and start again, and show the captured image meanwhile:
 

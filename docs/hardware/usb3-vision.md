@@ -140,6 +140,21 @@ How `start_preview(region, max_size)` maps onto a camera, on every backend:
   keeps them until it's power-cycled.
 - **Without the nodes** (`Width`, `Height` and the offsets writable before acquisition
   starts), the camera sends whole frames and the host crops and strides them.
+- **The exposure is never shortened.** On the CM3 the frame rate follows the image
+  size (`AcquisitionFrameRateAuto` `Continuous`), and the longest exposure is one
+  frame period: 27.9 ms for the whole image, 14.2 ms for half its height or for
+  decimation by 2, 3.2 ms for a tenth. A smaller image cut a longer exposure to that
+  (10 ms became 3.2 ms for a 0.1 region), and putting the whole image back left it
+  cut. So after a size change the driver re-reads the exposure, and if the camera no
+  longer allows it, puts the whole image back and has the host crop and stride whole
+  frames instead. It remembers the longest exposure of each size, so the next such
+  preview doesn't restart acquisition to find out. The IDS kept its exposure through
+  every preview. **verified** (CM3 `20305122` through Spinnaker and Aravis, IDS
+  through Aravis, 2026-11-11).
+  - With auto exposure on, the exposure is the camera's, and the driver leaves it.
+  - During a region or `max_size` preview on the CM3, `exposure_time` can't be set
+    above that image's frame period. Stop the preview, or preview the whole sensor,
+    to set a longer one.
 
 `el-devices genicam --preview [FRAMES] --region X,Y,W,H --max-size PIXELS` (and the
 same on `el-devices spinnaker`) previews each camera after its captures, and prints

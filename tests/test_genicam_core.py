@@ -1337,6 +1337,57 @@ def test_a_shrunken_throughput_limit_is_put_back_after_preview():
         )
 
 
+def capped_camera(exposure_us):
+    """A fake CM3 whose frame rate caps the exposure, set to ``exposure_us``."""
+    fake = FakeCamera(MONO, **CM3, auto=False, rate_caps_exposure=True)
+    fake._fit_geometry()
+    fake.nodes["ExposureTime"].value = exposure_us
+    return fake
+
+
+@pytest.mark.parametrize("request_", [(QUARTER, None), (None, 600)])
+def test_a_preview_that_would_shorten_the_exposure_is_cropped_on_the_host(request_):
+    fake = capped_camera(20_000.0)
+    with GenICamCamera(MONO, FakeBackend([fake])) as camera:
+        geometry = camera.start_preview(*request_)
+        # The camera still sends whole frames, at the exposure it had.
+        assert geometry_of(fake) == (0, 0, 2448, 2048)
+        assert fake.get("DecimationVertical") == 1
+        assert fake.get("ExposureTime") == 20_000.0
+        frame = camera.preview_frame()
+        assert frame.pixels.shape == (geometry.height, geometry.width)
+        camera.stop_preview()
+        assert fake.get("ExposureTime") == 20_000.0
+
+
+def test_a_preview_keeps_an_exposure_the_smaller_image_still_allows():
+    fake = capped_camera(2_000.0)
+    with GenICamCamera(MONO, FakeBackend([fake])) as camera:
+        camera.start_preview(QUARTER)
+        assert geometry_of(fake)[2:] == (616, 514)
+        assert fake.get("ExposureTime") == 2_000.0
+
+
+def test_a_size_known_to_cut_the_exposure_is_not_tried_again():
+    fake = capped_camera(20_000.0)
+    with GenICamCamera(MONO, FakeBackend([fake])) as camera:
+        camera.start_preview(QUARTER)
+        fake.writes.clear()
+        camera.start_preview(PreviewRegion(0.5, 0.5, 0.25, 0.25))
+        assert fake.writes == []
+        # A shorter exposure fits, so the camera crops again.
+        camera.set_setting(EXPOSURE_TIME, 0.002)
+        camera.start_preview(QUARTER)
+        assert geometry_of(fake)[2:] == (616, 514)
+
+
+def test_auto_exposure_is_left_to_the_camera_during_preview():
+    fake = FakeCamera(MONO, **CM3, auto=True, rate_caps_exposure=True)
+    with GenICamCamera(MONO, FakeBackend([fake])) as camera:
+        camera.start_preview(QUARTER)
+        assert geometry_of(fake)[2:] == (616, 514)
+
+
 def test_a_limit_set_during_preview_survives_stopping():
     fake = FakeCamera(MONO, **CM3, limit_shrinks=True)
     with GenICamCamera(MONO, FakeBackend([fake])) as camera:

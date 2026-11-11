@@ -282,6 +282,17 @@ Spinnaker installs a GenTL producer on macOS, in `/usr/local/lib/spinnaker-gentl
 
 Loading it makes genicam print five lines such as "GenTL producer does not implement DSGetNumFlows" to stderr, one for each optional GenTL 1.6 function the producer lacks. They are harmless. The driver logs them at debug level instead of letting them reach the console.
 
+### 2026-11-11, preview, macOS and Windows
+
+The preview hardware tests (`pytest -m hardware -k "preview or region or max_size or eight_bit"`), on commit `c456fd3`, one camera at a time. [V]:
+
+- **Lab Mac** (macOS 27, Python 3.12): CM3-U3-50S5M `20305122` through Spinnaker, Aravis and FLIR's GenTL producer, and the IDS through Aravis: 8 passed on each. The scene was dim: the CM3 ran at its longest exposure (27.9 ms) and 22 dB of gain.
+- **Windows rig** (`DESKTOP-Q940IU7`, Windows 11, Python 3.12.10), through GenTL:
+  - All five CM3-U3-50S5M through FLIR's producer: 8 passed on each. A region preview started in 0.06–0.09 s, a move took 3–4 ms with the first frame 56 ms after asking, and a stop 0.07–0.08 s.
+  - The IDS through IDS peak's producer: 6 passed, 2 skipped. A region preview started in 0.35 s, a move took 0.09 s (a restart, since the offsets are locked while streaming) with the first frame 0.14 s after asking, and a stop 0.20 s. Skipped: the moved region's content (the scene was too flat to tell where a region was) and `not_before` (frames can't be timed through this producer).
+- **Levels.** `max_size` by decimation kept the level: 0.999–1.004× a capture's on the CMs, 0.975–0.987× on the IDS.
+- **Mono8 is the top bits** of the CM3's Mono16 (12 bits, left-aligned): the two differed by no more than one Mono8 frame does from the next. The IDS's Mono10g40IDS agreed too (0.27 counts), but on a dark image that used 7 of its 10 bits, so that check is weak.
+
 ### 2026-11-09, Windows, GenTL, five cameras (stall runs)
 
 Issue #32. The Windows rig (`DESKTOP-Q940IU7`, Python 3.12.10, genicam 1.6.0, FLIR's GenTL producer), five CM3-U3-50S5M on one Acroname hub, each run `el-devices genicam --backend gentl --pixel-format Mono8 --exposure min --throughput-limit 80 --frames 100`. [V] for each point below:

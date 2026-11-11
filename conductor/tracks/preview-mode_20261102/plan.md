@@ -157,13 +157,13 @@ Owed hardware checks (Task 5.4): the driver's reported region on the camera in F
 - [x] Task 5.2: Update the hardware docs (`gphoto2-cameras.md`, `spinnaker.md`, `usb3-vision.md`, `ids-u3-36p0xcp.md`) with each camera's preview mechanism.
 - [x] Task 5.3: Move `el-devices dslr --preview` and any GenICam subcommands to the new API, with region and size options.
   - `--preview [FRAMES]`, `--region X,Y,W,H` and `--max-size PIXELS` on `dslr`, `genicam` and `spinnaker`, from a shared `app/_preview.py`. The GenICam subcommands preview each camera after its captures.
-- [~] Task 5.4: Write `@pytest.mark.hardware` tests for preview (geometry, `not_before` after a focus step on the Z7 II, and a full-sensor versus zoomed region on the CM3 and IDS). Run them, and record the results.
+- [x] Task 5.4: Write `@pytest.mark.hardware` tests for preview (geometry, `not_before` after a focus step on the Z7 II, and a full-sensor versus zoomed region on the CM3 and IDS). Run them, and record the results.
 
   - Z7 II, 2026-11-10 and 11: the hardware tests pass in FX (19 passed, 7 skipped), DX, 5:4 and 1:1, and the driver's reported regions match the frames in all five image areas. Two things found and fixed on the way:
     - Stopping took 3.6 s and each start 4 s, from whole-tree reads. Preview now probes its widgets by name (`Session.find_widgets()`): a start takes 0.95-1.1 s, the first included, and a stop 0.6 s.
     - In DX the first zoom after an unzoomed view landed off its reported region: a centre written while the zoom is changing is misplaced. The driver now writes the centre twice with a new zoom level.
   - CM3 (`20305122`) through Spinnaker, Aravis and FLIR's GenTL producer, and IDS through Aravis, on the lab Mac, 2026-11-11: the eight preview tests pass on each, and the full hardware suites pass through Spinnaker and Aravis. Found and fixed: a smaller image raised the CM3's frame rate, which cut a long exposure short and left it cut after stopping. Preview now holds the frame rate at the whole image's, so the exposure stays and the camera still sends the smaller image; a camera without the frame-rate nodes falls back to cropping whole frames on the host.
-  - Owed: the IDS through IDS peak's GenTL producer on the Windows rig. `hardware_tests.py` in this folder runs the preview tests on every camera GenTL finds and saves the logs.
+  - Windows rig through GenTL, 2026-11-11 (`hardware_tests.py` in this folder): all five CM3s through FLIR's producer, 8 passed each; the IDS through IDS peak's producer, 6 passed and 2 skipped (the moved region's content, on a flat scene, and `not_before`, which that producer can't time). Recorded in `usb3-vision.md`, Hardware runs.
 
 ### Verification
 

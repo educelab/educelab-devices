@@ -11,7 +11,7 @@
   },
   "tasks": {
     "total": 21,
-    "completed": 20
+    "completed": 21
   },
   "current_phase": 5,
   "current_task": "5.4",
@@ -39,6 +39,7 @@
     "3e6e9e2: Probe the live-view widgets by name instead of reading the config tree",
     "b7d3d12: Write the Z7 II's zoom centre twice after a zoom-level change",
     "2e4f196: Keep the exposure when preview shrinks the image",
-    "b10efc0: Add a runner for the preview hardware tests; record the hardware runs"
+    "b10efc0: Add a runner for the preview hardware tests; record the hardware runs",
+    "c456fd3: Hold the frame rate during preview so the exposure stays"
   ]
 }

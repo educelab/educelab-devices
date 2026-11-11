@@ -47,7 +47,11 @@ def discover(backend: str) -> list[str]:
         "    print(f'{i.serial_number}\\t{i.vendor} {i.model}')\n"
     )
     done = subprocess.run(
-        [sys.executable, "-c", code], capture_output=True, text=True, cwd=ROOT
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        check=False,
     )
     if done.returncode:
         lines = done.stderr.strip().splitlines()
@@ -96,6 +100,7 @@ def main() -> int:
         capture_output=True,
         text=True,
         cwd=ROOT,
+        check=False,
     ).stdout.strip()
     summary = [
         f"{datetime.now():%Y-%m-%d %H:%M} on {platform.node()}",

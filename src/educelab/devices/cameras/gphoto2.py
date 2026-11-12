@@ -111,11 +111,6 @@ the old setting (0.2-0.4 s on the Z7 II)."""
 
 # Fractions pick up float error; don't let it choose a looser zoom.
 _ZOOM_SLACK = 1e-9
-# A zoom level is used for regions up to this much wider than its crop, where
-# it adds detail. The first level reaches further: the unzoomed image is the
-# coarsest, and a crop of it that size is under 400 pixels across.
-_ZOOM_REACH = 4 / 3
-_FIRST_ZOOM_REACH = 3 / 2
 # A smaller live-view size is preferred if it delivers this much of the best.
 _NEARLY_BEST = 0.8
 
@@ -549,22 +544,16 @@ class GPhoto2Camera(FileCamera):
         area_w, area_h = self._image_area
         wide, tall = region.width * area_w, region.height * area_h
         aspect = profile.zoom_aspect
-        finest = max(profile.sizes.values())
-
-        def holds(n: int) -> bool:
-            # A level that adds detail is used early, showing the middle of
-            # the region. One that only enlarges must hold all of it.
-            reach = 1.0
-            if n == self._zoom_levels[-1]:
-                reach = _FIRST_ZOOM_REACH
-            elif n >= finest:
-                reach = _ZOOM_REACH
-            return (
-                wide <= n * reach + _ZOOM_SLACK
-                and tall <= n * aspect * reach + _ZOOM_SLACK
-            )
-
-        level = next((n for n in self._zoom_levels if holds(n)), 0)
+        # Only a level that holds the whole region: the preview must show
+        # what was asked for, even where a tighter zoom would be sharper.
+        level = next(
+            (
+                n
+                for n in self._zoom_levels
+                if wide <= n + _ZOOM_SLACK and tall <= n * aspect + _ZOOM_SLACK
+            ),
+            0,
+        )
         # The part of the image area a zoomed frame shows, as fractions.
         shown_w = min(level / area_w, 1.0) if level else 1.0
         shown_h = min(level * aspect / area_h, 1.0) if level else 1.0
@@ -576,8 +565,8 @@ class GPhoto2Camera(FileCamera):
                 frame_h = frame_w * aspect
             else:
                 frame_w, frame_h = profile.unzoomed(size, self._image_area)
-            across = min(region.width / shown_w, 1.0) * frame_w
-            return max(across, min(region.height / shown_h, 1.0) * frame_h)
+            across = region.width / shown_w * frame_w
+            return max(across, region.height / shown_h * frame_h)
 
         def delivered(size: str) -> float:
             """Pixels left of that side once the host has fitted `max_size`."""

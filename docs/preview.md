@@ -206,10 +206,10 @@ feed.resume()
 | Times its frames | Yes | Through Aravis; not through IDS peak | By arrival |
 
 - **Z7 II:** the camera has three zoom levels and the driver picks the tightest that
-  holds the region, then crops, so any region works. Detail comes in steps: the whole
-  view and any region wider than 0.37 of it are cut from a 1024-pixel image, and a
-  region a little wider than a zoom level's crop is shown as that crop, so the applied
-  region can be up to a third narrower than the one asked for. Ask for 1024 pixels
+  holds the region, then crops, so any region works and always shows all of what was
+  asked for. Detail comes in steps: the whole view and any region wider than a quarter
+  of it are cut from a 1024-pixel image, so a region a third of the width is about 340
+  pixels across, and one just under a quarter is 1024. Ask for 1024 pixels
   or more: a `max_size` just under a frame's width costs half the pixels. Its screens go blank while live
   view runs and stay blank until `close()`. On macOS, `ptpcamerad` must be killed
   before opening ([gphoto2 cameras](hardware/gphoto2-cameras.md)).

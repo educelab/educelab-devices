@@ -179,6 +179,7 @@ Owed hardware checks (Task 5.4): the driver's reported region on the camera in F
   - CM3 (Spinnaker) and IDS (Aravis) confirmed in `el-devices preview` on the lab Mac, 2026-11-12: zoom, drag, capture, Mono16 and Mono10g40IDS, and the CM3 holding a 27 ms exposure while zoomed.
   - Z7 II (gphoto2) confirmed in `el-devices preview` on the lab Mac, 2026-11-12: zoom through all three levels, moving a region, the scale in the overlay, and a capture shown as its JPEG.
   - The track stays open: the maintainer is integrating preview into `pgs-scan`'s apps before merging here, so no PR yet.
+  - pgs-scan's integration is done off-rig (2026-11-12, against `9c0a191`). It found four things to decide before merging: no bit depth on `PreviewFrame`, the CM3's Mono16 clipping at 65520, `max_size` rounding down a whole step, and `host_crop` being private. See [pgs-scan-handoff.md](./pgs-scan-handoff.md).
 
 ## Final Verification
 

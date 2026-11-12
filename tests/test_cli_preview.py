@@ -75,6 +75,7 @@ def opencv(monkeypatch):
     monkeypatch.setattr(preview, "has_opencv", lambda: True)
     monkeypatch.setattr(preview, "SETTLE_S", 0.0)
     monkeypatch.setattr(preview, "TICK_MS", 1)
+    monkeypatch.setattr(preview, "_activate", lambda: None)
     # Wait for each new region to show, so the scripts play out in step.
     ask = preview._Feed.ask
     monkeypatch.setattr(

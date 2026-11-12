@@ -169,6 +169,7 @@ def run(args: argparse.Namespace) -> int:
         camera.start_preview(max_size=args.window)
         feed = _Feed(camera, args.window)
         feed.start()
+        activated = False
         try:
             while args.frames is None or feed.count < args.frames:
                 if feed.error is not None:
@@ -199,6 +200,9 @@ def run(args: argparse.Namespace) -> int:
                     f"frames/s, last change {feed.took:.2f} s",
                 )
                 cv2.imshow(TITLE, image)
+                if not activated:
+                    activated = True
+                    _activate()
                 key = cv2.waitKey(TICK_MS) & 0xFF
                 if key in (ord("q"), 27):
                     break
@@ -378,6 +382,39 @@ def _mouse_handler(cv2: Any, view: View) -> Any:
         view.drag_to((x, y))
 
     return handle
+
+
+def _activate() -> None:
+    """Bring the window's application to the front on macOS.
+
+    Started from a terminal, the window opens behind it in effect: the
+    terminal keeps the focus, and the first click only activates the window.
+    """
+    if sys.platform != "darwin":
+        return
+    try:
+        import ctypes
+        import ctypes.util
+
+        objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc") or "")
+        objc.objc_getClass.restype = ctypes.c_void_p
+        objc.objc_getClass.argtypes = [ctypes.c_char_p]
+        objc.sel_registerName.restype = ctypes.c_void_p
+        objc.sel_registerName.argtypes = [ctypes.c_char_p]
+        pointer = ctypes.c_void_p
+        shared = ctypes.CFUNCTYPE(pointer, pointer, pointer)(("objc_msgSend", objc))
+        application = shared(
+            objc.objc_getClass(b"NSApplication"),
+            objc.sel_registerName(b"sharedApplication"),
+        )
+        activate = ctypes.CFUNCTYPE(None, pointer, pointer, ctypes.c_bool)(
+            ("objc_msgSend", objc)
+        )
+        activate(
+            application, objc.sel_registerName(b"activateIgnoringOtherApps:"), True
+        )
+    except (OSError, AttributeError) as exc:
+        logger.debug("could not bring the window to the front: %s", exc)
 
 
 def _fit(cv2: Any, pixels: "npt.NDArray[np.uint8]", window: int) -> Any:

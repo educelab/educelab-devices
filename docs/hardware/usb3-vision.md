@@ -298,6 +298,7 @@ The preview hardware tests (`pytest -m hardware -k "preview or region or max_siz
 - **Windows rig** (`DESKTOP-Q940IU7`, Windows 11, Python 3.12.10), through GenTL:
   - All five CM3-U3-50S5M through FLIR's producer: 8 passed on each. A region preview started in 0.06–0.09 s, a move took 3–4 ms with the first frame 56 ms after asking, and a stop 0.07–0.08 s.
   - The IDS through IDS peak's producer: 6 passed, 2 skipped. A region preview started in 0.35 s, a move took 0.09 s (a restart, since the offsets are locked while streaming) with the first frame 0.14 s after asking, and a stop 0.20 s. Skipped: the moved region's content (the scene was too flat to tell where a region was) and `not_before` (frames can't be timed through this producer).
+- **Windows rig again, 2026-11-12** (commit `e11ba4c`, with the frame period dropped after a live move), through GenTL: all five CM3-U3-50S5M 8 passed each, the first frame 84 ms after asking for a move (56 ms before). The IDS through IDS peak's producer 7 passed, 1 skipped (`not_before`): the moved region's content, skipped for a flat scene the day before, matched.
 - **Levels.** `max_size` by decimation kept the level: 0.999–1.004× a capture's on the CMs, 0.975–0.987× on the IDS.
 - **Mono8 is the top bits** of the CM3's Mono16 (12 bits, left-aligned): the two differed by no more than one Mono8 frame does from the next. The IDS's Mono10g40IDS agreed too (0.27 counts), but on a dark image that used 7 of its 10 bits, so that check is weak.
 

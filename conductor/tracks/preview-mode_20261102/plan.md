@@ -168,6 +168,7 @@ Owed hardware checks (Task 5.4): the driver's reported region on the camera in F
   - Found with the viewer on 2026-11-12, and fixed:
     - Through Aravis, a preview of a small region stopped after 1-10 s on the IDS and the CM3: Aravis's async mode loses a buffer returned within about a millisecond of its frame, which only small frames allow. The driver now rests each buffer 2 ms first.
     - On the IDS, the first frame after a live region move was torn. Preview now also drops frames from the frame period after such a move.
+  - Windows rig again through GenTL, 2026-11-12, with those fixes: all five CM3s 8 passed each; the IDS through IDS peak 7 passed, 1 skipped (`not_before`), including the moved region's content that a flat scene had skipped before.
 - [x] Task 5.5: Add `el-devices preview`, a viewer for checking framing, zoom and focus by eye (added at the maintainer's request). OpenCV comes from the `[viewer]` extra, and the subcommand is only registered when `cv2` can be found. Tried with the simulated camera only.
 
 ### Verification

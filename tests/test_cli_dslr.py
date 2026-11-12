@@ -82,7 +82,7 @@ def test_previews_a_region_at_a_bounded_size(attach, capsys):
     assert main(["dslr", *args]) == 0
     out = capsys.readouterr().out
     # Rounded inward to whole pixels of the zoomed frame.
-    assert "region 0.4,0.4,0.1,0.0999" in out and "5 frame(s)" in out
+    assert "region 0.4,0.4003,0.1,0.09946" in out and "5 frame(s)" in out
     assert camera.widgets["liveviewzoomarea"].value == "0"
     assert {"liveviewzoomarea": "1024"} in camera.writes
 

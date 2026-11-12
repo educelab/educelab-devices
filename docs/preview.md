@@ -200,13 +200,17 @@ feed.resume()
 | | CM3-U3-50S5M | IDS U3-36PxXCP | Nikon Z7 II |
 |---|---|---|---|
 | Whole view | 2448 × 2048 at 36 frames/s | 5136 × 3856 at 8 frames/s | A JPEG 1024 px wide |
-| Full resolution | Any region | Any region | Zoomed only: regions up to 0.25 of the width in FX |
+| Full resolution | Any region | Any region | Zoomed only: regions up to 0.12 of the width in FX |
 | Change the region | Move 4 ms, resize 0.1 s, then a frame or two | Move 6 ms, resize 0.3 s, then a frame or two (through IDS peak, a move is 0.09 s) | About 0.5 s |
 | Deeper formats | `Mono16` (12 bits) | `Mono10g40IDS` | No |
 | Times its frames | Yes | Through Aravis; not through IDS peak | By arrival |
 
 - **Z7 II:** the camera has three zoom levels and the driver picks the tightest that
-  holds the region, then crops, so any region works. Its screens go blank while live
+  holds the region, then crops, so any region works. Detail comes in steps: the whole
+  view and any region wider than a third of it are cut from a 1024-pixel image, and a
+  region a little wider than a zoom level's crop is shown as that crop, so the applied
+  region can be up to a quarter narrower than the one asked for. Ask for 1024 pixels
+  or more: a `max_size` just under a frame's width costs half the pixels. Its screens go blank while live
   view runs and stay blank until `close()`. On macOS, `ptpcamerad` must be killed
   before opening ([gphoto2 cameras](hardware/gphoto2-cameras.md)).
 - **GenICam cameras through Aravis:** the smallest regions run at 60 frames/s on the

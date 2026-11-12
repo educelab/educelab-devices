@@ -239,13 +239,18 @@ below:
 - **Region:** a fraction of the **image area** (FX, DX, 5:4, 1:1 or 16:9), which is
   what captures and unzoomed live view cover. The driver reads the area's size in
   sensor pixels from the largest `imagesize` choice each time preview starts.
-- **Zoom:** the tightest `liveviewzoomarea` whose crop contains the preview region,
-  or `0` for a region the `2048` crop can't hold.
+- **Zoom:** the tightest `liveviewzoomarea` whose crop contains the preview region.
+  `2048` and `1024` are also used for a region up to a third wider or taller than
+  their crop, showing its middle: a crop of the unzoomed image that size is only
+  about 280 pixels across, against 1024 zoomed. `512` only enlarges, so it must hold
+  the whole region. A wider region still gets `0` and a crop of the unzoomed image.
 - **Centre:** `changeafarea`, at the region's centre in pixels of the image area. It's
   written after live view is running, and again with every zoom change. With a new
   zoom level it's written twice (see the zoom geometry below).
-- **Size:** `liveviewsize` `XGA` unless `max_size` asks for less; then the smallest
-  size that still reaches it. The host crops the image to the region and strides it.
+- **Size:** `liveviewsize` `XGA` unless `max_size` asks for less. Then the host keeps
+  every n-th pixel to fit, so the driver picks the smallest size that delivers at
+  least 0.8 of the most any size would: a `max_size` of 1000 gets `VGA` whole (640)
+  and not `XGA` halved (512). The host crops the image to the region.
 - **Settling:** after any of those writes, `start_preview()` waits 0.4 s
   (`LIVE_VIEW_SETTLE_S`) before taking the image it reports, so moving a zoomed region
   costs about that long (0.46 s measured; 0.8 s when the zoom level changes too).

@@ -72,9 +72,9 @@ def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") 
     parser.add_argument(
         "--window",
         type=int,
-        default=1000,
+        default=1024,
         metavar="PIXELS",
-        help="the window's longest side (default: 1000)",
+        help="the window's longest side (default: 1024, a Z7 II frame's width)",
     )
     parser.add_argument("--pixel-format", help="set this first, e.g. Mono16")
     parser.add_argument(

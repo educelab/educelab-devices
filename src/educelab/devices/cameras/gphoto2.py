@@ -6,6 +6,7 @@ Error codes, timing, and per-body quirks: docs/hardware/gphoto2-cameras.md.
 import dataclasses
 import io
 import logging
+import math
 import re
 import sys
 import threading
@@ -110,6 +111,11 @@ the old setting (0.2-0.4 s on the Z7 II)."""
 
 # Fractions pick up float error; don't let it choose a looser zoom.
 _ZOOM_SLACK = 1e-9
+# A zoom level is used for regions up to this much wider than its crop: an
+# unzoomed crop that size is only a few hundred pixels across.
+_ZOOM_REACH = 4 / 3
+# A smaller live-view size is preferred if it delivers this much of the best.
+_NEARLY_BEST = 0.8
 
 
 @dataclass(frozen=True)
@@ -541,14 +547,18 @@ class GPhoto2Camera(FileCamera):
         area_w, area_h = self._image_area
         wide, tall = region.width * area_w, region.height * area_h
         aspect = profile.zoom_aspect
-        level = next(
-            (
-                n
-                for n in self._zoom_levels
-                if wide <= n + _ZOOM_SLACK and tall <= n * aspect + _ZOOM_SLACK
-            ),
-            0,
-        )
+        finest = max(profile.sizes.values())
+
+        def holds(n: int) -> bool:
+            # A level that adds detail is used early, showing the middle of
+            # the region. One that only enlarges must hold all of it.
+            reach = _ZOOM_REACH if n >= finest else 1.0
+            return (
+                wide <= n * reach + _ZOOM_SLACK
+                and tall <= n * aspect * reach + _ZOOM_SLACK
+            )
+
+        level = next((n for n in self._zoom_levels if holds(n)), 0)
         # The part of the image area a zoomed frame shows, as fractions.
         shown_w = min(level / area_w, 1.0) if level else 1.0
         shown_h = min(level * aspect / area_h, 1.0) if level else 1.0
@@ -560,14 +570,21 @@ class GPhoto2Camera(FileCamera):
                 frame_h = frame_w * aspect
             else:
                 frame_w, frame_h = profile.unzoomed(size, self._image_area)
-            across = region.width / shown_w * frame_w
-            return max(across, region.height / shown_h * frame_h)
+            across = min(region.width / shown_w, 1.0) * frame_w
+            return max(across, min(region.height / shown_h, 1.0) * frame_h)
 
+        def delivered(size: str) -> float:
+            """Pixels left of that side once the host has fitted `max_size`."""
+            side = longest(size)
+            if max_size is None:
+                return side
+            return side / max(math.ceil(side / max_size), 1)
+
+        # The smallest size that delivers nearly the most the cap allows. The
+        # first size past the cap isn't it: the host would halve that one.
         sizes = sorted(self._size_choices, key=profile.sizes.__getitem__)
-        size = next(
-            (n for n in sizes if max_size is not None and longest(n) >= max_size),
-            sizes[-1],
-        )
+        enough = _NEARLY_BEST * max(map(delivered, sizes))
+        size = next(n for n in sizes if delivered(n) >= enough)
         wanted: dict[str, WidgetValue] = {
             "liveviewsize": size,
             "liveviewzoomarea": str(level),

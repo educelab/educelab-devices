@@ -1193,9 +1193,17 @@ def test_a_whole_sensor_preview_uses_the_largest_live_view_size():
 
 @pytest.mark.parametrize(
     ("max_size", "size", "expected"),
-    [(None, "XGA", 1024), (2000, "XGA", 1024), (640, "VGA", 640), (200, "QVGA", 160)],
+    [
+        (None, "XGA", 1024),
+        (2000, "XGA", 1024),
+        (640, "VGA", 640),
+        (200, "QVGA", 160),
+        # XGA would be halved to 512 here; VGA whole is more.
+        (1000, "VGA", 640),
+        (600, "XGA", 512),
+    ],
 )
-def test_max_size_picks_the_smallest_live_view_size_that_reaches_it(
+def test_max_size_picks_the_live_view_size_that_delivers_the_most(
     max_size, size, expected
 ):
     attached = FakeCamera()
@@ -1207,7 +1215,7 @@ def test_max_size_picks_the_smallest_live_view_size_that_reaches_it(
 
 @pytest.mark.parametrize(
     ("side", "level"),
-    [(0.05, "512"), (512 / 8256, "512"), (0.1, "1024"), (0.2, "2048"), (0.3, "0")],
+    [(0.05, "512"), (512 / 8256, "512"), (0.1, "1024"), (0.2, "2048"), (0.34, "0")],
 )
 def test_a_region_uses_the_tightest_zoom_that_contains_it(side, level):
     attached = FakeCamera()
@@ -1219,6 +1227,31 @@ def test_a_region_uses_the_tightest_zoom_that_contains_it(side, level):
         assert geometry.region.width == pytest.approx(side, abs=0.002)
         frame = camera.preview_frame()
         assert frame.pixels.shape[:2] == (geometry.height, geometry.width)
+
+
+@pytest.mark.parametrize(
+    ("side", "level", "shown"),
+    [
+        # Up to a third wider than a crop that adds detail: zoomed early,
+        # showing the middle of the region.
+        (0.3, "2048", 2048 / 8256),
+        (0.15, "1024", 1024 / 8256),
+        # 512 only enlarges, so it must hold the whole region.
+        (0.07, "1024", 0.07),
+    ],
+)
+def test_a_region_a_little_wider_than_a_zoom_crop_is_zoomed_anyway(side, level, shown):
+    attached = FakeCamera()
+    region = PreviewRegion(0.4, 0.4, side, side)
+    with opened(attached) as camera:
+        geometry = camera.start_preview(region)
+        assert attached.widgets["liveviewzoomarea"].value == level
+        assert region.contains(geometry.region)
+        assert geometry.region.width == pytest.approx(shown, abs=0.002)
+        # Centred on the region asked for.
+        middle = geometry.region.x + geometry.region.width / 2
+        assert middle == pytest.approx(0.4 + side / 2, abs=0.002)
+        assert geometry.width > 1000 * min(side / (int(level) / 8256), 1) - 30
 
 
 def test_the_zoom_is_centred_on_the_region_in_sensor_pixels():
@@ -1379,7 +1412,10 @@ def test_a_region_too_tall_for_a_zoom_uses_the_next_one():
     with opened(attached) as camera:
         camera.start_preview(PreviewRegion(0.1, 0.1, 0.1, 0.25))
         assert attached.widgets["liveviewzoomarea"].value == "2048"
+        # 0.3 of the height is within reach of 2048's crop; 0.45 is not.
         camera.start_preview(PreviewRegion(0.1, 0.1, 0.1, 0.3))
+        assert attached.widgets["liveviewzoomarea"].value == "2048"
+        camera.start_preview(PreviewRegion(0.1, 0.1, 0.1, 0.45))
         assert attached.widgets["liveviewzoomarea"].value == "0"
 
 

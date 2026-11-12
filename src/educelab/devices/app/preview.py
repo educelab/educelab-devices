@@ -410,7 +410,10 @@ def _fit(
     """A BGR image for the window, ``window`` pixels on its longest side, or
     smaller to stay within ``limit``."""
     code = cv2.COLOR_GRAY2BGR if pixels.ndim == 2 else cv2.COLOR_RGB2BGR
-    image = cv2.cvtColor(pixels, code)
+    return _resize(cv2, cv2.cvtColor(pixels, code), window, limit)
+
+
+def _resize(cv2: Any, image: Any, window: int, limit: tuple[int, int] | None) -> Any:
     height, width = image.shape[:2]
     scale = window / max(width, height)
     if limit is not None:
@@ -467,10 +470,20 @@ def _capture(
     else:
         assert isinstance(camera, FileCamera)
         files = camera.capture_files()
-        image = np.zeros((window * 2 // 3, window, 3), np.uint8)
         what = "captured " + ", ".join(
             f"{file.name} ({len(file.data) / 1e6:.1f} MB)" for file in files
         )
+        # A JPEG can be shown; a raw file is only named (ADR 0002).
+        decoded = None
+        for file in files:
+            if file.suffix.lower() in (".jpg", ".jpeg"):
+                data = np.frombuffer(file.data, np.uint8)
+                decoded = cv2.imdecode(data, cv2.IMREAD_COLOR)
+                break
+        if decoded is None:
+            image = np.zeros((window * 2 // 3, window, 3), np.uint8)
+        else:
+            image = _resize(cv2, decoded, window, limit)
     elapsed = time.perf_counter() - started
     print(f"{what} in {elapsed:.2f} s")
     _label(cv2, image, what, f"{elapsed:.2f} s; any key resumes the preview")

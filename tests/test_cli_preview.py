@@ -7,6 +7,7 @@ import pytest
 from educelab.devices.app import preview
 from educelab.devices.app.cli import build_parser, main
 from educelab.devices.app.preview import View, eight_bit
+from educelab.devices.cameras import CameraFile
 from educelab.devices.cameras.simulated import SimulatedCamera, SimulatedFileCamera
 from educelab.devices.errors import DeviceError
 
@@ -24,10 +25,12 @@ class FakeOpenCV:
     EVENT_MOUSEMOVE, EVENT_LBUTTONDOWN, EVENT_LBUTTONUP = 0, 1, 4
     EVENT_MOUSEWHEEL, EVENT_MOUSEHWHEEL = 10, 11
     EVENT_FLAG_LBUTTON = 1
+    IMREAD_COLOR = 1
 
     def __init__(self, *script):
         self.script = deque(script)
         self.shown = []
+        self.decoded = []
         self.mouse = None
 
     def namedWindow(self, title, flags):
@@ -45,6 +48,13 @@ class FakeOpenCV:
         rows = np.arange(size[1]) * image.shape[0] // size[1]
         columns = np.arange(size[0]) * image.shape[1] // size[0]
         return image[rows][:, columns].copy()
+
+    def imdecode(self, data, flags):
+        # Stands in for a decoder: only something that starts like a JPEG.
+        self.decoded.append(bytes(data[:2]))
+        if bytes(data[:2]) != b"\xff\xd8":
+            return None
+        return np.zeros((300, 450, 3), np.uint8)
 
     def putText(self, *args):
         pass
@@ -170,11 +180,38 @@ def test_capture_stops_the_preview_and_resumes_it(opencv, capsys):
     assert "captured 640x480 Mono8" in capsys.readouterr().out
 
 
-def test_capture_names_the_files_of_a_file_camera(opencv, capsys):
+def file_camera(*files):
+    """A simulated file camera whose captures produce ``files``."""
     camera = SimulatedFileCamera()
-    opencv("c", "x", "q", camera=camera)
+    camera.capture_files = lambda: [CameraFile(name, data) for name, data in files]
+    return camera
+
+
+def test_capture_shows_a_jpeg_from_a_file_camera(opencv, capsys):
+    camera = file_camera(("DSC_0001.NEF", b"raw"), ("DSC_0001.JPG", b"\xff\xd8jpeg"))
+    fake = opencv("c", "x", "q", camera=camera)
     assert main(["preview", "simulated", "--window", "200"]) == 0
-    assert "captured " in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "captured DSC_0001.NEF (0.0 MB), DSC_0001.JPG (0.0 MB)" in out
+    # The JPEG, fitted to the window; the raw file is only named.
+    assert fake.decoded == [b"\xff\xd8"]
+    assert (133, 200, 3) in [image.shape for image in fake.shown]
+
+
+def test_capture_only_names_files_it_cannot_show(opencv, capsys):
+    camera = file_camera(("DSC_0001.NEF", b"raw"))
+    fake = opencv("c", "x", "q", camera=camera)
+    assert main(["preview", "simulated", "--window", "200"]) == 0
+    assert "captured DSC_0001.NEF" in capsys.readouterr().out
+    assert fake.decoded == []
+
+
+def test_a_jpeg_that_will_not_decode_is_only_named(opencv, capsys):
+    camera = file_camera(("DSC_0001.JPG", b"not a jpeg"))
+    fake = opencv("c", "x", "q", camera=camera)
+    assert main(["preview", "simulated", "--window", "200"]) == 0
+    assert "captured DSC_0001.JPG" in capsys.readouterr().out
+    assert (133, 200, 3) in [image.shape for image in fake.shown]
 
 
 def test_scrolling_zooms_about_the_pointer_on_windows_and_linux(opencv, monkeypatch):

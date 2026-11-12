@@ -281,6 +281,9 @@ camera.stop_preview()
   (the CM3) would speed up for a smaller image and shorten a long exposure, so the
   driver holds its frame rate at the whole image's for the length of the preview.
   With auto exposure on, the exposure is the camera's.
+- **To build a preview into an application,** see [Building a live
+  preview](preview.md): threading, when to ask the camera for a new region, display,
+  capturing, and what each camera is like.
 - **To look at a preview,** `el-devices preview <backend>` shows one in a window,
   with scroll to zoom, drag to move and `c` to capture. It's a development tool
   that needs OpenCV (`pip install "educelab-devices[viewer]"`); the subcommand

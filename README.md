@@ -51,7 +51,8 @@ with SimulatedStage() as stage:
 ```
 
 See [docs/guide.md](docs/guide.md) for how every device behaves (lifecycle,
-threading, errors, events) and [docs/hardware/](docs/hardware/README.md) for
+threading, errors, events), [docs/preview.md](docs/preview.md) for building a
+live preview into an application, and [docs/hardware/](docs/hardware/README.md) for
 what we know about each piece of hardware.
 
 ## Command line

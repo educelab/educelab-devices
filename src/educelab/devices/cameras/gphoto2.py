@@ -111,9 +111,11 @@ the old setting (0.2-0.4 s on the Z7 II)."""
 
 # Fractions pick up float error; don't let it choose a looser zoom.
 _ZOOM_SLACK = 1e-9
-# A zoom level is used for regions up to this much wider than its crop: an
-# unzoomed crop that size is only a few hundred pixels across.
+# A zoom level is used for regions up to this much wider than its crop, where
+# it adds detail. The first level reaches further: the unzoomed image is the
+# coarsest, and a crop of it that size is under 400 pixels across.
 _ZOOM_REACH = 4 / 3
+_FIRST_ZOOM_REACH = 3 / 2
 # A smaller live-view size is preferred if it delivers this much of the best.
 _NEARLY_BEST = 0.8
 
@@ -552,7 +554,11 @@ class GPhoto2Camera(FileCamera):
         def holds(n: int) -> bool:
             # A level that adds detail is used early, showing the middle of
             # the region. One that only enlarges must hold all of it.
-            reach = _ZOOM_REACH if n >= finest else 1.0
+            reach = 1.0
+            if n == self._zoom_levels[-1]:
+                reach = _FIRST_ZOOM_REACH
+            elif n >= finest:
+                reach = _ZOOM_REACH
             return (
                 wide <= n * reach + _ZOOM_SLACK
                 and tall <= n * aspect * reach + _ZOOM_SLACK

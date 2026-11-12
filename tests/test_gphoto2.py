@@ -1215,7 +1215,7 @@ def test_max_size_picks_the_live_view_size_that_delivers_the_most(
 
 @pytest.mark.parametrize(
     ("side", "level"),
-    [(0.05, "512"), (512 / 8256, "512"), (0.1, "1024"), (0.2, "2048"), (0.34, "0")],
+    [(0.05, "512"), (512 / 8256, "512"), (0.1, "1024"), (0.2, "2048"), (0.4, "0")],
 )
 def test_a_region_uses_the_tightest_zoom_that_contains_it(side, level):
     attached = FakeCamera()
@@ -1235,7 +1235,10 @@ def test_a_region_uses_the_tightest_zoom_that_contains_it(side, level):
         # Up to a third wider than a crop that adds detail: zoomed early,
         # showing the middle of the region.
         (0.3, "2048", 2048 / 8256),
+        # The first level reaches half again as far as its crop.
+        (0.36, "2048", 2048 / 8256),
         (0.15, "1024", 1024 / 8256),
+        (0.18, "2048", 0.18),
         # 512 only enlarges, so it must hold the whole region.
         (0.07, "1024", 0.07),
     ],

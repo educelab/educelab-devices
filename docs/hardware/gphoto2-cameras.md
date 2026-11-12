@@ -240,10 +240,11 @@ below:
   what captures and unzoomed live view cover. The driver reads the area's size in
   sensor pixels from the largest `imagesize` choice each time preview starts.
 - **Zoom:** the tightest `liveviewzoomarea` whose crop contains the preview region.
-  `2048` and `1024` are also used for a region up to a third wider or taller than
-  their crop, showing its middle: a crop of the unzoomed image that size is only
-  about 280 pixels across, against 1024 zoomed. `512` only enlarges, so it must hold
-  the whole region. A wider region still gets `0` and a crop of the unzoomed image.
+  `2048` is also used for a region up to half again as wide or tall as its crop, and
+  `1024` for one up to a third more, showing the region's middle: a crop of the
+  unzoomed image is under 400 pixels across at those sizes, against 1024 zoomed.
+  `512` only enlarges, so it must hold the whole region. A wider region still gets
+  `0` and a crop of the unzoomed image, never fewer than about 380 pixels across.
 - **Centre:** `changeafarea`, at the region's centre in pixels of the image area. It's
   written after live view is running, and again with every zoom change. With a new
   zoom level it's written twice (see the zoom geometry below).

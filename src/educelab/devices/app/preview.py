@@ -14,6 +14,7 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
+from educelab.devices.app import _macos
 from educelab.devices.errors import import_optional
 
 if TYPE_CHECKING:
@@ -31,6 +32,8 @@ SMALLEST = 0.02
 SETTLE_S = 0.2
 # How long the window handles the mouse and keys between redraws.
 TICK_MS = 15
+# Room left for the window's title bar, in points.
+TITLE_BAR = 40
 # OpenCV's macOS window reports scrolling in points; elsewhere, 120 a notch.
 POINTS_PER_NOTCH = 40
 WHEEL_PER_NOTCH = 120
@@ -161,6 +164,8 @@ def eight_bit(pixels: "npt.NDArray[Any]", pixel_format: str) -> "npt.NDArray[np.
 def run(args: argparse.Namespace) -> int:
     cv2 = import_optional("cv2", extra="viewer")
     view = View()
+    _macos.accept_first_clicks()
+    limit = _window_limit()
     cv2.namedWindow(TITLE, cv2.WINDOW_AUTOSIZE)
     cv2.setMouseCallback(TITLE, _mouse_handler(cv2, view))
     with _open(args) as camera:
@@ -185,7 +190,7 @@ def run(args: argparse.Namespace) -> int:
                 shown = frame.geometry.region
                 view.shown = (shown.x, shown.y, shown.width, shown.height)
                 pixels = eight_bit(frame.pixels, frame.pixel_format)
-                image = _fit(cv2, pixels, args.window)
+                image = _fit(cv2, pixels, args.window, limit)
                 view.size = (image.shape[1], image.shape[0])
                 if view.changed_at is not None or not feed.caught_up.is_set():
                     _outline(cv2, image, view)
@@ -202,7 +207,7 @@ def run(args: argparse.Namespace) -> int:
                 cv2.imshow(TITLE, image)
                 if not activated:
                     activated = True
-                    _activate()
+                    _macos.activate()
                 key = cv2.waitKey(TICK_MS) & 0xFF
                 if key in (ord("q"), 27):
                     break
@@ -218,7 +223,7 @@ def run(args: argparse.Namespace) -> int:
                     view.move(0.0, -0.25 if key == ord("w") else 0.25)
                 elif key == ord("c"):
                     feed.pause()
-                    _capture(cv2, camera, args.window)
+                    _capture(cv2, camera, args.window, limit)
                     camera.start_preview(view.request(), args.window)
                     feed.resume()
         finally:
@@ -384,45 +389,32 @@ def _mouse_handler(cv2: Any, view: View) -> Any:
     return handle
 
 
-def _activate() -> None:
-    """Bring the window's application to the front on macOS.
+def _window_limit() -> tuple[int, int] | None:
+    """The largest image a window can show whole, where that's known.
 
-    Started from a terminal, the window opens behind it in effect: the
-    terminal keeps the focus, and the first click only activates the window.
+    OpenCV's macOS window halves an image that doesn't fit the screen, and
+    draws it badly, so the viewer stays within the screen itself.
     """
-    if sys.platform != "darwin":
-        return
-    try:
-        import ctypes
-        import ctypes.util
-
-        objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc") or "")
-        objc.objc_getClass.restype = ctypes.c_void_p
-        objc.objc_getClass.argtypes = [ctypes.c_char_p]
-        objc.sel_registerName.restype = ctypes.c_void_p
-        objc.sel_registerName.argtypes = [ctypes.c_char_p]
-        pointer = ctypes.c_void_p
-        shared = ctypes.CFUNCTYPE(pointer, pointer, pointer)(("objc_msgSend", objc))
-        application = shared(
-            objc.objc_getClass(b"NSApplication"),
-            objc.sel_registerName(b"sharedApplication"),
-        )
-        activate = ctypes.CFUNCTYPE(None, pointer, pointer, ctypes.c_bool)(
-            ("objc_msgSend", objc)
-        )
-        activate(
-            application, objc.sel_registerName(b"activateIgnoringOtherApps:"), True
-        )
-    except (OSError, AttributeError) as exc:
-        logger.debug("could not bring the window to the front: %s", exc)
+    screen = _macos.visible_screen_size()
+    if screen is None:
+        return None
+    return screen[0], screen[1] - TITLE_BAR
 
 
-def _fit(cv2: Any, pixels: "npt.NDArray[np.uint8]", window: int) -> Any:
-    """A BGR image for the window, ``window`` pixels on its longest side."""
+def _fit(
+    cv2: Any,
+    pixels: "npt.NDArray[np.uint8]",
+    window: int,
+    limit: tuple[int, int] | None = None,
+) -> Any:
+    """A BGR image for the window, ``window`` pixels on its longest side, or
+    smaller to stay within ``limit``."""
     code = cv2.COLOR_GRAY2BGR if pixels.ndim == 2 else cv2.COLOR_RGB2BGR
     image = cv2.cvtColor(pixels, code)
     height, width = image.shape[:2]
     scale = window / max(width, height)
+    if limit is not None:
+        scale = min(scale, limit[0] / width, limit[1] / height)
     size = (max(round(width * scale), 1), max(round(height * scale), 1))
     # Enlarged pixels stay sharp, to judge focus by.
     smoothing = cv2.INTER_AREA if scale < 1 else cv2.INTER_NEAREST
@@ -430,12 +422,14 @@ def _fit(cv2: Any, pixels: "npt.NDArray[np.uint8]", window: int) -> Any:
 
 
 def _label(cv2: Any, image: Any, *lines: str) -> None:
+    font, size = cv2.FONT_HERSHEY_SIMPLEX, 0.55
     for row, text in enumerate(lines):
-        at = (8, 22 + 22 * row)
-        for colour, thickness in (((0, 0, 0), 3), ((255, 255, 255), 1)):
-            cv2.putText(
-                image, text, at, cv2.FONT_HERSHEY_SIMPLEX, 0.55, colour, thickness
-            )
+        x, y = 8, 22 + 22 * row
+        # A dark edge from shifted copies: a thicker stroke would also be
+        # wider in OpenCV 5, and no longer line up.
+        for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1), (1, 1)):
+            cv2.putText(image, text, (x + dx, y + dy), font, size, (0, 0, 0), 1)
+        cv2.putText(image, text, (x, y), font, size, (255, 255, 255), 1)
 
 
 def _outline(cv2: Any, image: Any, view: View) -> None:
@@ -455,7 +449,9 @@ def _outline(cv2: Any, image: Any, view: View) -> None:
     cv2.rectangle(image, corners[0], corners[1], (0, 220, 255), 1)
 
 
-def _capture(cv2: Any, camera: "Camera", window: int) -> None:
+def _capture(
+    cv2: Any, camera: "Camera", window: int, limit: tuple[int, int] | None = None
+) -> None:
     """Stop the preview, capture, and show or name what came."""
     import numpy as np
 
@@ -465,7 +461,7 @@ def _capture(cv2: Any, camera: "Camera", window: int) -> None:
     started = time.perf_counter()
     if isinstance(camera, FrameCamera):
         frame = camera.capture_frame()
-        image = _fit(cv2, eight_bit(frame.pixels, frame.pixel_format), window)
+        image = _fit(cv2, eight_bit(frame.pixels, frame.pixel_format), window, limit)
         height, width = frame.pixels.shape[:2]
         what = f"captured {width}x{height} {frame.pixel_format}"
     else:

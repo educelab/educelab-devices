@@ -75,7 +75,9 @@ def opencv(monkeypatch):
     monkeypatch.setattr(preview, "has_opencv", lambda: True)
     monkeypatch.setattr(preview, "SETTLE_S", 0.0)
     monkeypatch.setattr(preview, "TICK_MS", 1)
-    monkeypatch.setattr(preview, "_activate", lambda: None)
+    # No real windows: leave macOS alone.
+    for name in ("activate", "accept_first_clicks", "visible_screen_size"):
+        monkeypatch.setattr(preview._macos, name, lambda: None)
     # Wait for each new region to show, so the scripts play out in step.
     ask = preview._Feed.ask
     monkeypatch.setattr(
@@ -312,3 +314,22 @@ def test_a_drag_works_without_its_press_or_release_arriving(opencv):
     # 40 of 200 pixels: a fifth of the region's 0.64, and only that.
     assert regions[2][0] - regions[1][0] == pytest.approx(0.2 * 0.64)
     assert regions[2][1] == regions[1][1]
+
+
+def test_the_image_is_kept_within_the_screen(opencv, monkeypatch):
+    # A 640x480 image would be 1000x750, taller than this screen has room for.
+    monkeypatch.setattr(preview._macos, "visible_screen_size", lambda: (1500, 640))
+    fake = opencv(None, None, camera=SimulatedCamera())
+    assert main(["preview", "simulated", "--frames", "2"]) == 0
+    height, width = fake.shown[-1].shape[:2]
+    assert height == 640 - preview.TITLE_BAR
+    assert width == round(height * 640 / 480)
+
+
+def test_macos_helpers_do_nothing_elsewhere(monkeypatch):
+    from educelab.devices.app import _macos
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert _macos.visible_screen_size() is None
+    assert _macos.activate() is None
+    assert _macos.accept_first_clicks() is None

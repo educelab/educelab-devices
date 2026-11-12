@@ -6,6 +6,7 @@ A development tool for framing, focus and debugging preview. It needs OpenCV
 
 import argparse
 import importlib.util
+import logging
 import re
 import sys
 import textwrap
@@ -20,6 +21,8 @@ if TYPE_CHECKING:
     import numpy.typing as npt
 
     from educelab.devices.cameras import Camera, PreviewFrame
+
+logger = logging.getLogger(__name__)
 
 BACKENDS = ("gphoto2", "aravis", "spinnaker", "gentl", "simulated")
 TITLE = "el-devices preview"
@@ -176,6 +179,7 @@ def run(args: argparse.Namespace) -> int:
                     continue
                 if view.settled():
                     view.changed_at = None
+                    logger.debug("asking for %s", view.request())
                     feed.ask(view.request())
                 shown = frame.geometry.region
                 view.shown = (shown.x, shown.y, shown.width, shown.height)
@@ -339,6 +343,8 @@ def _serial(args: argparse.Namespace, found: list[str | None]) -> str:
 
 def _mouse_handler(cv2: Any, view: View) -> Any:
     def handle(event: int, x: int, y: int, flags: int, _: object) -> None:
+        if event != cv2.EVENT_MOUSEMOVE or flags:
+            logger.debug("mouse event %d at (%d, %d), flags %#x", event, x, y, flags)
         if event == cv2.EVENT_MOUSEHWHEEL:
             return
         if event == cv2.EVENT_MOUSEWHEEL:
@@ -353,11 +359,22 @@ def _mouse_handler(cv2: Any, view: View) -> Any:
                 delta -= 0x10000 if delta >= 0x8000 else 0
                 view.zoom(delta / WHEEL_PER_NOTCH, (x, y))
             return
-        if event == cv2.EVENT_LBUTTONDOWN:
-            # The drag starts here, wherever the pointer was last seen.
-            view.pointer, view.dragging = (x, y), True
-        elif event == cv2.EVENT_LBUTTONUP:
-            view.dragging = False
+        held = bool(flags & cv2.EVENT_FLAG_LBUTTON)
+        if event == cv2.EVENT_LBUTTONUP:
+            view.drag_to((x, y))
+            held = False
+        elif event == cv2.EVENT_LBUTTONDOWN:
+            held = True
+        elif event != cv2.EVENT_MOUSEMOVE:
+            return
+        # A move says whether the button is down, so a press or release that
+        # never arrives doesn't leave the drag stuck. A drag starts where it
+        # is first seen, wherever the pointer was before.
+        if held and not view.dragging:
+            view.pointer = (x, y)
+        if held != view.dragging:
+            logger.debug("drag %s at %s, region %s", held, (x, y), view.region)
+        view.dragging = held
         view.drag_to((x, y))
 
     return handle

@@ -23,6 +23,7 @@ class FakeOpenCV:
     COLOR_RGB2BGR = INTER_NEAREST = 1
     EVENT_MOUSEMOVE, EVENT_LBUTTONDOWN, EVENT_LBUTTONUP = 0, 1, 4
     EVENT_MOUSEWHEEL, EVENT_MOUSEHWHEEL = 10, 11
+    EVENT_FLAG_LBUTTON = 1
 
     def __init__(self, *script):
         self.script = deque(script)
@@ -207,11 +208,11 @@ def test_dragging_moves_the_region_once_the_button_is_up(opencv):
     asked = spy(camera)
 
     def press(cv2):
-        cv2.mouse(cv2.EVENT_LBUTTONDOWN, 100, 75, 0, None)
-        cv2.mouse(cv2.EVENT_MOUSEMOVE, 60, 75, 0, None)
+        cv2.mouse(cv2.EVENT_LBUTTONDOWN, 100, 75, 1, None)
+        cv2.mouse(cv2.EVENT_MOUSEMOVE, 60, 75, 1, None)
 
     def release(cv2):
-        cv2.mouse(cv2.EVENT_LBUTTONUP, 60, 75, 0, None)
+        cv2.mouse(cv2.EVENT_LBUTTONUP, 60, 75, 1, None)
 
     opencv("+", "+", press, "x", release, "q", camera=camera)
     assert main(["preview", "simulated", "--window", "200"]) == 0
@@ -288,3 +289,25 @@ def test_frames_keep_coming_while_the_window_waits_for_input(opencv):
     fake = opencv(*[None] * 20, camera=camera)
     assert main(["preview", "simulated", "--window", "200"]) == 0
     assert len(fake.shown) >= 20
+
+
+def test_a_drag_works_without_its_press_or_release_arriving(opencv):
+    camera = SimulatedCamera()
+    asked = spy(camera)
+
+    def drag(cv2):
+        # Moves with the button down, then one with it up; no press, no release.
+        cv2.mouse(cv2.EVENT_MOUSEMOVE, 100, 75, 1, None)
+        cv2.mouse(cv2.EVENT_MOUSEMOVE, 60, 75, 1, None)
+        cv2.mouse(cv2.EVENT_MOUSEMOVE, 60, 75, 0, None)
+
+    def wander(cv2):
+        cv2.mouse(cv2.EVENT_MOUSEMOVE, 10, 10, 0, None)
+
+    opencv("+", "+", drag, wander, "q", camera=camera)
+    assert main(["preview", "simulated", "--window", "200"]) == 0
+    regions = [region for region, _ in asked[1:]]
+    assert len(regions) == 3
+    # 40 of 200 pixels: a fifth of the region's 0.64, and only that.
+    assert regions[2][0] - regions[1][0] == pytest.approx(0.2 * 0.64)
+    assert regions[2][1] == regions[1][1]

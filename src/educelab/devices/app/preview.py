@@ -9,6 +9,7 @@ import importlib.util
 import re
 import sys
 import textwrap
+import threading
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -18,13 +19,15 @@ if TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
 
-    from educelab.devices.cameras import Camera
+    from educelab.devices.cameras import Camera, PreviewFrame
 
 BACKENDS = ("gphoto2", "aravis", "spinnaker", "gentl", "simulated")
 TITLE = "el-devices preview"
 SMALLEST = 0.02
 # Input settles this long before the camera is asked for the new region.
 SETTLE_S = 0.2
+# How long the window handles the mouse and keys between redraws.
+TICK_MS = 15
 # OpenCV's macOS window reports scrolling in points; elsewhere, 120 a notch.
 POINTS_PER_NOTCH = 40
 WHEEL_PER_NOTCH = 120
@@ -161,55 +164,141 @@ def run(args: argparse.Namespace) -> int:
         if args.pixel_format:
             camera.set_setting("pixel_format", args.pixel_format)
         camera.start_preview(max_size=args.window)
-        took = 0.0
-        times: list[float] = []
-        count = 0
-        while args.frames is None or count < args.frames:
-            if view.settled():
-                view.changed_at = None
-                started = time.perf_counter()
-                geometry = camera.start_preview(view.request(), args.window)
-                took = time.perf_counter() - started
-                print(f"{geometry} in {took:.2f} s")
-            frame = camera.preview_frame()
-            count += 1
-            times = [*times[-29:], time.perf_counter()]
-            rate = (len(times) - 1) / (times[-1] - times[0]) if len(times) > 1 else 0
-            shown = frame.geometry.region
-            view.shown = (shown.x, shown.y, shown.width, shown.height)
-            image = _fit(cv2, eight_bit(frame.pixels, frame.pixel_format), args.window)
-            view.size = (image.shape[1], image.shape[0])
-            _outline(cv2, image, view)
-            height, width = frame.pixels.shape[:2]
-            _label(
-                cv2,
-                image,
-                f"{camera!r}",
-                f"region x {shown.x:.3f} y {shown.y:.3f} "
-                f"w {shown.width:.3f} h {shown.height:.3f}",
-                f"{width}x{height} {frame.pixel_format}, {rate:.1f} frames/s, "
-                f"last change {took:.2f} s",
-            )
-            cv2.imshow(TITLE, image)
-            key = cv2.waitKey(1) & 0xFF
-            if key in (ord("q"), 27):
-                break
-            if key in (ord("+"), ord("=")):
-                view.zoom(1)
-            elif key in (ord("-"), ord("_")):
-                view.zoom(-1)
-            elif key == ord("r"):
-                view.set(0.0, 0.0, 1.0)
-            elif key in (ord("a"), ord("d")):
-                view.move(-0.25 if key == ord("a") else 0.25, 0.0)
-            elif key in (ord("w"), ord("s")):
-                view.move(0.0, -0.25 if key == ord("w") else 0.25)
-            elif key == ord("c"):
-                _capture(cv2, camera, args.window)
-                camera.start_preview(view.request(), args.window)
+        feed = _Feed(camera, args.window)
+        feed.start()
+        try:
+            while args.frames is None or feed.count < args.frames:
+                if feed.error is not None:
+                    raise feed.error
+                frame = feed.frame
+                if frame is None:
+                    time.sleep(TICK_MS / 1000)
+                    continue
+                if view.settled():
+                    view.changed_at = None
+                    feed.ask(view.request())
+                shown = frame.geometry.region
+                view.shown = (shown.x, shown.y, shown.width, shown.height)
+                pixels = eight_bit(frame.pixels, frame.pixel_format)
+                image = _fit(cv2, pixels, args.window)
+                view.size = (image.shape[1], image.shape[0])
+                if view.changed_at is not None or not feed.caught_up.is_set():
+                    _outline(cv2, image, view)
+                height, width = frame.pixels.shape[:2]
+                _label(
+                    cv2,
+                    image,
+                    f"{camera!r}",
+                    f"region x {shown.x:.3f} y {shown.y:.3f} "
+                    f"w {shown.width:.3f} h {shown.height:.3f}",
+                    f"{width}x{height} {frame.pixel_format}, {feed.rate:.1f} "
+                    f"frames/s, last change {feed.took:.2f} s",
+                )
+                cv2.imshow(TITLE, image)
+                key = cv2.waitKey(TICK_MS) & 0xFF
+                if key in (ord("q"), 27):
+                    break
+                if key in (ord("+"), ord("=")):
+                    view.zoom(1)
+                elif key in (ord("-"), ord("_")):
+                    view.zoom(-1)
+                elif key == ord("r"):
+                    view.set(0.0, 0.0, 1.0)
+                elif key in (ord("a"), ord("d")):
+                    view.move(-0.25 if key == ord("a") else 0.25, 0.0)
+                elif key in (ord("w"), ord("s")):
+                    view.move(0.0, -0.25 if key == ord("w") else 0.25)
+                elif key == ord("c"):
+                    feed.pause()
+                    _capture(cv2, camera, args.window)
+                    camera.start_preview(view.request(), args.window)
+                    feed.resume()
+        finally:
+            feed.stop()
         camera.stop_preview()
     cv2.destroyAllWindows()
     return 0
+
+
+class _Feed:
+    """Takes preview frames on its own thread.
+
+    The window only handles the mouse and keys between frames, so waiting on
+    a camera in the same thread makes dragging lag by seconds.
+    """
+
+    def __init__(self, camera: "Camera", max_size: int) -> None:
+        self._camera = camera
+        self._max_size = max_size
+        self._lock = threading.Lock()
+        self._asked: list[tuple[float, float, float, float] | None] = []
+        self._running = threading.Event()
+        self._running.set()
+        self._parked = threading.Event()
+        self._stopping = False
+        self._thread = threading.Thread(target=self._run, name="preview", daemon=True)
+        # Set once a frame of the last region asked for has arrived.
+        self.caught_up = threading.Event()
+        self.caught_up.set()
+        self.frame: PreviewFrame | None = None
+        self.count = 0
+        self.rate = 0.0
+        self.took = 0.0
+        self.error: Exception | None = None
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def ask(self, region: tuple[float, float, float, float] | None) -> None:
+        """Preview ``region`` from the next frame on; only the latest counts."""
+        with self._lock:
+            self._asked = [region]
+            self.caught_up.clear()
+
+    def pause(self) -> None:
+        """Return once the thread has let go of the camera."""
+        self._running.clear()
+        self._parked.wait()
+
+    def resume(self) -> None:
+        self._parked.clear()
+        self._running.set()
+
+    def stop(self) -> None:
+        self._stopping = True
+        self._running.set()
+        self._thread.join()
+
+    def _run(self) -> None:
+        times: list[float] = []
+        try:
+            while not self._stopping:
+                if not self._running.is_set():
+                    self._parked.set()
+                    self._running.wait()
+                    continue
+                with self._lock:
+                    asked, self._asked = self._asked, []
+                if asked:
+                    started = time.perf_counter()
+                    geometry = self._camera.start_preview(asked[0], self._max_size)
+                    self.took = time.perf_counter() - started
+                    print(f"{geometry} in {self.took:.2f} s")
+                frame = self._camera.preview_frame()
+                times = [*times[-29:], time.perf_counter()]
+                with self._lock:
+                    self.frame = frame
+                    self.count += 1
+                    if len(times) > 1:
+                        self.rate = (len(times) - 1) / (times[-1] - times[0])
+                    if not self._asked:
+                        self.caught_up.set()
+        except Exception as exc:  # noqa: BLE001
+            # Handed to the window's thread, which raises it.
+            self.error = exc
+        finally:
+            self.caught_up.set()
+            self._parked.set()
 
 
 def _open(args: argparse.Namespace) -> "Camera":
@@ -256,7 +345,8 @@ def _mouse_handler(cv2: Any, view: View) -> Any:
             if sys.platform == "darwin":
                 # OpenCV's Cocoa window passes the scroll amount as y, in
                 # place of the pointer's position.
-                view.zoom(y / POINTS_PER_NOTCH, view.pointer)
+                if y:
+                    view.zoom(y / POINTS_PER_NOTCH, view.pointer)
             else:
                 # Elsewhere it is the signed high half of the flags.
                 delta = (flags >> 16) & 0xFFFF

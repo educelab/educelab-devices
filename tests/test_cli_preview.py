@@ -8,6 +8,7 @@ from educelab.devices.app import preview
 from educelab.devices.app.cli import build_parser, main
 from educelab.devices.app.preview import View, eight_bit
 from educelab.devices.cameras.simulated import SimulatedCamera, SimulatedFileCamera
+from educelab.devices.errors import DeviceError
 
 
 class FakeOpenCV:
@@ -72,6 +73,12 @@ def opencv(monkeypatch):
     place of the simulated one."""
     monkeypatch.setattr(preview, "has_opencv", lambda: True)
     monkeypatch.setattr(preview, "SETTLE_S", 0.0)
+    monkeypatch.setattr(preview, "TICK_MS", 1)
+    # Wait for each new region to show, so the scripts play out in step.
+    ask = preview._Feed.ask
+    monkeypatch.setattr(
+        preview._Feed, "ask", lambda feed, r: (ask(feed, r), feed.caught_up.wait(5))
+    )
 
     def install(*script, camera=None):
         fake = FakeOpenCV(*script)
@@ -116,7 +123,7 @@ def test_shows_the_whole_sensor_reduced_to_the_window(opencv):
     fake = opencv(None, None, None, camera=camera)
     assert main(["preview", "simulated", "--window", "200", "--frames", "3"]) == 0
     assert asked == [(None, 200)]
-    assert [image.shape for image in fake.shown] == [(150, 200, 3)] * 3
+    assert {image.shape for image in fake.shown} == {(150, 200, 3)}
     assert camera.preview is None
 
 
@@ -262,3 +269,22 @@ def test_deeper_formats_are_scaled_to_eight_bits(value, pixel_format, expected):
 def test_eight_bit_pixels_are_shown_as_they_are():
     pixels = np.arange(6, dtype=np.uint8).reshape(2, 3)
     assert eight_bit(pixels, "Mono8") is pixels
+
+
+def test_a_camera_error_ends_the_viewer_with_its_message(opencv, capsys):
+    camera = SimulatedCamera()
+    opencv(None, None, camera=camera)
+
+    def fail(**kwargs):
+        raise DeviceError("the camera went away")
+
+    camera.preview_frame = fail
+    assert main(["preview", "simulated", "--window", "200", "--frames", "5"]) == 1
+    assert "the camera went away" in capsys.readouterr().err
+
+
+def test_frames_keep_coming_while_the_window_waits_for_input(opencv):
+    camera = SimulatedCamera()
+    fake = opencv(*[None] * 20, camera=camera)
+    assert main(["preview", "simulated", "--window", "200"]) == 0
+    assert len(fake.shown) >= 20

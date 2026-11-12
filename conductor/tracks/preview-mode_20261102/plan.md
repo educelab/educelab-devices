@@ -175,8 +175,10 @@ Owed hardware checks (Task 5.4): the driver's reported region on the camera in F
 
 ### Verification
 
-- [ ] The maintainer confirms preview and zoom on the Z7 II, the CM3 and the IDS.
-  - CM3 (Spinnaker) and IDS (Aravis) confirmed in `el-devices preview` on the lab Mac, 2026-11-12: zoom, drag, capture, Mono16 and Mono10g40IDS, and the CM3 holding a 27 ms exposure while zoomed. The Z7 II is still to be looked at.
+- [x] The maintainer confirms preview and zoom on the Z7 II, the CM3 and the IDS.
+  - CM3 (Spinnaker) and IDS (Aravis) confirmed in `el-devices preview` on the lab Mac, 2026-11-12: zoom, drag, capture, Mono16 and Mono10g40IDS, and the CM3 holding a 27 ms exposure while zoomed.
+  - Z7 II (gphoto2) confirmed in `el-devices preview` on the lab Mac, 2026-11-12: zoom through all three levels, moving a region, the scale in the overlay, and a capture shown as its JPEG.
+  - The track stays open: the maintainer is integrating preview into `pgs-scan`'s apps before merging here, so no PR yet.
 
 ## Final Verification
 

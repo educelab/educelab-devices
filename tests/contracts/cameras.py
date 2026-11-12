@@ -109,6 +109,19 @@ class CameraContract(DeviceContract):
         assert max(geometry.width, geometry.height) <= 200
         assert_preview_frame_matches(device)
 
+    def test_preview_scale_follows_from_the_capture_size(self, device):
+        full = device.start_preview()
+        if full.capture_size is None:
+            assert full.scale is None
+            return
+        capture_w, capture_h = full.capture_size
+        assert capture_w > 0 and capture_h > 0
+        assert full.scale == pytest.approx(full.width / (full.region.width * capture_w))
+        small = device.start_preview(max_size=64)
+        assert small.capture_size == full.capture_size
+        # Never larger; smaller wherever 64 pixels is a reduction.
+        assert small.scale <= full.scale
+
     def test_uncapped_preview_is_at_least_as_large_as_a_capped_one(self, device):
         small = device.start_preview(max_size=64)
         full = device.start_preview(max_size=None)

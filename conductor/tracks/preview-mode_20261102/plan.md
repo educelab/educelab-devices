@@ -171,6 +171,8 @@ Owed hardware checks (Task 5.4): the driver's reported region on the camera in F
   - Windows rig again through GenTL, 2026-11-12, with those fixes: all five CM3s 8 passed each; the IDS through IDS peak 7 passed, 1 skipped (`not_before`), including the moved region's content that a flat scene had skipped before.
 - [x] Task 5.5: Add `el-devices preview`, a viewer for checking framing, zoom and focus by eye (added at the maintainer's request). OpenCV comes from the `[viewer]` extra, and the subcommand is only registered when `cv2` can be found. Tried with the simulated camera only.
 
+- [x] Task 5.6: Report `capture_size` and `scale` in `PreviewGeometry` (added at the maintainer's request, 2026-11-12), with the Z7 II using its selected image size, and show the scale in `el-devices preview`. Checked on the Z7 II; unit-tested only on GenICam cameras. Also from the maintainer's Z7 II session: the driver picks the live-view size that delivers the most under `max_size`, the viewer shows a captured JPEG, and zooming before a level holds the whole region was tried and ruled out.
+
 ### Verification
 
 - [ ] The maintainer confirms preview and zoom on the Z7 II, the CM3 and the IDS.

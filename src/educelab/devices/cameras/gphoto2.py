@@ -228,6 +228,8 @@ class GPhoto2Camera(FileCamera):
         self._size_choices: tuple[str, ...] = ()
         # The image area captures cover, in sensor pixels.
         self._image_area = (0, 0)
+        # The image size a capture would have now, where the body says.
+        self._capture_size: tuple[int, int] | None = None
         # Live-view size and zoom as found, and as preview last set them.
         self._found: dict[str, WidgetValue] = {}
         self._set: dict[str, WidgetValue] = {}
@@ -657,7 +659,9 @@ class GPhoto2Camera(FileCamera):
             shown.width * view_w,
             shown.height * view_h,
         )
-        geometry = dataclasses.replace(crop.geometry, region=on_sensor)
+        geometry = dataclasses.replace(
+            crop.geometry, region=on_sensor, capture_size=self._capture_size
+        )
         self._crop = dataclasses.replace(crop, geometry=geometry)
         self._planned_for = (height, width)
         return geometry
@@ -706,6 +710,7 @@ class GPhoto2Camera(FileCamera):
         known, from the widgets found on it."""
         profile = _LIVE_VIEW.get(self._model or "")
         needed = (*_ZOOM_SOURCES, "changeafarea")
+        self._capture_size = None
         if profile is None or any(name not in names for name in needed):
             return
         if any(name not in widgets for name in _ZOOM_SOURCES):
@@ -719,6 +724,9 @@ class GPhoto2Camera(FileCamera):
             return
         # The largest size on offer is the image area itself.
         self._image_area = max(areas)
+        selected = re.fullmatch(r"(\d+)x(\d+)", str(widgets["imagesize"].value))
+        if selected:
+            self._capture_size = (int(selected[1]), int(selected[2]))
         levels = (c for c in widgets["liveviewzoomarea"].choices if c.isdigit())
         self._zoom_levels = tuple(sorted(n for n in map(int, levels) if n))
         sizes = widgets["liveviewsize"].choices

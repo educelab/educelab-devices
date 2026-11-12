@@ -188,6 +188,7 @@ def run(args: argparse.Namespace) -> int:
                     logger.debug("asking for %s", view.request())
                     feed.ask(view.request())
                 shown = frame.geometry.region
+                scale = frame.geometry.scale
                 view.shown = (shown.x, shown.y, shown.width, shown.height)
                 pixels = eight_bit(frame.pixels, frame.pixel_format)
                 image = _fit(cv2, pixels, args.window, limit)
@@ -201,8 +202,8 @@ def run(args: argparse.Namespace) -> int:
                     f"{camera!r}",
                     f"region x {shown.x:.3f} y {shown.y:.3f} "
                     f"w {shown.width:.3f} h {shown.height:.3f}",
-                    f"{width}x{height} {frame.pixel_format}, {feed.rate:.1f} "
-                    f"frames/s, last change {feed.took:.2f} s",
+                    f"{width}x{height} {frame.pixel_format}, {_percent(scale)}"
+                    f"{feed.rate:.1f} frames/s, last change {feed.took:.2f} s",
                 )
                 cv2.imshow(TITLE, image)
                 if not activated:
@@ -312,6 +313,14 @@ class _Feed:
         finally:
             self.caught_up.set()
             self._parked.set()
+
+
+def _percent(scale: float | None) -> str:
+    """A preview's scale for the overlay, e.g. ``"12% of capture, "``."""
+    if scale is None:
+        return ""
+    digits = 1 if scale < 0.1 else 0
+    return f"{scale:.{digits}%} of capture, "
 
 
 def _open(args: argparse.Namespace) -> "Camera":

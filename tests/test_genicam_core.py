@@ -1217,6 +1217,18 @@ def test_offsets_locked_while_streaming_move_with_a_restart():
         assert camera.preview_frame().geometry == geometry
 
 
+def test_scale_is_preview_pixels_per_capture_pixel(roi_camera, roi_fake):
+    whole = roi_camera.start_preview()
+    assert whole.capture_size == (2448, 2048) and whole.scale == 1.0
+    # Every pixel of a region is still every pixel.
+    assert roi_camera.start_preview(QUARTER).scale == 1.0
+    # Decimation by 2, then every other pixel on the host.
+    reduced = roi_camera.start_preview(max_size=700)
+    assert reduced.capture_size == (2448, 2048)
+    assert reduced.scale == pytest.approx(0.25)
+    assert roi_camera.preview_frame().geometry.scale == pytest.approx(0.25)
+
+
 def test_max_size_decimates_and_strides_the_rest(roi_camera, roi_fake):
     geometry = roi_camera.start_preview(max_size=400)
     assert roi_fake.get("DecimationVertical") == 2

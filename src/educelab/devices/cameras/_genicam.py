@@ -1024,6 +1024,7 @@ class GenICamCamera(FrameCamera):
             sensor=self._limits[decimation].full,
             frame=(target.width, target.height),
             origin=(target.x, target.y),
+            capture=self._limits[1].full,
         )
         return self._crop.geometry
 
@@ -1120,7 +1121,7 @@ class GenICamCamera(FrameCamera):
 
         sensor, frame, origin = self._call("read the frame geometry", frames)
         self._crop = host_crop(
-            region, max_size, sensor=sensor, frame=frame, origin=origin
+            region, max_size, sensor=sensor, frame=frame, origin=origin, capture=sensor
         )
         return self._crop.geometry
 

@@ -248,6 +248,13 @@ below:
 - **Centre:** `changeafarea`, at the region's centre in pixels of the image area. It's
   written after live view is running, and again with every zoom change. With a new
   zoom level it's written twice (see the zoom geometry below).
+- **Scale:** the geometry's `capture_size` is the selected `imagesize` (8256 × 5504
+  for FX at L), read each time preview starts, so `scale` compares a preview with the
+  capture the camera would take now. Checked on the camera in FX at L: 0.124 for the
+  whole view and for a region 0.335 wide, 0.5 at zoom `2048`, 1.0 at `1024` and 2.0
+  at `512`. **verified** (2026-11-12). Changing `imagesize` during a preview shows
+  from the next `start_preview()`. A body the driver can't read an image size from
+  reports no scale.
 - **Size:** `liveviewsize` `XGA` unless `max_size` asks for less. Then the host keeps
   every n-th pixel to fit, so the driver picks the smallest size that delivers at
   least 0.8 of the most any size would: a `max_size` of 1000 gets `VGA` whole (640)

@@ -112,6 +112,12 @@ A camera rounds the region to what it can deliver, and reports what it applied.
   a whole zoom step while a change is pending.
 - **Regions are fractions of what captures cover.** On the Z7 II that is the image area
   (FX, DX, 5:4, 1:1 or 16:9), not the sensor.
+- **Show the scale.** `frame.geometry.scale` is preview pixels per capture pixel, so
+  `f"{scale:.0%}"` is the familiar 25%, 100%, 200%. It tells the user whether the view
+  is good enough to focus by: on the Z7 II it stays at 12% from the whole view down to
+  a region a quarter of the width, then steps to 50%, 100% and 200%. It's `None` where
+  a camera doesn't say how large its captures are. `geometry.capture_size` turns a
+  region into capture pixels.
 - **The applied region lies within the one asked for**, so it can be slightly smaller.
   The image size changes by a pixel or two between regions; don't resize the window to
   follow it.

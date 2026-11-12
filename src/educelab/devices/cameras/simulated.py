@@ -165,6 +165,7 @@ class SimulatedCamera(FrameCamera):
             sensor=self._sensor,
             frame=(self._width, self._height),
             origin=origin,
+            capture=self._sensor,
         )
         return self._crop.geometry
 

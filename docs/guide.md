@@ -267,6 +267,12 @@ camera.stop_preview()
 - **Each frame says what it shows.** `frame.geometry` is the region and size of that
   image, and `frame.timestamp` when it was taken. The region a camera applies lies
   within the one asked for, rounded to what it can deliver.
+- **Each frame says how it compares with a capture.** `geometry.scale` is preview
+  pixels per capture pixel: 1.0 shows every pixel a capture would have, 0.25 one in
+  four each way, and above 1 the camera has enlarged it. `geometry.capture_size` is
+  the capture's size in pixels that it's worked out from; on a body with selectable
+  image sizes, the one selected. Both are `None` on a camera that doesn't say how
+  large its captures are.
 - **Changing a preview** is another `start_preview()` call. What it costs depends on
   the camera:
 

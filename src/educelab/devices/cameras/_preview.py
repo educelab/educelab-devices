@@ -43,6 +43,7 @@ def host_crop(
     sensor: tuple[int, int],
     frame: tuple[int, int],
     origin: tuple[int, int] = (0, 0),
+    capture: tuple[int, int] | None = None,
 ) -> HostCrop:
     """Plan a host-side preview of ``region`` from frames of size ``frame``.
 
@@ -57,6 +58,9 @@ def host_crop(
         sensor: The whole sensor as ``(width, height)``.
         frame: The frames' size as ``(width, height)``.
         origin: Where the frames start on the sensor, as ``(x, y)`` pixels.
+        capture: The sensor's size in capture pixels, for the geometry's
+            ``capture_size``. It differs from ``sensor`` when the frames are
+            decimated.
 
     Raises:
         ValueError: The region covers no whole pixel of the frames.
@@ -76,7 +80,7 @@ def host_crop(
         x0 / sensor_w, y0 / sensor_h, width / sensor_w, height / sensor_h
     )
     geometry = PreviewGeometry(
-        applied, math.ceil(width / stride), math.ceil(height / stride)
+        applied, math.ceil(width / stride), math.ceil(height / stride), capture
     )
     return HostCrop(
         geometry,

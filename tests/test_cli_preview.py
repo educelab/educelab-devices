@@ -370,3 +370,17 @@ def test_macos_helpers_do_nothing_elsewhere(monkeypatch):
     assert _macos.visible_screen_size() is None
     assert _macos.activate() is None
     assert _macos.accept_first_clicks() is None
+
+
+@pytest.mark.parametrize(
+    ("scale", "text"),
+    [
+        (None, ""),
+        (0.124, "12% of capture, "),
+        (1.0, "100% of capture, "),
+        (2.0, "200% of capture, "),
+        (0.05, "5.0% of capture, "),
+    ],
+)
+def test_the_overlay_gives_the_scale_as_a_percentage(scale, text):
+    assert preview._percent(scale) == text

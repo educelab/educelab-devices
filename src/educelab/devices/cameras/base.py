@@ -153,11 +153,24 @@ class PreviewGeometry:
             the requested one to what it can deliver.
         width: Width of the preview images, in pixels.
         height: Height of the preview images, in pixels.
+        capture_size: The ``(width, height)`` in pixels a capture has of what
+            regions are fractions of, or ``None`` where the camera doesn't
+            say. On a body with selectable image sizes it is the one selected.
     """
 
     region: PreviewRegion
     width: int
     height: int
+    capture_size: tuple[int, int] | None = None
+
+    @property
+    def scale(self) -> float | None:
+        """Preview pixels per capture pixel: 1.0 shows every pixel a capture
+        would have, 0.25 one in four each way, and 2.0 is enlarged by the
+        camera. ``None`` without a `capture_size`."""
+        if self.capture_size is None:
+            return None
+        return self.width / (self.region.width * self.capture_size[0])
 
     def __post_init__(self) -> None:
         if self.width <= 0 or self.height <= 0:

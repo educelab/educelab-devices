@@ -4,17 +4,17 @@
   "type": "feature",
   "status": "in_progress",
   "created": "2026-11-02T00:00:00Z",
-  "updated": "2026-11-11T00:00:00Z",
+  "updated": "2026-11-12T00:00:00Z",
   "phases": {
     "total": 5,
     "completed": 4
   },
   "tasks": {
-    "total": 22,
-    "completed": 22
+    "total": 23,
+    "completed": 23
   },
   "current_phase": 5,
-  "current_task": "5.5",
+  "current_task": "5.6",
   "commits": [
     "8deb075: Prepare the preview-mode hardware discovery runs",
     "c97e118: Record the discovery prep commit in the preview-mode metadata",

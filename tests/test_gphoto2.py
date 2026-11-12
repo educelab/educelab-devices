@@ -1400,6 +1400,46 @@ def test_a_region_too_tall_for_a_zoom_uses_the_next_one():
         assert attached.widgets["liveviewzoomarea"].value == "0"
 
 
+@pytest.mark.parametrize(
+    ("region", "scale"),
+    [
+        # The whole image area in a 1024-pixel frame.
+        (None, 1024 / 8256),
+        # Wider than any zoom: cut from that same frame.
+        (PreviewRegion(0.3, 0.3, 0.3, 0.3), 1024 / 8256),
+        (PreviewRegion(0.4, 0.4, 0.2, 0.2), 0.5),
+        (PreviewRegion(0.45, 0.45, 0.1, 0.1), 1.0),
+        # The tightest zoom enlarges.
+        (PreviewRegion(0.45, 0.45, 0.05, 0.05), 2.0),
+    ],
+)
+def test_scale_says_how_a_preview_compares_with_a_capture(region, scale):
+    with opened(FakeCamera()) as camera:
+        geometry = camera.start_preview(region)
+        assert geometry.capture_size == (8256, 5504)
+        assert geometry.scale == pytest.approx(scale, rel=0.01)
+        assert camera.preview_frame().geometry.scale == geometry.scale
+
+
+def test_scale_follows_the_selected_image_size():
+    widgets = [
+        dataclasses.replace(w, value="6192x4128") if w.name == "imagesize" else w
+        for w in NIKON_WIDGETS
+    ]
+    with opened(FakeCamera(widgets=widgets)) as camera:
+        geometry = camera.start_preview()
+        # A capture now is the medium size, though regions span the same area.
+        assert geometry.capture_size == (6192, 4128)
+        assert geometry.scale == pytest.approx(1024 / 6192)
+
+
+def test_a_body_whose_image_size_is_unknown_reports_no_scale():
+    widgets = [w for w in NIKON_WIDGETS if w.name != "imagesize"]
+    with opened(FakeCamera(widgets=widgets)) as camera:
+        geometry = camera.start_preview()
+        assert geometry.capture_size is None and geometry.scale is None
+
+
 def test_a_body_without_imagesize_crops_on_the_host():
     widgets = [w for w in NIKON_WIDGETS if w.name != "imagesize"]
     attached = FakeCamera(widgets=widgets)

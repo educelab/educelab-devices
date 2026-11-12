@@ -25,3 +25,14 @@ def no_live_view_settle(request, monkeypatch):
     from educelab.devices.cameras import gphoto2
 
     monkeypatch.setattr(gphoto2, "LIVE_VIEW_SETTLE_S", 0.0)
+
+
+@pytest.fixture(autouse=True)
+def no_buffer_rest(request, monkeypatch):
+    """Fake streams lose no buffers, so hand each straight back. Hardware
+    tests keep the rest."""
+    if request.node.get_closest_marker("hardware"):
+        return
+    from educelab.devices.cameras import aravis
+
+    monkeypatch.setattr(aravis, "BUFFER_REST_S", 0.0)

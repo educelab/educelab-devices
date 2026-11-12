@@ -278,6 +278,35 @@ def test_grab_returns_the_newest_frame_and_recycles_older_ones(camera, sim):
     assert stream.get_n_buffers() == (BUFFER_COUNT, 0)
 
 
+def test_a_released_buffer_rests_before_going_back_to_the_stream(
+    camera, sim, monkeypatch
+):
+    # Handed straight back, Aravis's async mode loses it (usb3-vision.md).
+    monkeypatch.setattr(aravis, "BUFFER_REST_S", 0.05)
+    conn = connection_of(camera)
+    stream = conn._stream
+    stream.arrive(1)
+    conn.grab(1.0).release()
+    assert stream.get_n_buffers() == (BUFFER_COUNT - 1, 0)
+    # The next grab waits out the rest and returns it first.
+    stream.arrive(1)
+    started = time.perf_counter()
+    buffer = conn.grab(1.0)
+    assert stream.get_n_buffers() == (BUFFER_COUNT - 1, 0)
+    assert time.perf_counter() - started >= 0.04
+    buffer.release()
+
+
+def test_stopping_returns_a_resting_buffer(camera, sim, monkeypatch):
+    monkeypatch.setattr(aravis, "BUFFER_REST_S", 0.05)
+    conn = connection_of(camera)
+    conn._stream.arrive(1)
+    conn.grab(1.0).release()
+    assert len(sim.held) == 1
+    camera.close()
+    assert sim.held == []
+
+
 def test_frames_landing_while_nobody_grabs_leave_only_the_newest(camera, sim):
     # Otherwise Aravis fills every buffer and then drops the newer frames.
     stream = connection_of(camera)._stream

@@ -992,6 +992,7 @@ class GenICamCamera(FrameCamera):
                 return self._start_whole_frame_preview(region, max_size, exposure)
         if self._applied is None:
             self._limit_before_preview = self._read_limit()
+        tearing = 0.0
         if target is None or target.size != current.size:
             # Marked first, so a failure part-way still restores the camera.
             self._applied = current
@@ -1010,10 +1011,13 @@ class GenICamCamera(FrameCamera):
                 return self._start_whole_frame_preview(region, max_size, exposure)
         elif target != current:
             self._applied = current
-            self._move(target)
+            tearing = self._move(target)
         if target != current:
             self._applied = target
-            self._preview_floor = datetime.fromtimestamp(host_time(), UTC)
+            # Frames from before the change show the old geometry, and one
+            # being read out during a live move shows some of each.
+            floor = host_time() + tearing
+            self._preview_floor = datetime.fromtimestamp(floor, UTC)
         self._crop = host_crop(
             region,
             max_size,
@@ -1179,9 +1183,15 @@ class GenICamCamera(FrameCamera):
         self._set_int("OffsetX", geometry.x)
         self._set_int("OffsetY", geometry.y)
 
-    def _move(self, target: "_Geometry") -> None:
+    def _move(self, target: "_Geometry") -> float:
         """Move an ROI of the same size, without a restart where the camera
-        takes offsets while streaming."""
+        takes offsets while streaming.
+
+        Returns how long after the move frames may still be torn: a frame the
+        sensor was reading out shows the old place in part (the IDS
+        U3-36PxXCP; usb3-vision.md, Preview). That is one frame period after a
+        live move, and no time after a restart.
+        """
         conn = self._connection
 
         def write() -> None:
@@ -1190,12 +1200,35 @@ class GenICamCamera(FrameCamera):
 
         if conn.is_writable("OffsetX") and conn.is_writable("OffsetY"):
             write()
-            # For a camera that can't time frames: drop the ones already here.
+            period = self._frame_period()
+            if self._timestamp_offset is None:
+                # A camera that can't time frames: let the torn one arrive,
+                # then drop it with the others already here.
+                time.sleep(period)
+                period = 0.0
             self._discard_waiting_frames()
-        else:
-            # IDS peak's GenTL producer locks offsets while streaming.
-            with self._acquisition_paused():
-                write()
+            return period
+        # IDS peak's GenTL producer locks offsets while streaming.
+        with self._acquisition_paused():
+            write()
+        return 0.0
+
+    def _frame_period(self) -> float:
+        """Seconds from one frame to the next, or 0 if the camera doesn't say."""
+        conn = self._connection
+        for node in ("AcquisitionResultingFrameRate", "AcquisitionFrameRate"):
+            if not conn.is_readable(node):
+                continue
+            try:
+                rate = self._call(
+                    f"read {node}", functools.partial(conn.get_float, node)
+                )
+            except DeviceError as exc:
+                logger.debug("%s", exc)
+                continue
+            if rate > 0:
+                return 1.0 / rate
+        return 0.0
 
     def _read_limit(self) -> int | None:
         """The throughput limit in B/s, if the camera has one switched on."""

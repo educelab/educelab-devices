@@ -14,6 +14,7 @@ import math
 import threading
 import time
 import weakref
+from collections import deque
 from collections.abc import Callable
 from types import ModuleType
 from typing import Any, TypeVar
@@ -63,6 +64,11 @@ ARAVIS_INSTALL_HINT = (
 BUFFER_COUNT = 4
 """Buffers in each stream. A 20 MP Mono8 frame is about 20 MB, so a few is
 plenty; Aravis drops frames when none is free (usb3-vision.md, Newest only)."""
+BUFFER_REST_S = 0.002
+"""How long a buffer rests after its frame is read before it goes back to the
+stream. Returned within about a millisecond, Aravis's async mode loses it, and
+a stream of small frames stops once every buffer is lost (usb3-vision.md,
+Hazards)."""
 
 _DRAIN_QUIET_S = 0.05
 """How long, beyond one exposure, an async stream must receive nothing after
@@ -210,6 +216,8 @@ class _AravisConnection:
         self._camera: Any = camera
         self._device: Any = camera.get_device()
         self._stream: Any = None
+        # Buffers read and not yet back in the stream, with when each may go.
+        self._resting: deque[tuple[float, Any]] = deque()
         self._acquiring = False
         self._async = False
         # Refuse writes to read-only nodes before they reach the camera. Range
@@ -249,6 +257,7 @@ class _AravisConnection:
         CM3-U3-50S5M; usb3-vision.md, Hardware runs).
         """
         self._stream = None
+        self._resting.clear()
         payload = self._do(self._camera.get_payload)
         on_buffer, bind = _keep_newest(self._arv)
         stream = self._do(lambda: self._camera.create_stream(on_buffer, None))
@@ -359,6 +368,7 @@ class _AravisConnection:
         (ids-u3-36p0xcp.md, Pixel formats).
         """
         try:
+            self._return_rested(wait=True)
             self._drain(exposure_time)
         finally:
             self._stream = None
@@ -410,6 +420,7 @@ class _AravisConnection:
         if not self._acquiring:
             raise DeviceError("the camera isn't acquiring")
         stream = self._stream
+        self._return_rested(wait=True)
         buffer = stream.try_pop_buffer()
         if buffer is None and timeout != 0:
             if timeout is None:
@@ -420,9 +431,29 @@ class _AravisConnection:
             raise DeviceTimeout(f"no frame in {timeout:g} s")
         # Newest only: recycle every older frame already waiting.
         while (newer := stream.try_pop_buffer()) is not None:
-            stream.push_buffer(buffer)
+            self.rest(buffer)
             buffer = newer
         return _AravisBuffer(self, buffer)
+
+    def rest(self, buffer: Any) -> None:
+        """Take back a buffer whose frame is done with, for the stream."""
+        self._resting.append((time.perf_counter() + BUFFER_REST_S, buffer))
+        self._return_rested()
+
+    def _return_rested(self, *, wait: bool = False) -> None:
+        """Give the stream back the buffers that have rested; with ``wait``,
+        all of them, sleeping out what is left of the rest."""
+        stream = self._stream
+        while self._resting:
+            ready, buffer = self._resting[0]
+            remaining = ready - time.perf_counter()
+            if remaining > 0:
+                if not wait:
+                    return
+                time.sleep(remaining)
+            self._resting.popleft()
+            if stream is not None:
+                stream.push_buffer(buffer)
 
     def close(self, exposure_time: float = 0.0) -> None:
         if self._camera is None:
@@ -508,6 +539,5 @@ class _AravisBuffer:
         )
 
     def release(self) -> None:
-        stream = self._conn._stream
-        if stream is not None:
-            stream.push_buffer(self._buffer)
+        if self._conn._stream is not None:
+            self._conn.rest(self._buffer)

@@ -1301,6 +1301,30 @@ def test_frames_from_before_a_move_are_not_shown_as_the_new_region(
     assert all(spec.timestamp_ns != before_move for spec in roi_fake.queue)
 
 
+def test_a_frame_read_out_during_a_live_move_is_dropped(roi_camera, roi_fake):
+    # It shows some of the old place and some of the new (the IDS U3-36PxXCP).
+    roi_camera.start_preview(QUARTER)
+    roi_camera.preview_frame()
+    roi_camera.start_preview(PreviewRegion(0.5, 0.5, 0.25, 0.25))
+    period_ns = round(1e9 / roi_fake.get("AcquisitionResultingFrameRate"))
+    torn = roi_fake.device_time_ns() + period_ns // 2
+    roi_fake.queue_frames(FrameSpec(timestamp_ns=torn))
+    frame = roi_camera.preview_frame()
+    assert all(spec.timestamp_ns != torn for spec in roi_fake.queue)
+    floor = roi_camera._preview_floor
+    assert frame.timestamp >= floor
+
+
+def test_a_move_by_restart_drops_no_later_frames():
+    fake = FakeCamera(MONO, **CM3, offsets_while_streaming=False)
+    with GenICamCamera(MONO, FakeBackend([fake])) as camera:
+        camera.start_preview(QUARTER)
+        before = datetime.now(UTC)
+        camera.start_preview(PreviewRegion(0.5, 0.5, 0.25, 0.25))
+        # A restarted stream has no frame from before: nothing to wait out.
+        assert camera._preview_floor - before < timedelta(milliseconds=20)
+
+
 def test_preview_in_trigger_mode_with_an_roi(roi_camera, roi_fake):
     roi_camera.set_setting(TRIGGER, "Software")
     geometry = roi_camera.start_preview(QUARTER)

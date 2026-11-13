@@ -606,6 +606,8 @@ class GPhoto2Camera(FileCamera):
             for name in ("liveviewsize", "liveviewzoomarea"):
                 if name in changed:
                     session.set_config({name: changed[name]})
+                    # Noted at once, so a later failure still restores it.
+                    self._set[name] = changed[name]
             if level and changed:
                 session.set_config({"changeafarea": wanted["changeafarea"]})
             if level and "liveviewzoomarea" in changed:
@@ -697,14 +699,14 @@ class GPhoto2Camera(FileCamera):
         wanted: tuple[str, ...] = _VIEWFINDER_WIDGETS
         if self._model in _LIVE_VIEW:
             wanted += (*_ZOOM_SOURCES, "changeafarea")
+        self._capture_size = None
         try:
             widgets = session.find_widgets(wanted)
-            names = frozenset(widgets)
-            self._find_zoom(names, widgets)
+            self._find_zoom(widgets)
         except GPhoto2Error as exc:
             logger.warning("%r could not read settings for live view: %s", self, exc)
             return
-        viewfinder = next((n for n in _VIEWFINDER_WIDGETS if n in names), None)
+        viewfinder = next((n for n in _VIEWFINDER_WIDGETS if n in widgets), None)
         if viewfinder is None:
             return
         try:
@@ -714,15 +716,12 @@ class GPhoto2Camera(FileCamera):
             return
         self._live_view = viewfinder
 
-    def _find_zoom(self, names: frozenset[str], widgets: Mapping[str, Widget]) -> None:
+    def _find_zoom(self, widgets: Mapping[str, Widget]) -> None:
         """Note the image area, zoom levels and sizes of a body whose zoom is
         known, from the widgets found on it."""
         profile = _LIVE_VIEW.get(self._model or "")
         needed = (*_ZOOM_SOURCES, "changeafarea")
-        self._capture_size = None
-        if profile is None or any(name not in names for name in needed):
-            return
-        if any(name not in widgets for name in _ZOOM_SOURCES):
+        if profile is None or any(name not in widgets for name in needed):
             return
         areas = [
             (int(m[1]), int(m[2]))

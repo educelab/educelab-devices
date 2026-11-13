@@ -280,8 +280,6 @@ ARRIVAL_SAMPLES = 20
 # pgs-scan dev. The capture's timeout bounds the retries. See spinnaker.md.
 RETRIES_BEFORE_REMEASURE = 5
 
-# Longest side of a preview, in pixels; larger frames are subsampled.
-
 # Pixel formats whose arrays the driver knows how to shape. Others (e.g.
 # packed 12-bit) would come back as raw bytes.
 _PIXEL_FORMATS = frozenset(
@@ -948,6 +946,9 @@ class GenICamCamera(FrameCamera):
             logger.warning("%s", exc)
 
     def _capture_frame(self, not_before: datetime | None, timeout: float) -> Frame:
+        if self._applied is not None:
+            # A failed stop left a preview ROI on the camera; restore it first.
+            self._stop_preview()
         return self._grab(not_before, timeout)
 
     # --- Preview ---------------------------------------------------------------
@@ -996,7 +997,7 @@ class GenICamCamera(FrameCamera):
         target = None
         if decimation in self._limits:
             target = self._limits[decimation].roi(region, decimation)
-        exposure = self._set_exposure()
+        exposure = self._manual_exposure()
         if exposure is not None and target is not None:
             cap = self._exposure_caps.get(target.size)
             if cap is not None and cap < exposure * _EXPOSURE_KEPT:
@@ -1092,7 +1093,7 @@ class GenICamCamera(FrameCamera):
         except DeviceError as exc:
             logger.warning("%r: frame rate left fixed: %s", self, exc)
 
-    def _set_exposure(self) -> float | None:
+    def _manual_exposure(self) -> float | None:
         """The exposure in the node's unit, if it's the caller's to set rather
         than the camera's (auto exposure)."""
         conn, node = self._connection, self._exposure_node
@@ -1153,14 +1154,19 @@ class GenICamCamera(FrameCamera):
 
     def _stop_preview(self) -> None:
         self._crop = self._preview_floor = None
-        applied, self._applied = self._applied, None
-        limit, self._limit_before_preview = self._limit_before_preview, None
         capture = self._capture_geometry
-        if applied is None or capture is None:
+        if self._applied is None or capture is None:
+            self._applied = self._limit_before_preview = None
             return
-        with self._acquisition_paused():
-            self._write_geometry(capture, decimate=True)
-            self._restore_limit(limit)
+        try:
+            with self._acquisition_paused():
+                self._write_geometry(capture, decimate=True)
+                self._restore_limit(self._limit_before_preview)
+        except BaseException:
+            # The ROI is now unknown, so the next preview or capture rewrites it.
+            self._applied = _UNKNOWN_GEOMETRY
+            raise
+        self._applied = self._limit_before_preview = None
         self._release_frame_rate()
         self._raise_frame_rate()
 
@@ -1609,6 +1615,10 @@ class _Geometry:
     def size(self) -> tuple[int, int, int]:
         """What can't change without an acquisition restart."""
         return self.decimation, self.width, self.height
+
+
+# Matches no real ROI, so whatever preview asks for next is written in full.
+_UNKNOWN_GEOMETRY = _Geometry(0, 0, 0, 0, 0)
 
 
 @dataclass(frozen=True)

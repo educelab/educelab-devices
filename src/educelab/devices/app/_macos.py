@@ -7,6 +7,7 @@ platform, the functions do nothing.
 
 import ctypes
 import ctypes.util
+import functools
 import logging
 import platform
 import sys
@@ -51,6 +52,7 @@ def _send(
 
 
 def _guarded(function: Any) -> Any:
+    @functools.wraps(function)
     def call() -> Any:
         if sys.platform != "darwin":
             return None

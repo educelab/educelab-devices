@@ -377,6 +377,8 @@ class Camera(Device):
             TypeError, ValueError: ``region``, ``max_size`` or ``min_size`` is
                 invalid, or ``min_size`` is above ``max_size``. The preview is
                 left as it was.
+            ValueError: The region covers no whole pixel of what this camera
+                delivers. Preview ends, as the camera may have begun to change.
             DeviceError: The camera couldn't apply the preview. Preview ends.
         """
         wanted = PreviewRegion.of(region)

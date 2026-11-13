@@ -21,6 +21,7 @@ from educelab.devices.cameras._gphoto2 import (
     GP_ERROR_MODEL_NOT_FOUND,
     Event,
     FilePath,
+    GPhoto2Error,
     Widget,
 )
 from educelab.devices.cameras.base import (
@@ -1281,6 +1282,23 @@ def test_moving_a_zoomed_region_rewrites_only_the_centre():
         geometry = camera.start_preview(PreviewRegion(0.7, 0.45, 0.1, 0.1))
         assert zoom_writes(attached) == [("changeafarea", "6192x2752")]
         assert camera.preview_frame().geometry == geometry
+
+
+def test_a_failed_zoom_still_restores_the_live_view_size(monkeypatch):
+    attached = FakeCamera()
+    write = attached.set_config
+
+    def refuse_zoom(values):
+        if "liveviewzoomarea" in values:
+            raise GPhoto2Error(GP_ERROR, "refused")
+        write(values)
+
+    with opened(attached) as camera:
+        monkeypatch.setattr(attached, "set_config", refuse_zoom)
+        with pytest.raises(DeviceError, match="zooming"):
+            camera.start_preview(PreviewRegion(0.225, 0.475, 0.05, 0.05), 100)
+        assert {"liveviewsize": "QVGA"} in attached.writes
+        assert attached.widgets["liveviewsize"].value == "VGA"
 
 
 def test_a_zoom_change_writes_the_centre_again():

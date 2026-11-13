@@ -49,6 +49,10 @@ def run(args: argparse.Namespace) -> int:
     from educelab.devices.cameras import EXPOSURE_TIME
     from educelab.devices.cameras.gphoto2 import GPhoto2Camera
 
+    problem = _preview.problem(args)
+    if problem:
+        print(f"el-devices: {problem}", file=sys.stderr)
+        return 1
     camera = GPhoto2Camera(args.port)
     try:
         camera.open()
@@ -67,12 +71,8 @@ def run(args: argparse.Namespace) -> int:
             print(f"exposure_time set to {nearest:.4g} s")
         if args.capture is not None and not _capture(camera, args.capture):
             return 1
-        if args.preview:
-            try:
-                _preview.run(camera, args)
-            except ValueError as exc:
-                print(f"el-devices: {exc}", file=sys.stderr)
-                return 1
+        if args.preview and _preview.run(camera, args):
+            return 1
         if args.focus_steps is not None and not _step_focus(camera, args.focus_steps):
             return 1
     return 0

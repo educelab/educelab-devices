@@ -1311,6 +1311,16 @@ def test_a_failed_geometry_write_ends_preview_and_restores(roi_camera, roi_fake)
     assert roi_camera.capture_frame().pixels.shape == (2048, 2448)
 
 
+def test_a_capture_after_a_failed_stop_restores_the_geometry(roi_camera, roi_fake):
+    roi_camera.start_preview(QUARTER, max_size=100)
+    roi_fake.failures["write OffsetX"] = FakeCameraError("io", "refused")
+    with pytest.raises(DeviceError, match="OffsetX"):
+        roi_camera.stop_preview()
+    del roi_fake.failures["write OffsetX"]
+    assert roi_camera.capture_frame().pixels.shape == (2048, 2448)
+    assert roi_fake.get("DecimationVertical") == 1
+
+
 def test_size_settings_report_captures_during_an_roi_preview(roi_camera):
     roi_camera.start_preview(QUARTER, max_size=100)
     assert roi_camera.setting(WIDTH).value == 2448

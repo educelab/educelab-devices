@@ -1,6 +1,7 @@
 """Preview options shared by the camera subcommands."""
 
 import argparse
+import sys
 import time
 from typing import TYPE_CHECKING
 
@@ -12,7 +13,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     """Add ``--preview``, ``--region``, ``--max-size`` and ``--min-size``."""
     parser.add_argument(
         "--preview",
-        type=_frames,
+        type=positive_int,
         nargs="?",
         const=1,
         default=0,
@@ -29,21 +30,21 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--max-size",
-        type=_frames,
+        type=positive_int,
         metavar="PIXELS",
         help="with --preview, the longest side of the preview images (default: "
         "every sensor pixel of the region)",
     )
     parser.add_argument(
         "--min-size",
-        type=_frames,
+        type=positive_int,
         metavar="PIXELS",
         help="with --preview, the fewest pixels wanted on the longest side: the "
         "camera reduces no further than that",
     )
 
 
-def _frames(text: str) -> int:
+def positive_int(text: str) -> int:
     value = int(text)
     if value < 1:
         raise argparse.ArgumentTypeError(f"must be 1 or more, not {value}")
@@ -60,15 +61,37 @@ def _region(text: str) -> tuple[float, float, float, float]:
     return x, y, width, height
 
 
-def run(camera: "Camera", args: argparse.Namespace) -> None:
+def problem(args: argparse.Namespace) -> str | None:
+    """What's wrong with the preview options, checked before any camera work,
+    or ``None``."""
+    if not args.preview:
+        return None
+    from educelab.devices.cameras import PreviewRegion
+
+    try:
+        PreviewRegion.of(args.region)
+    except ValueError as exc:
+        return str(exc)
+    low, high = args.min_size, args.max_size
+    if low is not None and high is not None and low > high:
+        return f"--min-size {low} is above --max-size {high}"
+    return None
+
+
+def run(camera: "Camera", args: argparse.Namespace) -> int:
     """Preview ``args.preview`` frames from ``camera`` and print what came.
 
+    Returns the exit status: 1 if the camera refused the preview options.
+
     Raises:
-        ValueError: ``--region`` lies outside the sensor.
         DeviceError: The camera couldn't preview.
     """
     started = time.perf_counter()
-    geometry = camera.start_preview(args.region, args.max_size, min_size=args.min_size)
+    try:
+        camera.start_preview(args.region, args.max_size, min_size=args.min_size)
+    except ValueError as exc:
+        print(f"el-devices: {exc}", file=sys.stderr)
+        return 1
     ready = time.perf_counter()
     try:
         frame = camera.preview_frame()
@@ -77,6 +100,8 @@ def run(camera: "Camera", args: argparse.Namespace) -> None:
         elapsed = time.perf_counter() - ready
     finally:
         camera.stop_preview()
+    # The last frame's, since a driver may replan as the images change size.
+    geometry = frame.geometry
     region = geometry.region
     print(
         f"preview: {geometry.width}x{geometry.height} {frame.pixel_format}, region "
@@ -87,3 +112,4 @@ def run(camera: "Camera", args: argparse.Namespace) -> None:
         f"{elapsed:.2f} s ({args.preview / elapsed:.1f} frames/s); stopped in "
         f"{time.perf_counter() - ready - elapsed:.2f} s"
     )
+    return 0

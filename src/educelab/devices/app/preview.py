@@ -14,6 +14,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from educelab.devices.app import _macos
+from educelab.devices.app._preview import positive_int
 from educelab.devices.errors import FocusLimitReached, import_optional
 
 if TYPE_CHECKING:
@@ -77,14 +78,14 @@ def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") 
     parser.add_argument("--producer", help="gentl: the .cti file to use")
     parser.add_argument(
         "--window",
-        type=int,
+        type=positive_int,
         default=1024,
         metavar="PIXELS",
         help="the window's longest side (default: 1024, a Z7 II frame's width)",
     )
     parser.add_argument("--pixel-format", help="set this first, e.g. Mono16")
     parser.add_argument(
-        "--frames", type=int, metavar="N", help="quit after this many frames"
+        "--frames", type=positive_int, metavar="N", help="quit after this many frames"
     )
     parser.set_defaults(func=run)
 
@@ -471,8 +472,6 @@ def _label(cv2: Any, image: Any, *lines: str) -> None:
 
 def _outline(cv2: Any, image: Any, view: View) -> None:
     """Draw the region asked for on an image that still shows another."""
-    if view.changed_at is None:
-        return
     height, width = image.shape[:2]
     shown_x, shown_y, shown_w, shown_h = view.shown
     x, y, side = view.region

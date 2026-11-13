@@ -453,3 +453,21 @@ def test_capture_during_preview_raises_without_capturing(camera):
     with pytest.raises(PreviewError, match="stop_preview"):
         camera.capture_frame()
     assert not hasattr(camera, "capture_args")
+
+
+def test_a_capture_after_a_failed_stop_tries_the_stop_again(camera):
+    camera.start_preview()
+    camera.fail_stop = True
+    with pytest.raises(DeviceError):
+        camera.stop_preview()
+    assert camera.preview is None
+    # Still failing: the capture raises rather than capture with preview's state.
+    with pytest.raises(DeviceError):
+        camera.capture_frame()
+    camera.fail_stop = False
+    camera.capture_frame()
+    assert camera.preview_calls[-2:] == [("stop",), ("stop",)]
+    # Once stopped, captures don't stop again.
+    camera.capture_frame()
+    assert camera.preview_calls[-1] == ("stop",)
+    assert camera.preview_calls.count(("stop",)) == 3

@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
 
+    from educelab.devices import DeviceInfo
     from educelab.devices.cameras import Camera, PreviewFrame
     from educelab.devices.cameras.simulated import SimulatedFocusDrive
 
@@ -181,6 +182,7 @@ def run(args: argparse.Namespace) -> int:
         feed = _Feed(camera, args.window)
         feed.start()
         activated = False
+        drawn: tuple[Any, ...] = ()
         try:
             while args.frames is None or feed.count < args.frames:
                 if feed.error is not None:
@@ -193,25 +195,33 @@ def run(args: argparse.Namespace) -> int:
                     view.changed_at = None
                     logger.debug("asking for %s", view.request())
                     feed.ask(view.request())
-                shown = frame.geometry.region
-                scale = frame.geometry.scale
-                view.shown = (shown.x, shown.y, shown.width, shown.height)
-                pixels = eight_bit(frame.pixels, frame.full_scale)
-                image = _fit(cv2, pixels, args.window, limit)
-                view.size = (image.shape[1], image.shape[0])
-                if view.changed_at is not None or not feed.caught_up.is_set():
-                    _outline(cv2, image, view)
-                height, width = frame.pixels.shape[:2]
-                _label(
-                    cv2,
-                    image,
-                    f"{camera!r}",
-                    f"region x {shown.x:.3f} y {shown.y:.3f} "
-                    f"w {shown.width:.3f} h {shown.height:.3f}",
-                    f"{width}x{height} {frame.pixel_format}, {_percent(scale)}"
-                    f"{feed.rate:.1f} frames/s, last change {feed.took:.2f} s",
-                )
-                cv2.imshow(TITLE, image)
+                outlined = view.changed_at is not None or not feed.caught_up.is_set()
+                # Ticks outrun frames: draw only when the frame or outline changes.
+                if drawn[:1] != (frame,):
+                    shown = frame.geometry.region
+                    view.shown = (shown.x, shown.y, shown.width, shown.height)
+                    pixels = eight_bit(frame.pixels, frame.full_scale)
+                    labelled = _fit(cv2, pixels, args.window, limit)
+                    view.size = (labelled.shape[1], labelled.shape[0])
+                    height, width = frame.pixels.shape[:2]
+                    _label(
+                        cv2,
+                        labelled,
+                        f"{camera!r}",
+                        f"region x {shown.x:.3f} y {shown.y:.3f} "
+                        f"w {shown.width:.3f} h {shown.height:.3f}",
+                        f"{width}x{height} {frame.pixel_format}, "
+                        f"{_percent(frame.geometry.scale)}"
+                        f"{feed.rate:.1f} frames/s, last change {feed.took:.2f} s",
+                    )
+                    drawn = (frame, labelled, None)
+                if outlined or drawn[2] != view.region:
+                    image = drawn[1]
+                    if outlined:
+                        image = image.copy()
+                        _outline(cv2, image, view)
+                    cv2.imshow(TITLE, image)
+                    drawn = (frame, drawn[1], view.region if not outlined else None)
                 if not activated:
                     activated = True
                     _macos.activate()
@@ -359,27 +369,20 @@ def _open(
         from educelab.devices.cameras.simulated import SimulatedCamera
 
         return SimulatedCamera(2448, 2048, pattern="chart", focus=focus)
-    if backend == "gentl":
-        from educelab.devices.cameras.gentl import GenTLCamera
+    if backend == "spinnaker":
+        from educelab.devices.cameras.spinnaker import SpinnakerCamera
 
-        found = GenTLCamera.discover(args.producer)
-        serial = _serial(args, [info.serial_number for info in found])
-        return GenTLCamera(serial, producer=args.producer)
-    if backend == "aravis":
-        from educelab.devices.cameras.aravis import AravisCamera
+        return SpinnakerCamera(_serial(args, SpinnakerCamera.discover()))
+    from educelab.devices.app.genicam import _driver
 
-        found = AravisCamera.discover()
-        return AravisCamera(_serial(args, [info.serial_number for info in found]))
-    from educelab.devices.cameras.spinnaker import SpinnakerCamera
-
-    found = SpinnakerCamera.discover()
-    return SpinnakerCamera(_serial(args, [info.serial_number for info in found]))
+    discover, make = _driver(backend, args.producer)
+    return make(_serial(args, discover()))
 
 
-def _serial(args: argparse.Namespace, found: list[str | None]) -> str:
+def _serial(args: argparse.Namespace, found: "list[DeviceInfo]") -> str:
     if args.serial:
         return str(args.serial)
-    first = next((serial for serial in found if serial), None)
+    first = next((i.serial_number for i in found if i.serial_number), None)
     if first is None:
         sys.exit(f"el-devices: {args.backend} found no cameras")
     return first
@@ -445,7 +448,8 @@ def _fit(
     """A BGR image for the window, ``window`` pixels on its longest side, or
     smaller to stay within ``limit``."""
     code = cv2.COLOR_GRAY2BGR if pixels.ndim == 2 else cv2.COLOR_RGB2BGR
-    return _resize(cv2, cv2.cvtColor(pixels, code), window, limit)
+    # Resized first: the colour conversion then runs on fewer pixels.
+    return cv2.cvtColor(_resize(cv2, pixels, window, limit), code)
 
 
 def _resize(cv2: Any, image: Any, window: int, limit: tuple[int, int] | None) -> Any:

@@ -871,8 +871,8 @@ class GenICamCamera(FrameCamera):
             _Enum("GainAuto", "GainAuto", _AUTO_MODES),
             _Enum(PIXEL_FORMAT, "PixelFormat", _PIXEL_FORMATS, paused=True),
             # Read-only even where the camera could crop: only preview sets an ROI.
-            _FrameSize(WIDTH, "Width"),
-            _FrameSize(HEIGHT, "Height"),
+            _FrameSize(WIDTH, ("Width",), "px", integer=True),
+            _FrameSize(HEIGHT, ("Height",), "px", integer=True),
             _ReadOnly(SENSOR_WIDTH, ("SensorWidth",), "px", integer=True),
             _ReadOnly(SENSOR_HEIGHT, ("SensorHeight",), "px", integer=True),
             _ThroughputLimit(),
@@ -888,10 +888,6 @@ class GenICamCamera(FrameCamera):
             _LinkSpeed(),
         ]
         return {d.name: d for d in found if d is not None}
-
-    def _full_scale(self, pixel_format: str) -> int:
-        """What a saturated pixel reads from this camera, in ``pixel_format``."""
-        return full_scale(pixel_format, self.info.model)
 
     def _exposure(self) -> float | None:
         """The exposure time in seconds, or None if the camera has no such node."""
@@ -946,9 +942,6 @@ class GenICamCamera(FrameCamera):
             logger.warning("%s", exc)
 
     def _capture_frame(self, not_before: datetime | None, timeout: float) -> Frame:
-        if self._applied is not None:
-            # A failed stop left a preview ROI on the camera; restore it first.
-            self._stop_preview()
         return self._grab(not_before, timeout)
 
     # --- Preview ---------------------------------------------------------------
@@ -972,13 +965,12 @@ class GenICamCamera(FrameCamera):
             if conn.is_writable("DecimationVertical"):
                 low, high, _ = self._int_range("DecimationVertical")
                 self._decimations = tuple(d for d in (1, 2, 4, 8) if low <= d <= high)
-            limits = self._enter_decimation(1)
-            width, height = limits.full
-            self._write_geometry(_Geometry(1, 0, 0, width, height), decimate=False)
+            whole = _Geometry(1, 0, 0, *self._enter_decimation(1).full)
+            self._write_geometry(whole, decimate=False)
         except DeviceError as exc:
             logger.warning("%r: previews will crop on the host: %s", self, exc)
             return
-        self._capture_geometry = _Geometry(1, 0, 0, width, height)
+        self._capture_geometry = whole
 
     def _start_preview(
         self, region: PreviewRegion, max_size: int | None, min_size: int | None
@@ -1075,7 +1067,7 @@ class GenICamCamera(FrameCamera):
             mode = self._read_enum(auto)
             if mode == "Off" or "Off" not in conn.enum_entries(auto):
                 return
-            rate = self._call(f"read {node}", lambda: conn.get_float(node))
+            rate = self._read_float(node)
             self._set_enum(auto, "Off")
             self._rate_auto = mode
             # Off brings back the last rate set by hand, not the current one.
@@ -1099,7 +1091,7 @@ class GenICamCamera(FrameCamera):
         conn, node = self._connection, self._exposure_node
         if node is None or not (conn.is_readable(node) and conn.is_writable(node)):
             return None
-        return self._call(f"read {node}", lambda: conn.get_float(node))
+        return self._read_float(node)
 
     def _keep_exposure(self, exposure: float, target: "_Geometry | None") -> bool:
         """Put the exposure back if a geometry change cut it. False if the
@@ -1255,9 +1247,7 @@ class GenICamCamera(FrameCamera):
             if not conn.is_readable(node):
                 continue
             try:
-                rate = self._call(
-                    f"read {node}", functools.partial(conn.get_float, node)
-                )
+                rate = self._read_float(node)
             except DeviceError as exc:
                 logger.debug("%s", exc)
                 continue
@@ -1408,7 +1398,7 @@ class GenICamCamera(FrameCamera):
                     "timestamp_remeasured": remeasured,
                     "timestamp_source": taken.timestamp_source,
                     "bit_depth": bit_depth(taken.pixel_format),
-                    "full_scale": self._full_scale(taken.pixel_format),
+                    "full_scale": full_scale(taken.pixel_format, self._model),
                 }
                 return Frame(
                     taken.pixels,
@@ -1800,22 +1790,6 @@ class _Enum(_Descriptor):
 
 
 @dataclass(frozen=True)
-class _FrameSize(_Descriptor):
-    """A capture's width or height: the node, or the capture geometry on a
-    camera whose ROI preview changes."""
-
-    name: str
-    node: str
-
-    def read(self, camera: GenICamCamera) -> Setting | None:
-        capture = camera._capture_geometry
-        if capture is not None:
-            value = capture.width if self.node == "Width" else capture.height
-            return Setting(self.name, value, unit="px", read_only=True)
-        return _ReadOnly(self.name, (self.node,), "px", integer=True).read(camera)
-
-
-@dataclass(frozen=True)
 class _ReadOnly(_Descriptor):
     """A number read from the first of ``nodes`` the camera can read."""
 
@@ -1852,6 +1826,19 @@ _USB_SPEEDS = {
     "HighSpeed": 60.0,
     "SuperSpeed": 625.0,
 }
+
+
+@dataclass(frozen=True)
+class _FrameSize(_ReadOnly):
+    """A capture's width or height: the node, or the capture geometry on a
+    camera whose ROI preview changes."""
+
+    def read(self, camera: GenICamCamera) -> Setting | None:
+        capture = camera._capture_geometry
+        if capture is None:
+            return super().read(camera)
+        value = capture.width if self.name == WIDTH else capture.height
+        return Setting(self.name, value, unit=self.unit, read_only=True)
 
 
 @dataclass(frozen=True)

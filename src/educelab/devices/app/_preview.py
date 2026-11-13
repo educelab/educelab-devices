@@ -67,14 +67,13 @@ def problem(args: argparse.Namespace) -> str | None:
     if not args.preview:
         return None
     from educelab.devices.cameras import PreviewRegion
+    from educelab.devices.cameras.base import check_preview_sizes
 
     try:
         PreviewRegion.of(args.region)
+        check_preview_sizes(args.max_size, args.min_size)
     except ValueError as exc:
         return str(exc)
-    low, high = args.min_size, args.max_size
-    if low is not None and high is not None and low > high:
-        return f"--min-size {low} is above --max-size {high}"
     return None
 
 

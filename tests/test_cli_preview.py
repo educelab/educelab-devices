@@ -1,4 +1,5 @@
 import sys
+import time
 from collections import deque
 
 import numpy as np
@@ -66,6 +67,8 @@ class FakeOpenCV:
         self.shown.append(image)
 
     def waitKey(self, delay):
+        # As the real one does, so frames arrive between ticks.
+        time.sleep(delay / 1000)
         step = self.script.popleft() if self.script else "q"
         if step is None:
             return -1
@@ -324,11 +327,13 @@ def test_a_camera_error_ends_the_viewer_with_its_message(opencv, capsys):
     assert "the camera went away" in capsys.readouterr().err
 
 
-def test_frames_keep_coming_while_the_window_waits_for_input(opencv):
+def test_frames_keep_coming_while_the_window_waits_and_each_is_drawn_once(opencv):
     camera = SimulatedCamera()
-    fake = opencv(*[None] * 20, camera=camera)
-    assert main(["preview", "simulated", "--window", "200"]) == 0
-    assert len(fake.shown) >= 20
+    fake = opencv(*[None] * 5000, camera=camera)
+    assert main(["preview", "simulated", "--window", "200", "--frames", "5"]) == 0
+    ticks = 5000 - len(fake.script)
+    # Every frame drawn, and no frame drawn on more than one tick.
+    assert 4 <= len(fake.shown) <= 6 < ticks
 
 
 def test_a_drag_works_without_its_press_or_release_arriving(opencv):

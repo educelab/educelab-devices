@@ -306,6 +306,10 @@ class LibGPhoto2:
                 raise
 
 
+# What _LibSession._single gives for a camera driver that only reads the tree.
+_TREE = object()
+
+
 class _LibSession:
     """`Session` over a python-gphoto2 ``Camera``."""
 
@@ -360,15 +364,10 @@ class _LibSession:
     def widget(self, name: str) -> Widget | None:
         gp = self._gp
         with _translated(gp):
-            try:
-                node = self._camera.get_single_config(name)
-            except gp.GPhoto2Error as exc:
-                if exc.code == GP_ERROR_BAD_PARAMETERS:
-                    return None
-                if exc.code != GP_ERROR_NOT_SUPPORTED:
-                    raise
+            node = self._single(name)
+            if node is _TREE:
                 return flatten_config(gp, self._camera.get_config()).get(name)
-            return read_widget(gp, node)
+            return None if node is None else read_widget(gp, node)
 
     def find_widgets(self, names: Iterable[str]) -> dict[str, Widget]:
         gp = self._gp
@@ -376,16 +375,11 @@ class _LibSession:
         found: dict[str, Widget] = {}
         with _translated(gp):
             for name in names:
-                try:
-                    node = self._camera.get_single_config(name)
-                except gp.GPhoto2Error as exc:
-                    if exc.code == GP_ERROR_BAD_PARAMETERS:
-                        continue
-                    if exc.code != GP_ERROR_NOT_SUPPORTED:
-                        raise
+                node = self._single(name)
+                if node is _TREE:
                     tree = flatten_config(gp, self._camera.get_config())
                     return {n: tree[n] for n in names if n in tree}
-                widget = read_widget(gp, node)
+                widget = None if node is None else read_widget(gp, node)
                 if widget is not None:
                     found[name] = widget
         return found
@@ -393,19 +387,26 @@ class _LibSession:
     def value(self, name: str) -> WidgetValue | None:
         gp = self._gp
         with _translated(gp):
-            try:
-                widget = self._camera.get_single_config(name)
-            except gp.GPhoto2Error as exc:
-                if exc.code == GP_ERROR_BAD_PARAMETERS:
-                    return None
-                if exc.code != GP_ERROR_NOT_SUPPORTED:
-                    raise
+            node = self._single(name)
+            if node is _TREE:
                 found = flatten_config(gp, self._camera.get_config()).get(name)
                 return None if found is None else found.value
-            if widget.get_type() == gp.GP_WIDGET_BUTTON:
+            if node is None or node.get_type() == gp.GP_WIDGET_BUTTON:
                 return None
-            value: WidgetValue = widget.get_value()
+            value: WidgetValue = node.get_value()
             return value
+
+    def _single(self, name: str) -> Any:
+        """The widget ``name`` read alone; None if the camera has no such
+        widget, or `_TREE` if its driver only reads the whole tree."""
+        try:
+            return self._camera.get_single_config(name)
+        except self._gp.GPhoto2Error as exc:
+            if exc.code == GP_ERROR_BAD_PARAMETERS:
+                return None
+            if exc.code != GP_ERROR_NOT_SUPPORTED:
+                raise
+            return _TREE
 
     def set_config(self, values: Mapping[str, WidgetValue]) -> None:
         with _translated(self._gp):

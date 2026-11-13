@@ -6,7 +6,7 @@ import os
 from abc import abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from numbers import Integral, Real
 from pathlib import Path, PurePath
 from typing import Any
@@ -180,6 +180,22 @@ class PreviewGeometry:
             )
 
 
+def check_preview_sizes(
+    max_size: int | None, min_size: int | None
+) -> tuple[int | None, int | None]:
+    """Check a preview's ``max_size`` and ``min_size`` together.
+
+    Raises:
+        TypeError, ValueError: Either is invalid, or ``min_size`` is above
+            ``max_size``.
+    """
+    cap = check_max_size(max_size)
+    floor = check_max_size(min_size, "min_size")
+    if cap is not None and floor is not None and floor > cap:
+        raise ValueError(f"min_size {floor} is above max_size {cap}")
+    return cap, floor
+
+
 def check_max_size(max_size: int | None, name: str = "max_size") -> int | None:
     """Check a preview's ``max_size`` or ``min_size``: a positive int, or
     ``None`` for no limit.
@@ -313,6 +329,7 @@ class Camera(Device):
     """
 
     _preview: PreviewGeometry | None = None
+    _stop_failed = False
 
     @synchronized
     def settings(self) -> dict[str, Setting]:
@@ -382,16 +399,14 @@ class Camera(Device):
             DeviceError: The camera couldn't apply the preview. Preview ends.
         """
         wanted = PreviewRegion.of(region)
-        cap = check_max_size(max_size)
-        floor = check_max_size(min_size, "min_size")
-        if cap is not None and floor is not None and floor > cap:
-            raise ValueError(f"min_size {floor} is above max_size {cap}")
+        cap, floor = check_preview_sizes(max_size, min_size)
         try:
             geometry = self._start_preview(wanted, cap, floor)
         except BaseException:
             self._end_preview()
             raise
         self._preview = geometry
+        self._stop_failed = False
         return geometry
 
     @synchronized
@@ -399,10 +414,8 @@ class Camera(Device):
         """Stop previewing. Does nothing when not previewing."""
         if self._preview is None:
             return
-        try:
-            self._stop_preview()
-        finally:
-            self._preview = None
+        self._preview = None
+        self._stop()
 
     @synchronized
     def preview_frame(self, *, not_before: datetime | None = None) -> PreviewFrame:
@@ -423,7 +436,10 @@ class Camera(Device):
         if self._preview is None:
             raise PreviewError(f"{self!r} isn't previewing; call start_preview() first")
         _check_not_before(not_before)
-        return self._preview_frame(not_before)
+        frame = self._preview_frame(not_before)
+        # A driver may re-plan mid-preview, e.g. when the image size changes.
+        self._preview = frame.geometry
+        return frame
 
     def close(self) -> None:
         """Disconnect from the device, ending any preview first. Does nothing
@@ -436,12 +452,17 @@ class Camera(Device):
     def _end_preview(self) -> None:
         """Leave preview on the way out of an error or `close()`, logging
         rather than raising a failure to stop."""
+        self._preview = None
         try:
-            self._stop_preview()
+            self._stop()
         except Exception as exc:  # noqa: BLE001 - close() and errors must go on
             logger.warning("%r: stopping preview failed: %s", self, exc)
-        finally:
-            self._preview = None
+
+    def _stop(self) -> None:
+        """Leave preview, noting a failure so a capture tries again first."""
+        self._stop_failed = True
+        self._stop_preview()
+        self._stop_failed = False
 
     def _require_not_previewing(self, call: str) -> None:
         if self._preview is not None:
@@ -449,10 +470,14 @@ class Camera(Device):
                 f"{self!r} is previewing; call stop_preview() before {call}(), "
                 "then start_preview() again"
             )
+        if self._stop_failed:
+            # A failed stop may have left preview's ROI or zoom on the camera.
+            self._stop()
 
     def _reset_state(self) -> None:
         super()._reset_state()
         self._preview = None
+        self._stop_failed = False
 
     @abstractmethod
     def _settings(self) -> Mapping[str, Setting]: ...
@@ -544,6 +569,13 @@ class FileCamera(Camera):
 
     @abstractmethod
     def _capture_files(self) -> list[CameraFile]: ...
+
+
+def seconds_until(not_before: datetime | None) -> float:
+    """Seconds from now until ``not_before``; 0 if it has passed or is None."""
+    if not_before is None:
+        return 0.0
+    return max((not_before - datetime.now(UTC)).total_seconds(), 0.0)
 
 
 def _check_not_before(not_before: datetime | None) -> None:

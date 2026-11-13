@@ -45,6 +45,7 @@ from educelab.devices.cameras.base import (
     PreviewFrame,
     PreviewGeometry,
     PreviewRegion,
+    seconds_until,
 )
 from educelab.devices.cameras.focus import FocusDrive, FocusLimit
 from educelab.devices.device import DeviceInfo, Disconnected
@@ -631,14 +632,13 @@ class GPhoto2Camera(FileCamera):
     def _preview_frame(self, not_before: datetime | None) -> PreviewFrame:
         # Previews carry no time, so not_before goes by arrival: ask for the
         # image only once not_before has passed.
-        if not_before is not None:
-            time.sleep(max((not_before - datetime.now(UTC)).total_seconds(), 0.0))
+        time.sleep(seconds_until(not_before))
         pixels = self._grab_preview(self._require_session())
         arrived = datetime.now(UTC)
         crop = self._crop
         if crop is None or pixels.shape[:2] != self._planned_for:
-            # A setting changed the live-view size; report the new geometry.
-            self._preview = self._plan_crop(pixels)
+            # A setting changed the live-view size; the frame reports the new geometry.
+            self._plan_crop(pixels)
             crop = self._crop
         assert crop is not None
         return PreviewFrame(

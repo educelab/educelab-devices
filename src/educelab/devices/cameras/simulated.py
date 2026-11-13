@@ -30,6 +30,7 @@ from educelab.devices.cameras.base import (
     PreviewRegion,
     Setting,
     SettingValue,
+    seconds_until,
 )
 from educelab.devices.cameras.focus import FocusDrive, FocusLimit
 from educelab.devices.device import DeviceInfo
@@ -204,7 +205,7 @@ class SimulatedCamera(FrameCamera):
     def _preview_frame(self, not_before: datetime | None) -> PreviewFrame:
         assert self._crop is not None
         self._run_auto()
-        time.sleep(_wait_for(not_before) + _number(self._store[EXPOSURE_TIME]))
+        time.sleep(seconds_until(not_before) + _number(self._store[EXPOSURE_TIME]))
         pixel_format = str(self._store[PIXEL_FORMAT].value)
         dtype = np.uint16 if pixel_format == "Mono16" else np.uint8
         return PreviewFrame(
@@ -218,7 +219,7 @@ class SimulatedCamera(FrameCamera):
         self._run_auto()
         # Frames are rendered on demand, so only a future not_before needs a wait.
         exposure = _number(self._store[EXPOSURE_TIME])
-        wait = _wait_for(not_before)
+        wait = seconds_until(not_before)
         if wait + exposure > timeout:
             raise DeviceTimeout(f"{self!r} has no frame within {timeout:g} s")
         time.sleep(wait + exposure)
@@ -366,7 +367,7 @@ class SimulatedFileCamera(FileCamera):
 
     def _preview_frame(self, not_before: datetime | None) -> PreviewFrame:
         assert self._crop is not None
-        time.sleep(_wait_for(not_before) + self._exposure())
+        time.sleep(seconds_until(not_before) + self._exposure())
         return PreviewFrame(
             _quantize(self._render(self._crop), np.uint8),
             "Mono8",
@@ -392,14 +393,6 @@ class SimulatedFileCamera(FileCamera):
     def _exposure(self) -> float:
         setting = self._store[EXPOSURE_TIME]
         return _BULB_EXPOSURE_S if setting.value is None else _number(setting)
-
-
-def _wait_for(not_before: datetime | None) -> float:
-    """Seconds until ``not_before``. Images are rendered on demand, so only a
-    future ``not_before`` needs a wait."""
-    if not_before is None:
-        return 0.0
-    return max((not_before - datetime.now(UTC)).total_seconds(), 0.0)
 
 
 def _number(setting: Setting) -> float:
@@ -440,18 +433,16 @@ class _Scene:
             image = _render(width, height, exposure, gain_db, rng)
             return image if crop is None else crop.apply(image)
         base = self._base()
-        if crop is not None:
-            base = crop.apply(base)
-        scale = (exposure / _REFERENCE_EXPOSURE_S) * 10 ** (gain_db / 20)
-        image = base * (scale * 0.5) + rng.normal(0.0, _NOISE_SIGMA, base.shape)
-        return np.clip(image, 0.0, 1.0)
+        return _expose(
+            base if crop is None else crop.apply(base), exposure, gain_db, rng
+        )
 
     def _base(self) -> npt.NDArray[np.float32]:
         """The pattern, blurred as the focus drive says; kept between frames."""
         if self._sharp is None:
             width, height = self._size
             draw = _chart if self._pattern == "chart" else _gradient
-            self._sharp = draw(width, height)
+            self._sharp = draw(width, height).astype(np.float32)
         sigma = 0.0 if self._focus is None else self._focus._blur_px()
         sigma = round(sigma / _BLUR_ROUNDING_PX) * _BLUR_ROUNDING_PX
         if sigma < _BLUR_ROUNDING_PX:
@@ -463,10 +454,10 @@ class _Scene:
         return self._blurred[sigma]
 
 
-def _gradient(width: int, height: int) -> npt.NDArray[np.float32]:
+def _gradient(width: int, height: int) -> npt.NDArray[np.float64]:
+    """A diagonal gradient from 0.5 at the top left to 1.0 at the bottom right."""
     ys, xs = np.mgrid[0:height, 0:width]
-    pattern = 0.5 + 0.5 * (xs / max(width - 1, 1) + ys / max(height - 1, 1)) / 2
-    return pattern.astype(np.float32)
+    return 0.5 + 0.5 * (xs / max(width - 1, 1) + ys / max(height - 1, 1)) / 2
 
 
 def _chart(width: int, height: int) -> npt.NDArray[np.float32]:
@@ -503,13 +494,11 @@ def _chart(width: int, height: int) -> npt.NDArray[np.float32]:
         image[wedge_top : height - margin, left : left + step_w] = 1.9 * k / (steps - 1)
     # A patch that saturates at the reference exposure.
     side = max(short // 10, 8)
-    image[
-        height - margin - block // 2 - side - margin : height
-        - margin
-        - block // 2
-        - margin,
-        width - margin - side : width - margin,
-    ] = _OVER
+    patch = (
+        slice(wedge_top - margin - side, wedge_top - margin),
+        slice(-margin - side, -margin),
+    )
+    image[patch] = _OVER
     return image
 
 
@@ -528,11 +517,14 @@ def _box(image: npt.NDArray[Any], width: int, axis: int) -> npt.NDArray[np.float
     before, after = width // 2, width - 1 - width // 2
     pad = [(0, 0), (0, 0)]
     pad[axis] = (before + 1, after)
-    padded = np.pad(image.astype(np.float64), pad, mode="edge")
+    padded = np.pad(image.astype(np.float64, copy=False), pad, mode="edge")
     total = np.cumsum(padded, axis=axis)
-    upper = np.take(total, np.arange(width, total.shape[axis]), axis=axis)
-    lower = np.take(total, np.arange(0, total.shape[axis] - width), axis=axis)
-    return (upper - lower) / width
+    upper = [slice(None)] * 2
+    lower = [slice(None)] * 2
+    upper[axis], lower[axis] = slice(width, None), slice(None, -width)
+    out = total[tuple(upper)] - total[tuple(lower)]
+    out /= width
+    return out
 
 
 def _render(
@@ -543,8 +535,13 @@ def _render(
     rng: np.random.Generator,
 ) -> npt.NDArray[np.float64]:
     """A diagonal gradient scaled by exposure and gain, with noise, in 0–1."""
-    ys, xs = np.mgrid[0:height, 0:width]
-    pattern = 0.5 + 0.5 * (xs / max(width - 1, 1) + ys / max(height - 1, 1)) / 2
+    return _expose(_gradient(width, height), exposure, gain_db, rng)
+
+
+def _expose(
+    pattern: npt.NDArray[Any], exposure: float, gain_db: float, rng: np.random.Generator
+) -> npt.NDArray[np.float64]:
+    """``pattern`` lit by the exposure and gain, with noise, clipped to 0–1."""
     scale = (exposure / _REFERENCE_EXPOSURE_S) * 10 ** (gain_db / 20)
     image = pattern * scale * 0.5 + rng.normal(0.0, _NOISE_SIGMA, pattern.shape)
     return np.clip(image, 0.0, 1.0)

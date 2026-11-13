@@ -50,6 +50,29 @@ copy in `pgs_scan/spectral/simulation.py`.
 
 Suggestion: export it, or a helper an app's own simulated camera can build on.
 
+## A request, best as its own track: a test chart in `SimulatedCamera`
+
+`SimulatedCamera` renders a smooth gradient, and that hides everything preview does. On a
+gradient there's nothing to show decimation, host cropping, region rounding, 100% against
+400%, or aliasing, and `el-devices preview simulated` looks the same at every zoom. Both of
+pgs-scan's apps develop off-rig against this camera (PGS Spectral subclasses it), so their
+viewers can't be checked there either. pgs-scan's `utils/preview_viewer.py` carries a stopgap
+`ChartCamera` subclass to get anything to look at.
+
+What would help:
+
+- **A `pattern` option, with the gradient as the default** so existing tests don't change. The
+  chart would have a Siemens star, bars at 1, 2 and 3 px pitch, a grid, and a patch past full
+  scale for clipping.
+- **Frames that visibly change** (noise or slow movement), so a live preview can be told from
+  a frozen one. The gradient's noise does this today; a static chart doesn't.
+- **Rendered at sensor size,** so 100% means something. CM3-sized (2448 × 2048) is what the
+  stopgap uses.
+- **Optionally, blur that follows a `SimulatedFocusDrive`'s position,** so focus aids can be
+  built and tested off-rig. pgs-scan's spectral focus mode is waiting on one.
+
+Preview doesn't need this to merge.
+
 ## Not for this track, for reference
 
 - pgs-scan logs a preview failure once and retries it with backoff (100 ms doubling to 5 s).

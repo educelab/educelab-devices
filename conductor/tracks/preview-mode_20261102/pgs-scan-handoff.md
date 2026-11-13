@@ -102,3 +102,13 @@ All of the above went into this track (Phase 6 of `plan.md`). What pgs-scan need
    focus=SimulatedFocusDrive(sharp_at=500))`, and the same on `SimulatedFileCamera`.
    One pixel of blur per 25 focus steps from `sharp_at`. The stopgap `ChartCamera` can go.
 
+
+## Adopted in pgs-scan, 2026-11-12
+
+Against `97f880c`, pgs-scan `3d3e17d` (branch `preview-viewer`): all five. Full scale now
+comes from `full_scale` (the guess and the step heuristic are gone), views ask with
+`min_size`, the simulated DSLR uses `host_crop` and the three-argument hook, and the chart
+is in pgs-scan's simulator and its viewer harness. Its suite passes (731), off-rig. Also
+needed: PGS Spectral's mono simulator overrides `_render`, so it had to take the new `crop`
+argument and render only the crop. Any subclass that overrides `_render` will need the same
+change; the guide may want to say so. Still to do: the maintainer's own check, and a rig run.

@@ -82,3 +82,23 @@ Preview doesn't need this to merge.
   capture and starts it again after, as §6 says. Pixel-format and throughput-limit changes
   pause it too, to be safe. Whether those need preview stopped hasn't been checked on
   hardware.
+
+## Answered here, 2026-11-12
+
+All of the above went into this track (Phase 6 of `plan.md`). What pgs-scan needs to change:
+
+1. **Bit depth:** `PreviewFrame.bit_depth` and `PreviewFrame.full_scale`, matching a
+   capture's `metadata["bit_depth"]` and new `metadata["full_scale"]`. Drop the
+   `eight_bit()` copy and the low-bits heuristic; scale by `full_scale`.
+2. **CM3 `Mono16`:** `full_scale` is 65520; `bit_depth` stays 16, the format's depth.
+   Clipping is `pixels >= frame.full_scale`.
+3. **The floor:** `start_preview(region, max_size, *, min_size=None)`. Ask with
+   `min_size=` the view's size to get the nearest step at or above it; keep
+   `max_size` for hard caps such as thumbnails. **Breaking for subclasses:** the
+   `_start_preview` hook is now `_start_preview(region, max_size, min_size)`.
+4. **`host_crop`:** `from educelab.devices.cameras import host_crop, HostCrop`, with a
+   `min_size=` keyword. The copy in `pgs_scan/spectral/simulation.py` can go.
+5. **Test chart:** `SimulatedCamera(2448, 2048, pattern="chart",
+   focus=SimulatedFocusDrive(sharp_at=500))`, and the same on `SimulatedFileCamera`.
+   One pixel of blur per 25 focus steps from `sharp_at`. The stopgap `ChartCamera` can go.
+

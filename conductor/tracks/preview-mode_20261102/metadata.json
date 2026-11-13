@@ -6,15 +6,15 @@
   "created": "2026-11-02T00:00:00Z",
   "updated": "2026-11-12T00:00:00Z",
   "phases": {
-    "total": 5,
-    "completed": 4
+    "total": 6,
+    "completed": 5
   },
   "tasks": {
-    "total": 23,
-    "completed": 23
+    "total": 28,
+    "completed": 28
   },
-  "current_phase": 5,
-  "current_task": "5.6",
+  "current_phase": 6,
+  "current_task": "6.5",
   "commits": [
     "8deb075: Prepare the preview-mode hardware discovery runs",
     "c97e118: Record the discovery prep commit in the preview-mode metadata",

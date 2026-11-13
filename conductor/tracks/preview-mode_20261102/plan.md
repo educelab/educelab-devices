@@ -181,6 +181,24 @@ Owed hardware checks (Task 5.4): the driver's reported region on the camera in F
   - The track stays open: the maintainer is integrating preview into `pgs-scan`'s apps before merging here, so no PR yet.
   - pgs-scan's integration is done off-rig (2026-11-12, against `9c0a191`). It found four things to decide before merging: no bit depth on `PreviewFrame`, the CM3's Mono16 clipping at 65520, `max_size` rounding down a whole step, and `host_crop` being private. See [pgs-scan-handoff.md](./pgs-scan-handoff.md).
 
+## Phase 6: What pgs-scan's integration found
+
+From `pgs-scan-handoff.md` (pgs-scan's track `preview-viewer_20261112`). The maintainer asked for all of it in this track and PR, the test chart included.
+
+### Tasks
+
+- [x] Task 6.1: A bit depth and full scale on every frame. `PreviewFrame.bit_depth` is the format's depth, as a capture's `metadata["bit_depth"]`, and `PreviewFrame.full_scale` and `metadata["full_scale"]` the value a saturated pixel reads. The CM3-U3-50S5M's `Mono16` is listed by model as 12 bits at the top (65520), from frames measured in October; other models are taken to fill the format.
+- [x] Task 6.2: A floor alongside the cap. `start_preview(region, max_size, *, min_size=None)`: the most reduction that keeps at least `min_size` on the longest side, still capped by `max_size`. Through every driver's step choice: host strides (`reduction()`), GenICam decimation, and the Z7 II's live-view size. The `_start_preview` hook gains `min_size`, so drivers outside the package (pgs-scan's simulated DSLR) need it too. `--min-size` on the camera subcommands; the viewer asks for at least its window.
+- [x] Task 6.3: `host_crop` and `HostCrop` exported from `educelab.devices.cameras`, for an application's own simulated camera.
+- [x] Task 6.4: A test chart in both simulated cameras: `pattern="chart"` (gradient stays the default), with a Siemens star, 1/2/3-px bars, a 64-px grid, a step wedge and a clipping patch, noisy so frames change. `focus=SimulatedFocusDrive(sharp_at=...)` blurs by the lens's distance from sharp. `el-devices preview simulated` shows a CM3-sized chart, with `[` and `]` for focus.
+- [x] Task 6.5: The guide, `docs/preview.md` (a section on developing off the rig), ADR 0007, `spinnaker.md` and the spec.
+
+Owed on hardware: the CM3 and IDS previewed with `min_size` (decimation then stride), and whether `PixelDynamicRangeMax` or `AdcBitDepth` gives the CM3's full scale so the model list could go. Not owed: the handoff's question whether pixel-format and throughput-limit changes need preview stopped. They don't by the API (`test_pixel_format_can_change_during_an_roi_preview`); on hardware it is untested.
+
+### Verification
+
+- [ ] The maintainer confirms pgs-scan works against this phase.
+
 ## Final Verification
 
 - [ ] All acceptance criteria met

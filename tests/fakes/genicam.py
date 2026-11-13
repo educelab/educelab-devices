@@ -55,6 +55,7 @@ ENUMS = {
     "TriggerSelector": ("FrameStart", "AcquisitionStart", "FrameBurstStart"),
     "TriggerSource": ("Software", "Line0", "Line1", "Line2", "Line3"),
     "DeviceLinkThroughputLimitMode": ("Off", "On"),
+    "AcquisitionFrameRateAuto": ("Off", "Continuous"),
 }
 
 # (dtype, channels) of each pixel format's array.
@@ -206,6 +207,23 @@ class FakeCamera:
             factor from 1 to 8.042, rounded down to 4 binary places, and a writable ``AcquisitionFrameRate``
             drops to fit a longer exposure and stays there after a shorter one.
             There is no ``AcquisitionResultingFrameRate``.
+        roi: Make ``Width`` and ``Height`` writable while stopped, and add
+            ``OffsetX`` and ``OffsetY``, on the increments ``size_inc`` and
+            ``offset_inc`` (the CM3-U3-50S5M's by default).
+        decimation: The largest ``DecimationVertical``; above 1 adds the
+            decimation nodes, writable while stopped.
+        decimation_horizontal_follows: ``DecimationHorizontal`` is read-only
+            and follows the vertical node, as on the CM3-U3-50S5M.
+        offsets_while_streaming: Whether the offsets are writable while
+            acquiring (not through IDS peak's GenTL producer).
+        limit_shrinks: The throughput limit and its maximum drop with the
+            payload and only a pixel format write resets them, as on the CM3.
+        rate_caps_exposure: The longest exposure is one frame period, which
+            shrinks with the image's height and cuts a longer exposure short,
+            as on the CM3.
+        rate_auto: Add the CM3's ``AcquisitionFrameRateAuto``, on, and an
+            ``AcquisitionFrameRate`` that is writable while it's off. Implies
+            ``rate_caps_exposure``: the frame period is then the set rate's.
     """
 
     # Made-up figures, roughly a USB3 camera; nothing tests them against hardware.
@@ -241,6 +259,15 @@ class FakeCamera:
         busy_after_frame: float = 0.0,
         usb_speed: str | None = None,
         ids_nodes: bool = False,
+        roi: bool = False,
+        size_inc: tuple[int, int] = (8, 2),
+        offset_inc: tuple[int, int] = (2, 2),
+        decimation: int = 1,
+        decimation_horizontal_follows: bool = False,
+        offsets_while_streaming: bool = True,
+        limit_shrinks: bool = False,
+        rate_caps_exposure: bool = False,
+        rate_auto: bool = False,
     ) -> None:
         self.arrival_latency = arrival_latency
         self.ids_nodes = ids_nodes
@@ -251,8 +278,12 @@ class FakeCamera:
         self.serial = serial
         self.model = model
         self.vendor = vendor
-        self.width = width
-        self.height = height
+        self.size_inc = size_inc
+        self.limit_shrinks = limit_shrinks
+        self.rate_caps_exposure = rate_caps_exposure or rate_auto
+        self.decimation_horizontal_follows = decimation_horizontal_follows
+        # Every node write, in order, for tests that count camera traffic.
+        self.writes: list[tuple[str, Any]] = []
         self.buffer_count = buffer_count
         self.clock = clock or (lambda: _genicam.host_time())
         self.device_epoch = self.clock() - uptime
@@ -316,13 +347,20 @@ class FakeCamera:
             )
             return self.get("DeviceLinkThroughputLimit") if on else self.THROUGHPUT_MAX
 
+        def full_rate() -> float:
+            # Like the CM3, a smaller frame reads out proportionally faster.
+            return self.MAX_FRAME_RATE * (width * height) / (self.width * self.height)
+
         def frame_rate() -> float:
-            return min(self.MAX_FRAME_RATE, limit_cap() / (width * height))
+            return min(full_rate(), limit_cap() / (self.width * self.height))
 
         def current_throughput() -> int:
             if not self.streaming:
                 return 0
-            return round(min(limit_cap(), self.MAX_FRAME_RATE * width * height))
+            return round(min(limit_cap(), full_rate() * self.width * self.height))
+
+        def offset_access() -> Access:
+            return "RO" if self.streaming and not offsets_while_streaming else "RW"
 
         def enum(name: str, value: str, **kwargs: Any) -> Node:
             return Node(name, "enum", value, entries=ENUMS[name], **kwargs)
@@ -332,8 +370,24 @@ class FakeCamera:
             Node("DeviceModelName", "string", model, access="RO"),
             Node("DeviceVendorName", "string", vendor, access="RO"),
             Node("DeviceFirmwareVersion", "string", firmware, access="RO"),
-            Node("Width", "int", width, width, width, access="RO"),
-            Node("Height", "int", height, height, height, access="RO"),
+            Node(
+                "Width",
+                "int",
+                width,
+                size_inc[0] if roi else width,
+                width,
+                size_inc[0] if roi else 1,
+                access=unless_streaming if roi else "RO",
+            ),
+            Node(
+                "Height",
+                "int",
+                height,
+                size_inc[1] if roi else height,
+                height,
+                size_inc[1] if roi else 1,
+                access=unless_streaming if roi else "RO",
+            ),
             Node("SensorWidth", "int", sensor_width, access="RO"),
             Node("SensorHeight", "int", sensor_height, access="RO"),
             Node(
@@ -404,6 +458,29 @@ class FakeCamera:
             Node("TransmitFailureCount", "int", 0, access="RO"),
             Node("USB3LinkRecoveryCount", "int", 0, access="RO"),
         ]
+        if roi:
+            for name, inc in zip(("OffsetX", "OffsetY"), offset_inc, strict=True):
+                nodes.append(Node(name, "int", 0, 0, 0, inc, access=offset_access))
+        if decimation > 1:
+            follows = decimation_horizontal_follows
+            nodes += [
+                Node(
+                    "DecimationVertical",
+                    "int",
+                    1,
+                    1,
+                    decimation,
+                    access=unless_streaming,
+                ),
+                Node(
+                    "DecimationHorizontal",
+                    "int",
+                    1,
+                    1,
+                    decimation,
+                    access="RO" if follows else unless_streaming,
+                ),
+            ]
         if usb_speed is not None:
             speeds = ("LowSpeed", "FullSpeed", "HighSpeed", "SuperSpeed")
             entries = speeds if usb_speed in speeds else (*speeds, usb_speed)
@@ -415,13 +492,36 @@ class FakeCamera:
         if ids_nodes:
             rate = self.MAX_FRAME_RATE
             nodes.append(Node("AcquisitionFrameRate", "float", rate, 0.1, rate))
+        if rate_auto:
+            rate = self.MAX_FRAME_RATE
+            nodes.append(enum("AcquisitionFrameRateAuto", "Continuous"))
+            nodes.append(
+                Node(
+                    "AcquisitionFrameRate",
+                    "float",
+                    rate,
+                    1.0,
+                    rate,
+                    access=when_off("AcquisitionFrameRateAuto"),
+                )
+            )
         dropped = set(without)
         if ids_nodes:
             dropped.add("AcquisitionResultingFrameRate")
         self.nodes = {n.name: n for n in nodes if n.name not in dropped}
+        # The image area at decimation 1, which the sensor nodes may exceed.
+        self.full_size = (width, height)
 
     def __repr__(self) -> str:
         return f"<FakeCamera {self.serial}>"
+
+    @property
+    def width(self) -> int:
+        return int(self.nodes["Width"].value)
+
+    @property
+    def height(self) -> int:
+        return int(self.nodes["Height"].value)
 
     # --- Test knobs (no access checks) ------------------------------------------
 
@@ -516,8 +616,18 @@ class FakeCamera:
             step = 2.0 ** (math.floor(math.log2(value)) - 4)
             value = math.floor(value / step) * step
         node.value = value
-        if name == self.exposure_node and self.has("AcquisitionFrameRate"):
+        self.writes.append((name, value))
+        if name == self.exposure_node and self.ids_nodes:
             self._fit_frame_rate(value)
+        if name.startswith("AcquisitionFrameRate") and self.rate_caps_exposure:
+            self._fit_geometry()
+        if name.startswith("Decimation"):
+            self._decimate(name, value)
+        if name in ("Width", "Height", "OffsetX", "OffsetY") or name.startswith("Dec"):
+            self._fit_geometry()
+        if name == "PixelFormat" and self.limit_shrinks:
+            limit = self.nodes["DeviceLinkThroughputLimit"]
+            limit.maximum = limit.value = self.THROUGHPUT_MAX
 
     def execute(self, name: str) -> None:
         self._require_open()
@@ -628,6 +738,59 @@ class FakeCamera:
         rate = self.nodes["AcquisitionFrameRate"]
         rate.maximum = min(self.MAX_FRAME_RATE, 1e6 / exposure_us)
         rate.value = min(rate.value, rate.maximum)
+
+    def _decimate(self, name: str, value: int) -> None:
+        """Show the whole decimated image, as cameras do after a decimation
+        write (assumed; the driver doesn't rely on it)."""
+        if name == "DecimationVertical" and self.decimation_horizontal_follows:
+            self.nodes["DecimationHorizontal"].value = value
+        for axis, (size, offset, dec) in enumerate(
+            (
+                ("Width", "OffsetX", "DecimationHorizontal"),
+                ("Height", "OffsetY", "DecimationVertical"),
+            )
+        ):
+            full = self.full_size[axis] // self.get(dec)
+            self.nodes[size].value = full // self.size_inc[axis] * self.size_inc[axis]
+            if self.has(offset):
+                self.nodes[offset].value = 0
+
+    def _fit_geometry(self) -> None:
+        """Keep each size and offset maximum inside the decimated image."""
+        for axis, (size, offset, dec) in enumerate(
+            (
+                ("Width", "OffsetX", "DecimationHorizontal"),
+                ("Height", "OffsetY", "DecimationVertical"),
+            )
+        ):
+            full = self.full_size[axis] // (self.get(dec) if self.has(dec) else 1)
+            at = self.get(offset) if self.has(offset) else 0
+            inc = self.nodes[size].inc
+            self.nodes[size].maximum = (full - at) // inc * inc
+            if self.has(offset):
+                self.nodes[offset].maximum = full - self.get(size)
+        if self.rate_caps_exposure:
+            fastest = self.MAX_FRAME_RATE * self.full_size[1] / self.get("Height")
+            if self.has("AcquisitionFrameRateAuto"):
+                rate = self.nodes["AcquisitionFrameRate"]
+                rate.maximum = fastest
+                if self.get("AcquisitionFrameRateAuto") == "Off":
+                    fastest = rate.value = min(rate.value, fastest)
+                else:
+                    rate.value = fastest
+            exposure = self.nodes[self.exposure_node]
+            exposure.maximum = 1e6 / fastest
+            exposure.value = min(exposure.value, exposure.maximum)
+        if self.limit_shrinks:
+            limit = self.nodes["DeviceLinkThroughputLimit"]
+            needed = payload_size(self) * self.MAX_FRAME_RATE * 2
+            top = (
+                self.THROUGHPUT_MIN
+                + ((int(needed) - self.THROUGHPUT_MIN) // self.THROUGHPUT_INC + 1)
+                * self.THROUGHPUT_INC
+            )
+            limit.maximum = min(limit.maximum, max(top, self.THROUGHPUT_MIN))
+            limit.value = min(limit.value, limit.maximum)
 
     def _latch(self) -> None:
         self.latch_calls += 1

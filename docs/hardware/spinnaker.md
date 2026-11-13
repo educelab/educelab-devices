@@ -300,7 +300,10 @@ streamed out by the device", in Spinnaker's `Camera.h`.
 
 A frame-rate setting (`AcquisitionFrameRateEnable` and `AcquisitionFrameRate` in the
 4.4.0 headers) is not exposed; the throughput limit covers the bandwidth problem. Older
-models may use other node names.
+models may use other node names. The CM3-U3-50S5M has `AcquisitionFrameRateAuto`
+(`Off`, `Continuous`) and `AcquisitionFrameRate`, writable while that is `Off`; preview
+holds the rate with them
+([usb3-vision.md](usb3-vision.md#preview)).
 
 **Exposure limits** (CM3-U3-50S5M, verified 2026-10-19):
 
@@ -381,13 +384,17 @@ bandwidth, makes each capture proportionally slower. 300 back-to-back captures d
 300 stale frames and re-measured the offset none of the time (hardware test, 2026-10-19
 and 2026-10-20), so buffers aren't leaked.
 
-`preview_frame()` takes the newest frame the same way (no `not_before`; in
-software-trigger mode it fires a trigger), shifts 16-bit pixels right by 8, and
-subsamples so the longest side is at most 1280 pixels. That assumes 16-bit data is
-left-aligned. The CM3-U3-50S5M's is (verified 2026-10-20: in Mono16 frames saved from
+`preview_frame()` takes a frame the same way (in software-trigger mode it fires a
+trigger) and returns it in the camera's pixel format, cropped to the preview region
+and subsampled only when `start_preview()` was given a `max_size`. A consumer that
+shifts 16-bit pixels down for display should know whether the data is left-aligned.
+The CM3-U3-50S5M's is (verified 2026-10-20: in Mono16 frames saved from
 20305113 and 20298452, the low 4 bits of every pixel were zero, so its 12-bit samples
 fill the top of the 16-bit range). Other models are unknown (Blackfly S sensors are
-10–12 bit); step 9's saved frames would show it.
+10–12 bit); step 9's saved frames would show it. The driver reports it: by model, the
+CM3-U3-50S5M's `Mono16` frames and previews carry `full_scale` 65520, and other models
+65535 (assumed). Whether a node such as `PixelDynamicRangeMax` or `AdcBitDepth` says
+the same, so the driver could read it rather than list models, is **unknown**.
 
 ## Differences from PySpin and SpinView
 
@@ -445,7 +452,7 @@ and writable again under `Off`, and every listed pixel format captures (hardware
 - **Incomplete frames dropped,** except `SPINNAKER_IMAGE_STATUS_MISSING_TRAILER`, which is
   accepted and flagged as `missing_trailer`.
 - **Pixels copied,** and every image buffer released, before a frame is returned.
-  `preview_frame()` is 8-bit and subsampled to at most 1280 px.
+  `preview_frame()` keeps the pixel format, and is cropped and subsampled on request.
 - **Errors:** every `SpinnakerException` becomes a `DeviceError` with no `__cause__` or
   `__context__` ([Hazards](#hazards)):
 
@@ -685,7 +692,7 @@ spin-4-min-80.log`), so a rerun doesn't overwrite an earlier one.
    camera's `-complete.png` and look for torn, shifted, or partly blank rows, especially
    at the bottom of the frame. Record how many were saved and whether they looked right.
    That settles whether accepting them is safe. The PNGs hold the raw 16-bit values; if
-   they look nearly black, the data is right-aligned (see `preview_frame()` above).
+   they look nearly black, the data is right-aligned (see the alignment note above).
 10. **Software trigger versus free-running.** With the same cameras on USB 3, Mono16,
     gain 10, 100 captures, run step 4's four runs again with `--trigger software` added,
     each with its own log (e.g. `spin-10-trig-min-80.log`), and rerun the free-running

@@ -3,14 +3,17 @@
 Error codes, timing, and per-body quirks: docs/hardware/gphoto2-cameras.md.
 """
 
+import dataclasses
 import io
 import logging
+import math
 import re
 import sys
 import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 import numpy as np
 import numpy.typing as npt
@@ -31,6 +34,7 @@ from educelab.devices.cameras._gphoto2 import (
     Widget,
     WidgetValue,
 )
+from educelab.devices.cameras._preview import HostCrop, host_crop, reduction
 from educelab.devices.cameras.base import (
     APERTURE,
     CANONICAL_UNITS,
@@ -38,6 +42,10 @@ from educelab.devices.cameras.base import (
     ISO,
     CameraFile,
     FileCamera,
+    PreviewFrame,
+    PreviewGeometry,
+    PreviewRegion,
+    seconds_until,
 )
 from educelab.devices.cameras.focus import FocusDrive, FocusLimit
 from educelab.devices.device import DeviceInfo, Disconnected
@@ -94,12 +102,53 @@ FOCUS_LIMIT_RECOVERY_S = 1.0
 # drive_to_limit() gives up after this many steps without reaching an end stop.
 FOCUS_LIMIT_MAX_STEPS = 1_000_000
 
-# Widgets that turn live view on, by camera family, and spellings of "off" for
-# continuous AF. From pgs-scan's spectral prototype
-# (docs/hardware/gphoto2-cameras.md#live-view).
+# Widgets that turn live view on, by camera family. From pgs-scan's spectral
+# prototype (docs/hardware/gphoto2-cameras.md#live-view).
 _VIEWFINDER_WIDGETS = ("viewfinder", "eosviewfinder", "d1a6")
-_CONTINUOUS_AF_WIDGETS = ("continuousaf", "continuous-af", "continuousautofocus")
-_OFF_SPELLINGS = frozenset({"off", "0", "disable", "disabled", "false", "no"})
+
+LIVE_VIEW_SETTLE_S = 0.4
+"""How long after a live-view size, zoom or centre write previews still show
+the old setting (0.2-0.4 s on the Z7 II)."""
+
+# Fractions pick up float error; don't let it choose a looser zoom.
+_ZOOM_SLACK = 1e-9
+# A smaller live-view size is preferred if it delivers this much of the best.
+_NEARLY_BEST = 0.8
+
+
+@dataclass(frozen=True)
+class _LiveView:
+    """How a body's live view zooms, for bodies where it was measured
+    (docs/hardware/gphoto2-cameras.md, Z7 II zoom geometry).
+
+    Captures and unzoomed live view cover the image area (FX, DX, 5:4, 1:1 or
+    16:9), whose size in sensor pixels is the largest ``imagesize`` choice.
+    ``liveviewzoomarea`` is the crop's width in sensor pixels, always at
+    ``zoom_aspect``, and ``changeafarea`` its centre as ``"<x>x<y>"`` pixels of
+    the image area. The camera keeps the crop inside the image area.
+
+    Attributes:
+        sizes: Frame width of each ``liveviewsize``; unzoomed frames fit a
+            4:3 box that wide.
+        zoom_aspect: Height over width of a zoomed crop.
+    """
+
+    sizes: Mapping[str, int]
+    zoom_aspect: float = 2 / 3
+
+    def unzoomed(self, size: str, area: tuple[int, int]) -> tuple[float, float]:
+        """An unzoomed frame's width and height at a ``liveviewsize``."""
+        box = self.sizes[size]
+        width = min(box, 0.75 * box * area[0] / area[1])
+        return width, width * area[1] / area[0]
+
+
+_LIVE_VIEW = {"Nikon Z7_2": _LiveView({"QVGA": 320, "VGA": 640, "XGA": 1024})}
+# Preview sets these, so they're reported read-only on the bodies above.
+_PREVIEW_WIDGETS = ("liveviewsize", "liveviewzoomarea")
+# What each preview start reads to plan the zoom.
+_ZOOM_SOURCES = (*_PREVIEW_WIDGETS, "imagesize")
+_WHOLE_SENSOR = (0.0, 0.0, 1.0, 1.0)
 
 _DOC = "docs/hardware/gphoto2-cameras.md"
 
@@ -167,9 +216,26 @@ class GPhoto2Camera(FileCamera):
         self._keep_alive_thread: threading.Thread | None = None
         self._focus: GPhoto2FocusDrive | None = None
         self._focus_checked = False
-        self._live_view_tried = False
-        # The widget that turned live view on, so close() can turn it off.
+        # The widget that turned live view on, so stopping can turn it off.
         self._live_view: str | None = None
+        self._preview_request: tuple[PreviewRegion, int | None, int | None] | None = (
+            None
+        )
+        self._crop: HostCrop | None = None
+        # The live-view image shape the crop was planned for.
+        self._planned_for: tuple[int, int] | None = None
+        # The part of the sensor live-view images show: (x, y, width, height).
+        self._view = _WHOLE_SENSOR
+        # Zoom levels on offer, widest last; empty where preview can't zoom.
+        self._zoom_levels: tuple[int, ...] = ()
+        self._size_choices: tuple[str, ...] = ()
+        # The image area captures cover, in sensor pixels.
+        self._image_area = (0, 0)
+        # The image size a capture would have now, where the body says.
+        self._capture_size: tuple[int, int] | None = None
+        # Live-view size and zoom as found, and as preview last set them.
+        self._found: dict[str, WidgetValue] = {}
+        self._set: dict[str, WidgetValue] = {}
 
     @property
     def info(self) -> DeviceInfo:
@@ -339,15 +405,12 @@ class GPhoto2Camera(FileCamera):
         if thread is not None and thread is not threading.current_thread():
             thread.join()
         session, self._session = self._session, None
-        live_view, self._live_view = self._live_view, None
-        self._live_view_tried = False
+        self._live_view = None
+        self._preview_request = self._crop = None
+        self._zoom_levels = ()
+        self._found, self._set = {}, {}
         if session is None:
             return
-        if live_view is not None:
-            try:
-                session.set_config({live_view: 0})
-            except GPhoto2Error as exc:
-                logger.warning("%r could not turn live view off: %s", self, exc)
         try:
             session.close()
         except GPhoto2Error as exc:
@@ -423,6 +486,8 @@ class GPhoto2Camera(FileCamera):
             if native is None:
                 return None
             setting = native
+            if widget.name in _PREVIEW_WIDGETS and self._model in _LIVE_VIEW:
+                setting = dataclasses.replace(setting, read_only=True)
             to_native = _toggle_value if widget.kind == "toggle" else _same
         self._writers[setting.name] = (widget.name, to_native)
         self._sources[setting.name] = (widget.name, canonical)
@@ -437,11 +502,182 @@ class GPhoto2Camera(FileCamera):
         except GPhoto2Error as exc:
             raise self._error(exc, f"setting {name} to {value!r}") from exc
 
-    def _preview_frame(self) -> npt.NDArray[np.uint8]:
+    def _start_preview(
+        self, region: PreviewRegion, max_size: int | None, min_size: int | None
+    ) -> PreviewGeometry:
         session = self._require_session()
-        if not self._live_view_tried:
-            self._live_view_tried = True
+        if self._preview_request is None:
             self._start_live_view(session)
+            if self._zoom_levels:
+                # The zoom centre is refused until live view is running.
+                self._grab_preview(session)
+        self._preview_request = (region, max_size, min_size)
+        self._view = self._zoom(session, region, max_size, min_size)
+        # The live-view size is only known from an image, so grab one.
+        return self._plan_crop(self._grab_preview(session))
+
+    def _stop_preview(self) -> None:
+        live_view, self._live_view = self._live_view, None
+        self._preview_request = self._crop = None
+        self._view = _WHOLE_SENSOR
+        session = self._require_session()
+        restore = {n: v for n, v in self._found.items() if self._set.get(n) != v}
+        self._zoom_levels = ()
+        self._found, self._set = {}, {}
+        # One at a time: a write of several reads the whole tree first.
+        for name, value in restore.items():
+            try:
+                session.set_config({name: value})
+            except GPhoto2Error as exc:
+                logger.warning("%r could not restore %s: %s", self, name, exc)
+        if live_view is None:
+            return
+        try:
+            session.set_config({live_view: 0})
+        except GPhoto2Error as exc:
+            raise self._error(exc, "turning live view off") from exc
+
+    def _zoom(
+        self,
+        session: Session,
+        region: PreviewRegion,
+        max_size: int | None,
+        min_size: int | None,
+    ) -> tuple[float, float, float, float]:
+        """Point live view at the tightest zoom that contains ``region``, at
+        the smallest size that still gives the pixels asked for, and return
+        the part of the sensor its images show."""
+        profile = _LIVE_VIEW.get(self._model or "")
+        if profile is None or not self._zoom_levels:
+            return _WHOLE_SENSOR
+        area_w, area_h = self._image_area
+        wide, tall = region.width * area_w, region.height * area_h
+        aspect = profile.zoom_aspect
+        # Only a level that holds the whole region: the preview must show
+        # what was asked for, even where a tighter zoom would be sharper.
+        level = next(
+            (
+                n
+                for n in self._zoom_levels
+                if wide <= n + _ZOOM_SLACK and tall <= n * aspect + _ZOOM_SLACK
+            ),
+            0,
+        )
+        # The part of the image area a zoomed frame shows, as fractions.
+        shown_w = min(level / area_w, 1.0) if level else 1.0
+        shown_h = min(level * aspect / area_h, 1.0) if level else 1.0
+
+        def longest(size: str) -> float:
+            """Pixels on the region's longest side at a live-view size."""
+            if level:
+                frame_w = float(profile.sizes[size])
+                frame_h = frame_w * aspect
+            else:
+                frame_w, frame_h = profile.unzoomed(size, self._image_area)
+            across = region.width / shown_w * frame_w
+            return max(across, region.height / shown_h * frame_h)
+
+        def delivered(size: str) -> float:
+            """Pixels left of that side once the host has reduced it."""
+            side = longest(size)
+            return side / reduction(math.ceil(side), max_size, min_size)
+
+        sizes = sorted(self._size_choices, key=profile.sizes.__getitem__)
+        best = max(map(delivered, sizes))
+        if min_size is not None:
+            # The least data that still gives the floor, where any size does.
+            enough = min(float(min_size), best)
+        else:
+            # Nearly the most the cap allows. The first size past the cap
+            # isn't it: the host would halve that one.
+            enough = _NEARLY_BEST * best
+        size = next(n for n in sizes if delivered(n) >= enough)
+        wanted: dict[str, WidgetValue] = {
+            "liveviewsize": size,
+            "liveviewzoomarea": str(level),
+        }
+        centre_x = (region.x + region.width / 2) * area_w
+        centre_y = (region.y + region.height / 2) * area_h
+        if level:
+            wanted["changeafarea"] = f"{round(centre_x)}x{round(centre_y)}"
+        changed = {n: v for n, v in wanted.items() if self._set.get(n) != v}
+        try:
+            # The centre last, and again with every zoom change: the camera
+            # forgets it, and puts a new zoom on the AF point.
+            for name in ("liveviewsize", "liveviewzoomarea"):
+                if name in changed:
+                    session.set_config({name: changed[name]})
+                    # Noted at once, so a later failure still restores it.
+                    self._set[name] = changed[name]
+            if level and changed:
+                session.set_config({"changeafarea": wanted["changeafarea"]})
+            if level and "liveviewzoomarea" in changed:
+                # The Z7 II misplaces a centre written while the zoom is still
+                # changing, in the smaller image areas; a second write lands.
+                session.set_config({"changeafarea": wanted["changeafarea"]})
+        except GPhoto2Error as exc:
+            raise self._error(exc, "zooming live view") from exc
+        self._set.update(wanted)
+        if not level:
+            self._set.pop("changeafarea", None)
+        if changed:
+            time.sleep(LIVE_VIEW_SETTLE_S)
+        if not level:
+            return _WHOLE_SENSOR
+        # The camera keeps the crop on the image area.
+        x = min(max(centre_x / area_w - shown_w / 2, 0.0), 1.0 - shown_w)
+        y = min(max(centre_y / area_h - shown_h / 2, 0.0), 1.0 - shown_h)
+        return x, y, shown_w, shown_h
+
+    def _preview_frame(self, not_before: datetime | None) -> PreviewFrame:
+        # Previews carry no time, so not_before goes by arrival: ask for the
+        # image only once not_before has passed.
+        time.sleep(seconds_until(not_before))
+        pixels = self._grab_preview(self._require_session())
+        arrived = datetime.now(UTC)
+        crop = self._crop
+        if crop is None or pixels.shape[:2] != self._planned_for:
+            # A setting changed the live-view size; the frame reports the new geometry.
+            self._plan_crop(pixels)
+            crop = self._crop
+        assert crop is not None
+        return PreviewFrame(
+            np.ascontiguousarray(crop.apply(pixels)), "RGB8", arrived, crop.geometry, 8
+        )
+
+    def _plan_crop(self, pixels: npt.NDArray[np.uint8]) -> PreviewGeometry:
+        """Plan the host crop for live-view images the size of ``pixels``,
+        which show the `_view` part of the sensor."""
+        assert self._preview_request is not None
+        region, max_size, min_size = self._preview_request
+        height, width = pixels.shape[:2]
+        size = (width, height)
+        view_x, view_y, view_w, view_h = self._view
+        # The region within the images, cropped, then put back on the sensor.
+        x = min(max((region.x - view_x) / view_w, 0.0), 1.0)
+        y = min(max((region.y - view_y) / view_h, 0.0), 1.0)
+        within = PreviewRegion(
+            x,
+            y,
+            min(region.width / view_w, 1.0 - x),
+            min(region.height / view_h, 1.0 - y),
+        )
+        crop = host_crop(within, max_size, sensor=size, frame=size, min_size=min_size)
+        shown = crop.geometry.region
+        on_sensor = PreviewRegion(
+            view_x + shown.x * view_w,
+            view_y + shown.y * view_h,
+            shown.width * view_w,
+            shown.height * view_h,
+        )
+        geometry = dataclasses.replace(
+            crop.geometry, region=on_sensor, capture_size=self._capture_size
+        )
+        self._crop = dataclasses.replace(crop, geometry=geometry)
+        self._planned_for = (height, width)
+        return geometry
+
+    def _grab_preview(self, session: Session) -> npt.NDArray[np.uint8]:
         try:
             data = session.capture_preview()
         except GPhoto2Error as exc:
@@ -454,33 +690,64 @@ class GPhoto2Camera(FileCamera):
             raise DeviceError(f"{self!r}: could not decode the preview: {exc}") from exc
 
     def _start_live_view(self, session: Session) -> None:
-        """Turn live view on and continuous AF off, in one round trip.
+        """Turn live view on with the viewfinder widget the camera has.
 
         Best effort: most bodies still return previews without this, so a
         failure is logged rather than raised.
         """
+        # Probed by name: the whole tree takes seconds on the Z7 II.
+        wanted: tuple[str, ...] = _VIEWFINDER_WIDGETS
+        if self._model in _LIVE_VIEW:
+            wanted += (*_ZOOM_SOURCES, "changeafarea")
+        self._capture_size = None
         try:
-            widgets = session.config()
+            widgets = session.find_widgets(wanted)
+            self._find_zoom(widgets)
         except GPhoto2Error as exc:
             logger.warning("%r could not read settings for live view: %s", self, exc)
             return
-        values: dict[str, WidgetValue] = {}
         viewfinder = next((n for n in _VIEWFINDER_WIDGETS if n in widgets), None)
-        if viewfinder is not None:
-            values[viewfinder] = 1
-        af = next((widgets[n] for n in _CONTINUOUS_AF_WIDGETS if n in widgets), None)
-        if af is not None:
-            off = _off_value(af)
-            if off is not None and af.value != off:
-                values[af.name] = off
-        if not values:
+        if viewfinder is None:
             return
         try:
-            session.set_config(values)
+            session.set_config({viewfinder: 1})
         except GPhoto2Error as exc:
             logger.warning("%r could not turn live view on: %s", self, exc)
             return
         self._live_view = viewfinder
+
+    def _find_zoom(self, widgets: Mapping[str, Widget]) -> None:
+        """Note the image area, zoom levels and sizes of a body whose zoom is
+        known, from the widgets found on it."""
+        profile = _LIVE_VIEW.get(self._model or "")
+        needed = (*_ZOOM_SOURCES, "changeafarea")
+        if profile is None or any(name not in widgets for name in needed):
+            return
+        areas = [
+            (int(m[1]), int(m[2]))
+            for choice in widgets["imagesize"].choices
+            if (m := re.fullmatch(r"(\d+)x(\d+)", choice))
+        ]
+        if not areas:
+            return
+        # The largest size on offer is the image area itself.
+        self._image_area = max(areas)
+        selected = re.fullmatch(r"(\d+)x(\d+)", str(widgets["imagesize"].value))
+        if selected:
+            self._capture_size = (int(selected[1]), int(selected[2]))
+        levels = (c for c in widgets["liveviewzoomarea"].choices if c.isdigit())
+        self._zoom_levels = tuple(sorted(n for n in map(int, levels) if n))
+        sizes = widgets["liveviewsize"].choices
+        self._size_choices = tuple(n for n in sizes if n in profile.sizes)
+        if not self._size_choices:
+            self._zoom_levels = ()
+            return
+        self._found = {
+            name: value
+            for name in _PREVIEW_WIDGETS
+            if (value := widgets[name].value) is not None
+        }
+        self._set = dict(self._found)
 
     def _capture_files(self) -> list[CameraFile]:
         session = self._require_session()
@@ -770,15 +1037,6 @@ def _native_setting(widget: Widget) -> Setting | None:
     if widget.kind == "date":
         return Setting(name, int(value), read_only=read_only)
     return Setting(name, str(value), read_only=read_only)
-
-
-def _off_value(widget: Widget) -> WidgetValue | None:
-    """The value that turns a toggle or choice widget off, if it has one."""
-    if widget.kind == "toggle":
-        return 0
-    return next(
-        (c for c in widget.choices if c.strip().lower() in _OFF_SPELLINGS), None
-    )
 
 
 def _toggle_value(value: SettingValue) -> WidgetValue:

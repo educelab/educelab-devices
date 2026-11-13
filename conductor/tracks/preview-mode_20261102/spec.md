@@ -19,12 +19,12 @@ As a lab developer building an acquisition app, I want to start a preview of a c
 
 ## Acceptance Criteria
 
-- [ ] `Camera` has `start_preview(region=None, max_size=1280) -> PreviewGeometry`, `stop_preview()`, and a `preview` property (`None` when not previewing). Calling `start_preview()` while previewing reconfigures. `stop_preview()` is a no-op when idle, and `close()` ends preview.
-- [ ] `preview_frame(not_before=None)` raises outside preview. During preview, `capture_frame()` and `capture_files()` raise.
-- [ ] The region is a box in sensor fractions (default: the full sensor). `max_size` caps the longest side (`None`: no reduction). `PreviewGeometry` reports the region (sensor fractions, after rounding) and the output `width`/`height` the camera actually applied.
-- [ ] GenICam drivers use hardware ROI and binning/decimation where discovery showed they work, and fall back to host crop and stride elsewhere. The canonical `width`/`height` settings keep reporting the capture size.
+- [ ] `Camera` has `start_preview(region=None, max_size=None) -> PreviewGeometry`, `stop_preview()`, and a `preview` property (`None` when not previewing). Calling `start_preview()` while previewing reconfigures. `stop_preview()` is a no-op when idle, and `close()` ends preview.
+- [ ] `preview_frame(not_before=None)` returns a `PreviewFrame` (pixels in the camera's current pixel format, timestamp, geometry) and raises outside preview. During preview, `capture_frame()` and `capture_files()` raise.
+- [ ] The region is a box in sensor fractions (default: the full sensor). `max_size` caps the longest side (`None`: no reduction), and `min_size` is a floor: the most reduction that keeps at least that many pixels. `PreviewGeometry` reports the region (sensor fractions, after rounding) and the output `width`/`height` the camera actually applied.
+- [ ] GenICam drivers use hardware ROI and decimation where discovery showed they work, and fall back to host crop and stride elsewhere. The canonical `width`/`height` settings keep reporting the capture size.
 - [ ] gphoto2 keeps live view on only between `start_preview()` and `stop_preview()`, maps the region and size to `liveviewzoomarea`/`liveviewsize` (plus the zoom center if discovery shows one can be set), reports those native settings read-only, and no longer touches continuous AF.
-- [ ] `not_before` waits for a later frame: by timestamp on GenICam, by arrival on gphoto2.
+- [ ] `not_before` waits for a later frame: by timestamp on GenICam, by arrival on gphoto2. A camera that can't time its frames refuses it.
 - [ ] Settings can be changed during preview and apply to preview frames. Preview respects the trigger mode.
 - [ ] The camera contract suite covers preview, and every driver and both simulated cameras pass it.
 - [ ] `docs/guide.md` documents the preview state and the snapshot pattern (stop, capture, start). Each camera's hardware doc records the discovery results and its preview mechanism. `el-devices` subcommands that preview use the new API.

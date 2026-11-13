@@ -27,9 +27,21 @@ from educelab.devices.cameras import (
     TRIGGER,
     WIDTH,
     GenICamCamera,
+    PreviewRegion,
 )
 from educelab.devices.cameras._genicam import RETRIES_BEFORE_REMEASURE
 from educelab.devices.errors import DeviceBusy, DeviceError, DeviceTimeout
+
+CENTER = PreviewRegion(0.25, 0.25, 0.5, 0.5)
+SMALL = PreviewRegion(0.45, 0.45, 0.1, 0.1)
+
+
+def correlation(a, b) -> float:
+    """How alike two images are, from -1 to 1, whatever their levels."""
+    a = np.asarray(a, dtype=np.float64) - np.mean(a)
+    b = np.asarray(b, dtype=np.float64) - np.mean(b)
+    return float((a * b).sum() / max(np.sqrt((a * a).sum() * (b * b).sum()), 1e-9))
+
 
 # Loose on purpose: these catch a broken offset or a wedged stream, not jitter.
 OFFSET_SPREAD_S = 0.005
@@ -92,6 +104,13 @@ class GenICamHardwareTests:
                 f"{camera!r} has no timestamp latch and its library reports no "
                 "arrival times, so its frames can't be timed (usb3-vision.md)"
             )
+
+    @staticmethod
+    def steady(camera: GenICamCamera) -> None:
+        """Turn auto exposure and gain off, so the level holds between frames."""
+        for name in ("ExposureAuto", "GainAuto"):
+            if name in camera.settings():
+                camera.set_setting(name, "Off")
 
     @staticmethod
     def fresh(camera: GenICamCamera) -> datetime | None:
@@ -364,10 +383,156 @@ class GenICamHardwareTests:
         with pytest.raises(DeviceError, match="not_before"):
             camera.capture_frame(not_before=datetime.now(UTC), timeout=5.0)
 
-    def test_preview_is_small_and_eight_bit(self, camera):
-        preview = camera.preview_frame()
-        assert preview.dtype == np.uint8
-        assert max(preview.shape[:2]) <= 1280
+    @pytest.fixture
+    def preview(self, restore):
+        """The camera with a steady exposure, so frames compare, and preview
+        stopped again after the test."""
+        self.steady(restore)
+        yield restore
+        restore.stop_preview()
+
+    def test_a_whole_sensor_preview_is_the_capture_frame(self, preview):
+        capture = preview.capture_frame()
+        started = time.perf_counter()
+        geometry = preview.start_preview()
+        print(f"\nfull preview started in {time.perf_counter() - started:.3f} s")
+        frame = preview.preview_frame()
+        assert geometry.region.is_full
+        assert frame.pixel_format == capture.pixel_format
+        assert frame.pixels.shape == capture.pixels.shape
+        assert frame.geometry == geometry
+
+    def test_a_region_preview_shows_that_part_of_the_sensor(self, preview):
+        whole = preview.capture_frame().pixels.astype(np.float64)
+        started = time.perf_counter()
+        geometry = preview.start_preview(CENTER)
+        elapsed = time.perf_counter() - started
+        frame = preview.preview_frame()
+        region = geometry.region
+        print(f"\nregion preview started in {elapsed:.3f} s: {geometry}")
+        assert CENTER.contains(region)
+        assert frame.pixels.shape[:2] == (geometry.height, geometry.width)
+        rows, cols = whole.shape[:2]
+        y, x = round(region.y * rows), round(region.x * cols)
+        expected = whole[y : y + geometry.height, x : x + geometry.width]
+        if expected.std() < 2:
+            pytest.skip("the scene is too flat to tell where a region is")
+        match = correlation(frame.pixels, expected)
+        shifted = correlation(frame.pixels, np.roll(expected, 32, axis=1))
+        print(f"matches the capture's centre {match:.3f}; shifted 32 px {shifted:.3f}")
+        assert match > 0.8 and match > shifted
+
+    def test_moving_a_region_keeps_its_size_and_shows_the_new_place(self, preview):
+        first = preview.start_preview((0.2, 0.2, 0.25, 0.25))
+        preview.preview_frame()
+        started = time.perf_counter()
+        moved = preview.start_preview((0.5, 0.45, 0.25, 0.25))
+        elapsed = time.perf_counter() - started
+        frame = preview.preview_frame()
+        waited = time.perf_counter() - started
+        print(f"\nmoved in {elapsed:.3f} s; first frame {waited:.3f} s after asking")
+        assert frame.geometry == moved != first
+        assert frame.pixels.shape[:2] == (moved.height, moved.width)
+        preview.stop_preview()
+        whole_after = preview.capture_frame().pixels.astype(np.float64)
+        rows, cols = whole_after.shape[:2]
+        y, x = round(moved.region.y * rows), round(moved.region.x * cols)
+        expected = whole_after[y : y + moved.height, x : x + moved.width]
+        if expected.std() < 2:
+            pytest.skip("the scene is too flat to tell where a region is")
+        # The first frame after the move already shows the new place.
+        assert correlation(frame.pixels, expected) > 0.8
+
+    def test_max_size_reduces_without_changing_the_level(self, preview):
+        whole = preview.capture_frame().pixels
+        started = time.perf_counter()
+        geometry = preview.start_preview(max_size=600)
+        elapsed = time.perf_counter() - started
+        frame = preview.preview_frame()
+        ratio = frame.pixels.mean() / max(whole.mean(), 1e-9)
+        rate = preview.settings().get("resulting_frame_rate")
+        print(
+            f"\nmax_size=600 in {elapsed:.3f} s: {geometry.width}x{geometry.height}, "
+            f"level {ratio:.3f}x the capture's, "
+            f"{rate.value if rate else 'unknown'} frames/s"
+        )
+        assert max(geometry.width, geometry.height) <= 600
+        assert frame.pixels.shape[:2] == (geometry.height, geometry.width)
+        # Decimation keeps the level; binning would be about 4x.
+        assert 0.8 < ratio < 1.25
+
+    def test_preview_leaves_the_exposure_alone(self, preview):
+        # A smaller image runs faster, and on the CM3 the frame period caps
+        # the exposure (usb3-vision.md, Preview).
+        exposure = preview.setting(EXPOSURE_TIME).value
+        for request in ((SMALL, None), (None, 300), (CENTER, 300)):
+            geometry = preview.start_preview(*request)
+            preview.preview_frame()
+            now = preview.setting(EXPOSURE_TIME).value
+            print(
+                f"\n{request}: {geometry.width}x{geometry.height}, {now * 1e3:.3f} ms"
+            )
+            assert now == pytest.approx(exposure, rel=0.01)
+        preview.stop_preview()
+        assert preview.setting(EXPOSURE_TIME).value == pytest.approx(exposure, rel=0.01)
+
+    def test_stopping_preview_restores_captures_and_the_link(self, preview):
+        before = preview.capture_frame()
+        settings = preview.settings()
+        preview.start_preview((0.4, 0.4, 0.2, 0.2), max_size=100)
+        preview.preview_frame()
+        started = time.perf_counter()
+        preview.stop_preview()
+        print(f"\nstopped in {time.perf_counter() - started:.3f} s")
+        after = preview.capture_frame()
+        assert after.pixels.shape == before.pixels.shape
+        now = preview.settings()
+        for name in (THROUGHPUT_LIMIT, "resulting_frame_rate", WIDTH, HEIGHT):
+            if name in settings:
+                print(f"{name}: {settings[name].value} before, {now[name].value} after")
+        if settings.get(THROUGHPUT_LIMIT) and settings[THROUGHPUT_LIMIT].value:
+            limit = settings[THROUGHPUT_LIMIT].value
+            assert now[THROUGHPUT_LIMIT].value == pytest.approx(limit, rel=0.01)
+        if "resulting_frame_rate" in settings:
+            rate = settings["resulting_frame_rate"].value
+            assert now["resulting_frame_rate"].value == pytest.approx(rate, rel=0.1)
+
+    def test_preview_frames_honor_not_before(self, preview):
+        self.require_timing(preview)
+        preview.start_preview((0.4, 0.4, 0.2, 0.2))
+        ready = datetime.now(UTC)
+        frame = preview.preview_frame(not_before=ready)
+        print(f"\nframe {(frame.timestamp - ready).total_seconds() * 1e3:.1f} ms on")
+        assert frame.timestamp >= ready
+
+    def test_eight_bit_frames_are_the_top_bits_of_deeper_ones(self, restore):
+        formats = restore.setting(PIXEL_FORMAT).choices or ()
+        deeper = [f for f in formats if f in ("Mono16", "Mono10g40IDS")]
+        if "Mono8" not in formats or not deeper:
+            pytest.skip(f"needs Mono8 and a deeper mono format, not {formats}")
+        self.steady(restore)
+        restore.set_setting(PIXEL_FORMAT, "Mono8")
+        eight = restore.capture_frame(not_before=self.fresh(restore)).pixels
+        again = restore.capture_frame(not_before=self.fresh(restore)).pixels
+        noise = np.abs(again.astype(np.int64) - eight).mean()
+        print(f"\nMono8 frames differ by {noise:.2f} counts from one to the next")
+        for name in deeper:
+            restore.set_setting(PIXEL_FORMAT, name)
+            frame = restore.capture_frame(not_before=self.fresh(restore))
+            deep = frame.pixels.astype(np.int64)
+            top = int(deep.max()).bit_length()
+            # Left-aligned 16-bit data fills the top; right-aligned stops short.
+            depth = 16 if top > 12 else frame.metadata["bit_depth"]
+            as_eight = deep >> (depth - 8)
+            diff = np.abs(as_eight - eight.astype(np.int64))
+            print(
+                f"\n{name}: highest bit used {top}, read as {depth}-bit; Mono8 "
+                f"differs by {diff.mean():.2f} counts on average, {diff.max()} at "
+                f"most; clipped {np.mean(eight == 255):.4f} in Mono8, "
+                f"{np.mean(as_eight >= 255):.4f} in {name}"
+            )
+            # A still, lit scene: only noise between the two frames.
+            assert diff.mean() < max(3, 2 * noise)
 
     def test_a_second_open_of_the_same_camera_is_busy(self, camera, serial):
         second = self.make(serial)

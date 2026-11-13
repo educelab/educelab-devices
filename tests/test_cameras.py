@@ -3,7 +3,6 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 
 import numpy as np
-import numpy.typing as npt
 import pytest
 
 from educelab.devices import DeviceInfo
@@ -13,10 +12,13 @@ from educelab.devices.cameras import (
     FileCamera,
     Frame,
     FrameCamera,
+    PreviewFrame,
+    PreviewGeometry,
+    PreviewRegion,
     Setting,
     SettingValue,
 )
-from educelab.devices.errors import NotConnected
+from educelab.devices.errors import DeviceError, NotConnected, PreviewError
 
 
 class StubCamera(FrameCamera):
@@ -24,6 +26,9 @@ class StubCamera(FrameCamera):
         super().__init__()
         self.values: dict[str, SettingValue] = {EXPOSURE_TIME: 0.01, "mode": "a"}
         self.writes: list[tuple[str, SettingValue]] = []
+        self.preview_calls: list[tuple] = []
+        self.fail_start = False
+        self.fail_stop = False
 
     @property
     def info(self) -> DeviceInfo:
@@ -48,8 +53,25 @@ class StubCamera(FrameCamera):
         self.writes.append((name, value))
         self.values[name] = value
 
-    def _preview_frame(self) -> npt.NDArray[np.uint8]:
-        return np.zeros((4, 4), dtype=np.uint8)
+    def _start_preview(
+        self, region: PreviewRegion, max_size: int | None, min_size: int | None
+    ) -> PreviewGeometry:
+        self.preview_calls.append(("start", region, max_size, min_size))
+        if self.fail_start:
+            raise DeviceError("start failed")
+        return PreviewGeometry(region, 4, 4)
+
+    def _stop_preview(self) -> None:
+        self.preview_calls.append(("stop",))
+        if self.fail_stop:
+            raise DeviceError("stop failed")
+
+    def _preview_frame(self, not_before: datetime | None) -> PreviewFrame:
+        self.preview_calls.append(("frame", not_before))
+        assert self.preview is not None
+        return PreviewFrame(
+            np.zeros((4, 4), np.uint8), "Mono8", datetime.now(UTC), self.preview
+        )
 
     def _capture_frame(self, not_before: datetime | None, timeout: float) -> Frame:
         self.capture_args = (not_before, timeout)
@@ -333,3 +355,119 @@ def test_setting_without_a_value_names_the_type_it_takes():
 def test_nearest_needs_numeric_choices_when_there_is_no_value():
     with pytest.raises(TypeError):
         Setting("mode", None, choices=("a", "b")).nearest(1.0)
+
+
+def test_start_preview_passes_the_validated_request(camera):
+    camera.start_preview((0.5, 0.5, 0.5, 0.5), max_size=None)
+    camera.start_preview(max_size=300, min_size=200)
+    assert camera.preview_calls == [
+        ("start", PreviewRegion(0.5, 0.5, 0.5, 0.5), None, None),
+        ("start", PreviewRegion(), 300, 200),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "error"),
+    [
+        ({"min_size": 0}, ValueError),
+        ({"min_size": 1.5}, TypeError),
+        ({"min_size": True}, TypeError),
+        ({"min_size": 400, "max_size": 300}, ValueError),
+    ],
+)
+def test_an_invalid_min_size_leaves_preview_as_it_was(camera, kwargs, error):
+    geometry = camera.start_preview()
+    with pytest.raises(error, match="min_size"):
+        camera.start_preview(**kwargs)
+    assert camera.preview == geometry
+    assert len(camera.preview_calls) == 1
+
+
+def test_a_preview_frame_without_a_depth_takes_it_from_its_pixels():
+    geometry = PreviewGeometry(PreviewRegion(), 2, 2)
+    stamp = datetime.now(UTC)
+    deep = PreviewFrame(np.zeros((2, 2), np.uint16), "Mono16", stamp, geometry)
+    assert (deep.bit_depth, deep.full_scale) == (16, 65535)
+    shallow = PreviewFrame(np.zeros((2, 2), np.uint8), "Mono8", stamp, geometry)
+    assert (shallow.bit_depth, shallow.full_scale) == (8, 255)
+    given = PreviewFrame(
+        np.zeros((2, 2), np.uint16), "Mono16", stamp, geometry, 16, 65520
+    )
+    assert given.full_scale == 65520
+
+
+def test_preview_frame_passes_not_before_through(camera):
+    camera.start_preview()
+    ready = datetime.now(UTC)
+    camera.preview_frame(not_before=ready)
+    assert camera.preview_calls[-1] == ("frame", ready)
+
+
+def test_failed_start_ends_preview(camera):
+    camera.start_preview()
+    camera.fail_start = True
+    with pytest.raises(DeviceError, match="start failed"):
+        camera.start_preview(max_size=10)
+    assert camera.preview is None
+    assert camera.preview_calls[-1] == ("stop",)
+
+
+def test_failed_stop_still_ends_preview_and_raises(camera):
+    camera.start_preview()
+    camera.fail_stop = True
+    with pytest.raises(DeviceError, match="stop failed"):
+        camera.stop_preview()
+    assert camera.preview is None
+
+
+def test_close_stops_preview_before_closing(caplog):
+    camera = StubCamera()
+    camera.open()
+    camera.start_preview()
+    camera.fail_stop = True
+    camera.close()
+    assert not camera.is_open
+    assert camera.preview is None
+    assert camera.preview_calls[-1] == ("stop",)
+    assert "stopping preview failed" in caplog.text
+
+
+def test_close_without_preview_does_not_stop_it():
+    camera = StubCamera()
+    with camera:
+        pass
+    assert camera.preview_calls == []
+
+
+def test_preview_needs_open_camera():
+    camera = StubCamera()
+    assert camera.preview is None
+    with pytest.raises(NotConnected):
+        camera.start_preview()
+    with pytest.raises(NotConnected):
+        camera.preview_frame()
+
+
+def test_capture_during_preview_raises_without_capturing(camera):
+    camera.start_preview()
+    with pytest.raises(PreviewError, match="stop_preview"):
+        camera.capture_frame()
+    assert not hasattr(camera, "capture_args")
+
+
+def test_a_capture_after_a_failed_stop_tries_the_stop_again(camera):
+    camera.start_preview()
+    camera.fail_stop = True
+    with pytest.raises(DeviceError):
+        camera.stop_preview()
+    assert camera.preview is None
+    # Still failing: the capture raises rather than capture with preview's state.
+    with pytest.raises(DeviceError):
+        camera.capture_frame()
+    camera.fail_stop = False
+    camera.capture_frame()
+    assert camera.preview_calls[-2:] == [("stop",), ("stop",)]
+    # Once stopped, captures don't stop again.
+    camera.capture_frame()
+    assert camera.preview_calls[-1] == ("stop",)
+    assert camera.preview_calls.count(("stop",)) == 3

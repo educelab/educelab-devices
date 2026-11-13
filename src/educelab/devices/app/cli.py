@@ -21,6 +21,7 @@ SUBCOMMANDS = (
     "genicam",
     "hub",
     "misha",
+    "preview",
     "simulate",
     "spinnaker",
     "xcarve",

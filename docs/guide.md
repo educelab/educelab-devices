@@ -209,7 +209,7 @@ code.
 
 | Role | Methods |
 |---|---|
-| `Camera` | `settings()`, `setting(name)`, `set_setting(name, value)`, `preview_frame()` |
+| `Camera` | `settings()`, `setting(name)`, `set_setting(name, value)`, `start_preview(region=None, max_size=None)`, `stop_preview()`, `preview_frame(not_before=None) -> PreviewFrame` |
 | `FrameCamera` | adds `capture_frame(not_before=None, timeout=None) -> Frame`; `not_before` (an aware `datetime`) rejects frames with an earlier `timestamp`, for free-running cameras. Which moment a camera timestamps varies; its hardware doc says |
 | `FileCamera` | adds `capture_files() -> list[CameraFile]`; save with `CameraFile.save(dir, stem)`, which refuses to overwrite unless asked |
 | `FocusDrive` | `step(n)` (positive = toward far), `drive_to_limit("near" \| "far")`, `focus_steps`, `last_limit` |
@@ -232,13 +232,91 @@ hardware doc maps the name to the native node and gives the conversion.
 
 Numeric arguments can be Python numbers or numpy scalars (e.g. values from `np.linspace`).
 
-Frames with more than 8 bits per value come as `uint16`, with the value in the low bits:
-a 10-bit pixel runs from 0 to 1023. Cameras that know the depth say so in
-`frame.metadata["bit_depth"]`.
+Frames with more than 8 bits per value come as `uint16`. `frame.metadata["bit_depth"]`
+is the format's depth, and `frame.metadata["full_scale"]` the value a saturated pixel
+reads. They differ where the camera has fewer bits than the format: a 10-bit format
+runs from 0 to 1023, but the CM3's `Mono16` holds 12 bits at the top and saturates at
+65520.
 
 On Windows before Python 3.13, `datetime.now()` and `time.time()` tick every 15.6 ms,
 so a `not_before` taken from them can be up to 15.6 ms early, letting through a frame
 exposed that much before the request. Python 3.13 and later don't have this problem.
+
+### Preview
+
+Preview is a state every camera has, for framing a shot and judging focus
+([ADR 0007](adr/0007-preview-is-an-explicit-camera-state.md)). `start_preview()` enters
+it, `stop_preview()` and `close()` leave it, and `camera.preview` is the current
+`PreviewGeometry`, or `None`.
+
+```python
+camera.start_preview()  # the whole sensor, every pixel
+frame = camera.preview_frame()  # blocks for the next image
+show(frame.pixels, frame.pixel_format)  # scale for display yourself
+camera.stop_preview()
+```
+
+- **Images are not converted.** `PreviewFrame.pixels` is at the camera's resolution
+  and in its current pixel format, so a Mono16 camera previews in 16 bits. Scaling for
+  a screen, zoom, pan, histograms and focus scores are the caller's.
+  `frame.bit_depth` is the format's depth, and `frame.full_scale` the value a
+  saturated pixel reads, as in a capture's metadata.
+- **Zoom and pan on the host when you can.** A full-resolution preview of the whole
+  sensor never touches the camera's geometry, so cropping it yourself is instant.
+- **Ask for less to move less data.** `start_preview(region, max_size, min_size=...)`
+  takes a `PreviewRegion` (or an `(x, y, width, height)` tuple) in fractions of the
+  sensor, a cap on the longest side in pixels, and a floor. With `min_size` the camera
+  reduces as far as it can while keeping at least that many pixels, so pass a view's
+  size to get the nearest step above it; `max_size` alone gives the nearest step below
+  its cap, which can be half. Use them for a viewfinder, thumbnails of several cameras
+  on one link, or full-resolution pixels from a camera that only gives them zoomed
+  (the Z7 II).
+- **Each frame says what it shows.** `frame.geometry` is the region and size of that
+  image, and `frame.timestamp` when it was taken. The region a camera applies lies
+  within the one asked for, rounded to what it can deliver.
+- **Each frame says how it compares with a capture.** `geometry.scale` is preview
+  pixels per capture pixel: 1.0 shows every pixel a capture would have, 0.25 one in
+  four each way, and above 1 the camera has enlarged it. `geometry.capture_size` is
+  the capture's size in pixels that it's worked out from; on a body with selectable
+  image sizes, the one selected. Both are `None` on a camera that doesn't say how
+  large its captures are.
+- **Changing a preview** is another `start_preview()` call. What it costs depends on
+  the camera:
+
+  | Change | GenICam cameras | Z7 II |
+  |---|---|---|
+  | Start | Immediate for the whole sensor | About 1 s |
+  | Move a region of the same size | Immediate (a restart of 0.1–0.4 s on the IDS through IDS peak's GenTL producer) | About 0.5 s |
+  | Change the region's size or `max_size` | Restart, 0.1–0.4 s | About 0.5 s, up to 0.8 s |
+  | Stop | Restart if a region or `max_size` was used | 0.6 s |
+
+- **Preview leaves the exposure alone.** A camera whose frame rate caps the exposure
+  (the CM3) would speed up for a smaller image and shorten a long exposure, so the
+  driver holds its frame rate at the whole image's for the length of the preview.
+  With auto exposure on, the exposure is the camera's.
+- **To build a preview into an application,** see [Building a live
+  preview](preview.md): threading, when to ask the camera for a new region, display,
+  capturing, and what each camera is like.
+- **To look at a preview,** `el-devices preview <backend>` shows one in a window,
+  with scroll to zoom, drag to move and `c` to capture. It's a development tool
+  that needs OpenCV (`pip install "educelab-devices[viewer]"`); the subcommand
+  isn't listed without it.
+- **Captures refuse during preview**, with `PreviewError`. To capture, stop, capture
+  and start again, and show the captured image meanwhile:
+
+  ```python
+  camera.stop_preview()
+  frame = camera.capture_frame()
+  camera.start_preview(region, max_size)
+  ```
+
+- **Settings can change during preview** and apply to the next images. `width` and
+  `height` keep describing captures.
+- **`preview_frame(not_before=...)`** skips images from before a moment, such as the
+  end of a focus step. A camera that can't time its frames raises `DeviceError`
+  instead, as it does for `capture_frame()`.
+- **On a gphoto2 body** the camera's own screens go blank while live view runs, and on
+  the Z7 II they stay blank until `close()`, not `stop_preview()`.
 
 ### GenICam cameras
 
@@ -323,7 +401,8 @@ A frame's `metadata` holds:
 | Key | Meaning |
 |---|---|
 | `exposure_time`, `gain` | The settings when the frame was taken, in seconds and dB; `None` if the camera has no such node |
-| `bit_depth` | Bits per pixel value |
+| `bit_depth` | Bits per pixel value in the pixel format |
+| `full_scale` | The value a saturated pixel reads: `2**bit_depth - 1`, or less where the camera has fewer bits (65520 for the CM3's `Mono16`) |
 | `device_timestamp_ns` | The camera's own timestamp counter, which marks the end of exposure; `frame.timestamp` is the start, in host time |
 | `frame_id` | The camera's frame counter |
 | `timestamp_source` | How `frame.timestamp` was found: `"latch"` (the camera's timestamp latch), `"arrival"` (when frames reach the host, about a millisecond less exact), `"trigger"` (the software trigger that exposed it), or `None` |
@@ -420,6 +499,11 @@ under their GenICam names, starting at `Continuous`. While one is on, `exposure_
 As on real cameras, exposure is adjusted first, so with both on, gain stays at its minimum;
 turn `ExposureAuto` off to see gain move. `SimulatedCamera(sensor_size=(w, h))` reports a
 sensor larger than its frames, like a camera that crops (the IDS U3-36P0XCP does).
+Both simulated cameras take `pattern="chart"`, a test chart with detail down to single
+pixels for checking previews by, and `focus=SimulatedFocusDrive(sharp_at=...)`, which
+blurs the image by the lens's distance from sharp. `host_crop` previews a camera of
+your own by cropping its frames, as the simulated ones do; see
+[Building a live preview](preview.md#11-developing-off-the-rig).
 
 `el-devices simulate` runs each one through a few operations, which is a quick way to
 check an install.

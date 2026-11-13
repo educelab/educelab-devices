@@ -97,6 +97,89 @@ Five CM3-U3-50S5M at 20 ms exposure through `AravisCamera` (async) on the lab Ma
 
 Spinnaker agrees: on the same rig, an 80 MB/s cap removed the missing trailers there too, and its all-camera Mono16 capture median was 249 ms ([spinnaker.md](spinnaker.md), USB topology). Uncapped, five cameras through Spinnaker took 286 ms a round.
 
+## Geometry: ROI, binning, decimation
+
+Discovery for camera preview (`conductor/tracks/preview-mode_20261102/genicam_geometry.py`), through Aravis 0.8.36 on the lab Mac (macOS 27, Python 3.12), 2026-11-10: first with lens caps on, then lit, at fixed exposure and gain (IDS 15 ms, CM3-U3-50S5M 20305114 at 8 ms). The same CM3 was also run through Spinnaker 4.4.0.246 and GenTL (FLIR's producer, genicam 1.6.0). The IDS was run through GenTL (IDS peak's `ids_u3vgentlk.cti`) on the Windows rig, Python 3.12.10, in a dim scene (mean level 3). Preview uses these (see Preview below). The driver's use of them has only run on fakes so far.
+
+- **Size changes need an acquisition restart on every backend.** Spinnaker and GenTL lock `Width`, `Height`, `BinningVertical` and `DecimationVertical` while the CM3 streams (`AccessException`: not writable) and write them with acquisition stopped: the stop/start took 0.12–0.14 s and the first frame came 16–164 ms later, with no incomplete frames. Through Aravis, both cameras accept `Width`, `Height`, `Binning*` and `Decimation*` writes while streaming, but Aravis then completes no frame at the new size: its buffers are sized for the old payload, and the frames come back `INCOMPLETE`. Stopping and starting acquisition (`_acquisition_paused`) fixes it. The stop/start took 0.09–0.16 s on the CM3 and 0.11–0.42 s on the IDS, and the first frame came 13–160 ms (CM3) or 70–240 ms (IDS) after it. [V]
+- **IDS's producer locks everything while streaming, offsets included.** Through GenTL on the IDS, `Width`, `Height`, `OffsetX`, `OffsetY`, binning, decimation, `PixelFormat` and `DeviceLinkThroughputLimit` all read as not writable during acquisition, and wrote fine paused: stop/start 0.14–0.36 s, first frame 46–141 ms later. So on that combination even moving a preview needs a restart. The same producer reports no frame arrival times, so the camera opens without a timestamp offset and can't honor `not_before` ("can't latch its timestamp or time arrivals"). [V]
+- **Offsets move while streaming** everywhere else: through all three backends on the CM3 and through Aravis on the IDS. On both cameras, `OffsetX`/`OffsetY` writes took effect with no restart: the next frame came one frame period later (11 ms on the CM3 at 70 frames/s, 160 ms on the IDS at 6.4), and the image shifted by exactly the 32 px written (phase correlation). [V]
+- **Binning sums; decimation keeps the level.** 2 × 2 binning raised the mean level 3.99× on the IDS and 3.90× on the CM3 (4 × 4: 6.1×, saturated). The IDS's mode node says `Sum` and can't be changed; the CM3 has no mode node. Spinnaker and GenTL agree on the CM3 (2.9× at 2 × 2, with highlights clipped), and GenTL on the IDS (4.4× in a dim scene). Decimation kept it within 3% (0.97–1.00× on every backend). So a binned preview is 4× brighter than the capture unless the driver divides it back down, and an 8-bit binned frame saturates where the capture doesn't. Decimation needs no correction. [V]
+- **Frame rate.** On the CM3 the rate follows the size: half the ROI or 2 × 2 binning or decimation doubled it (35.7 to 70 frames/s). The IDS's `AcquisitionFrameRate` maximum rose (6.4 to 12.5 for half the ROI, 24.8 for 2 × 2 binning, 22.5 for decimation), but the rate itself stayed at 6.4 until written. [V]
+- **The CM3's throughput limit shrinks with the payload and doesn't grow back.** Each smaller geometry lowered `DeviceLinkThroughputLimit` and its maximum (half ROI 88.32 MB/s, 4 × 4 binning 7.36). Back at full size the maximum stayed lower (120.576 instead of 180.864), capping full frames at 23.3 frames/s instead of 35.7. The camera keeps it into later sessions, as it keeps any limit ([spinnaker.md](spinnaker.md)). A pixel format round trip (Mono16 then Mono8) reset the maximum and the limit to 180.864. [V]
+- **Writing the limit above the shrunken maximum breaks the stream.** The camera accepted 180.864 MB/s over a 120.576 maximum, and then sent payloads that didn't match `Width` × `Height`. Aravis rejected every frame (`size-mismatch`), and reopening didn't help. Writing the limit at its maximum, or the pixel format round trip, fixed it. [V]
+
+| | CM3-U3-50S5M | IDS U3-36P0XCP |
+|---|---|---|
+| `Width` / `Height` step | 8 / 2 | 12 / 2 |
+| `OffsetX` / `OffsetY` step | 2 / 2 | 8 / 2 |
+| Binning | `BinningVertical` 1, 2 or 4 (3 refused); `BinningHorizontal` read-only, follows it. No selector or mode node. Sums | `BinningHorizontal`/`Vertical` 1–2, `BinningSelector` `Sensor` only, mode `Sum` only (writing it fails, even paused). Sums |
+| Decimation | `DecimationVertical` 1–2; `DecimationHorizontal` read-only, follows it. Keeps the level | `DecimationHorizontal`/`Vertical` 1–2, `DecimationSelector` `Sensor` only. Keeps the level |
+
+## Preview
+
+How `start_preview(region, max_size)` maps onto a camera, on every backend:
+
+- **Nothing asked for, nothing written.** The whole sensor at full resolution is the
+  capture geometry, so starting and stopping that preview doesn't touch the camera.
+- **Region:** `OffsetX`, `OffsetY`, `Width` and `Height`, as the smallest ROI on the
+  camera's increments that contains it; the host crops the rest. The ROI's size
+  depends only on the region's size, so moving a region writes only the offsets.
+- **`max_size`:** `DecimationVertical` (and `DecimationHorizontal` where it's
+  writable), at the largest factor that still leaves `max_size` pixels, then every
+  n-th pixel on the host. Never binning, which sums and would brighten the preview.
+- **Restarts:** size and decimation are written with acquisition stopped. Offsets are
+  written live where the camera allows it, and stopped where it doesn't (the IDS
+  through IDS peak's GenTL producer).
+- **After a change,** frames stamped before it are dropped, so a frame's geometry is
+  always the one it was taken with. A camera that can't time frames drops the frames
+  already waiting.
+- **After a live move,** frames from the next frame period are dropped too. The IDS
+  was reading a frame out when the offsets changed, and sent it torn: it matched the
+  new place 0.61 and the old place not at all, where every later frame matched 0.999.
+  With the extra frame period dropped, the first frame matched 0.999 in three of
+  three moves. A dim scene had hidden this the day before. **verified** (IDS through
+  Aravis, 2026-11-12). A camera that can't time frames waits one frame period before
+  dropping what is waiting. A move by restart needs neither.
+- **Stop and close** put the capture geometry back, then the throughput limit: never
+  above its maximum, and after a pixel format round trip if the maximum has shrunk.
+- **Open** puts a leftover ROI or decimation back on the whole image, since a camera
+  keeps them until it's power-cycled.
+- **Without the nodes** (`Width`, `Height` and the offsets writable before acquisition
+  starts), the camera sends whole frames and the host crops and strides them.
+- **The exposure is never shortened.** On the CM3 the frame rate follows the image
+  size (`AcquisitionFrameRateAuto` `Continuous`), and the longest exposure is one
+  frame period: 27.9 ms for the whole image, 14.2 ms for half its height or for
+  decimation by 2, 3.2 ms for a tenth. A smaller image cut a longer exposure to that
+  (10 ms became 3.2 ms for a 0.1 region), and putting the whole image back left it
+  cut. So before the image shrinks, the driver holds the frame rate where it is:
+  - It turns `AcquisitionFrameRateAuto` `Off` and writes the rate it read to
+    `AcquisitionFrameRate`. `Off` alone brings back the last rate set by hand.
+  - The preview then runs at the whole image's rate (35.7 frames/s), and
+    `exposure_time` keeps the range it has for captures, so it can still be set
+    during the preview.
+  - Stop and close turn the automatic mode back on. A rate already set by hand is
+    left alone. A session that crashes mid-preview leaves the rate fixed, at the
+    whole image's value, until the mode is set again or the camera is power-cycled.
+  - The rate could be raised to what the exposure allows (49 frames/s held a 20 ms
+    exposure), but the exposure's limit would shrink with it; the driver doesn't.
+  - With the rate fixed after the image had shrunk, the exposure could be written
+    back; the driver fixes it first, so the exposure never moves.
+
+  **verified** (CM3 `20305122` through Spinnaker, Aravis and FLIR's GenTL producer,
+  2026-11-11).
+- **Without those nodes,** the driver re-reads the exposure after a size change. If
+  the camera no longer allows it, the driver puts the whole image back and has the
+  host crop and stride whole frames. It remembers the longest exposure of each size,
+  so the next such preview doesn't restart acquisition to find out. Unit-tested
+  only: no camera here needs it. The IDS kept its exposure through every preview
+  (**verified**, through Aravis).
+- **With auto exposure on,** the exposure is the camera's, and the driver leaves it.
+
+`el-devices genicam --preview [FRAMES] --region X,Y,W,H --max-size PIXELS` (and the
+same on `el-devices spinnaker`) previews each camera after its captures, and prints
+the geometry applied, the start and stop times and the frame rate.
+
 ## Hazards
 
 - **Aravis sync USB mode** is not safe on any OS; the driver uses async everywhere.
@@ -104,6 +187,7 @@ Spinnaker agrees: on the same rig, an 80 MB/s cap removed the missing trailers t
   - On a shared link it loses cameras for good. When a camera sends a 32-byte packet where its trailer belongs that doesn't parse as one, the sync loop (`arv_uv_stream_thread_sync`) files it as image data and asks for a 48-byte trailer. The next frame's 52-byte leader overflows that read (`LIBUSB_ERROR_OVERFLOW`), the stream endpoint halts, and every later read fails with `LIBUSB_ERROR_PIPE`. The loop never clears the halt, so the camera completes no frame and returns no buffer, not even an incomplete one, until its stream is recreated. Async mode drops that one frame ("Unexpected packet type (was expecting trailer packet)") and goes on. See [2026-10-29](#2026-10-29-macos-aravis-five-cameras-at-mono16). [V]
 - **Aravis async USB mode on macOS, before the drain.** Closing the IDS camera once hung forever in `arv_uv_stream_finalize`, and a later session got only `missing-packets` frames until a power cycle. That was before the driver waited for an async stream to go quiet before dropping it (next point). With the wait, 20 open/capture/close cycles on the IDS camera and a CM3-U3-50S5M, and both cameras' hardware tests, ran without a hang or a bad frame afterwards. [V on the IDS camera, 2026-10-22; V for the fix, 2026-10-29]
   - **Still possible.** The wait makes sure no frame is in flight when the stream is dropped; it doesn't change Aravis. Finalizing an async stream still cancels its pending transfers, and the deadlock came from the stream thread waiting on cancellations only it completes. If a camera is still sending when the drain gives up (the driver logs "still sending ... dropping the stream anyway"), the hang can come back, and `close()` has no timeout. Recovery is a power cycle (`el-devices hub cycle <port>`). [I]
+- **Aravis async mode loses a buffer returned too soon.** A buffer pushed back to the stream within about a millisecond of its frame completing never comes back, with no failure or underrun counted. Only small frames are read that fast, so a preview of a small region stopped once all `BUFFER_COUNT` buffers were gone: within 1–10 s on the IDS at 648 × 388 and below (up to 251 kB a frame) and on the CM3-U3-50S5M at 496 × 412 and below, at any frame rate. Frames before the stall grew with the buffer count (about 150 with 4, 340 with 16, 500–760 with 64), grabbing slowly never stalled, and sync mode never stalled. Holding each buffer 0.5 ms before returning it streamed 30 s clean in 12 of 12 runs, so the driver rests each one `BUFFER_REST_S` (2 ms) first; with that, seven sizes on the two cameras streamed 40 s each at full rate. Where in Aravis the buffer goes is unknown. [V] (Aravis 0.8.36, macOS, 2026-11-12)
 - **Dropping an async Aravis stream mid-frame.** After AcquisitionStop, the CM3-U3-50S5M still sends the frame it's on. When the driver dropped the stream straight away, Aravis cancelled the transfers part-way, and on Linux every later transfer failed with `LIBUSB_TRANSFER_ERROR`: only `missing-packets` frames, through reopening, until a power cycle. In async mode the driver now waits after a stop until the stream has received nothing for one exposure plus 50 ms, capped at 2 s plus one exposure. The IDS camera showed no such problem. [V 2026-10-23, below]
 - **`TLParamsLocked` through Aravis.** Setting it wedged the IDS camera until a power cycle. [V]
 - **A free-running camera that stops sending.** Once, through FLIR's GenTL producer on the Windows rig, one of five capped CM3-U3-50S5M sent 3 frames and then nothing until it was closed; a new process opened it fine. It couldn't be made to happen again in 90 runs, and the cause is unknown: most likely the camera or its link (it had just come up at USB 2 and been replugged), not the host's buffers. The core now raises `StreamStalled` with the camera's counters when a free-running capture gets no frame at all, warns at open about a link slower than USB 3, and offers `restart_acquisition()`, which cleared a forced stall on the rig; what to try is in [guide.md](../guide.md#a-stalled-stream). See [2026-11-09](#2026-11-09-windows-gentl-five-cameras-stall-runs). [V for the stall; I for the cause]
@@ -205,6 +289,18 @@ Spinnaker installs a GenTL producer on macOS, in `/usr/local/lib/spinnaker-gentl
 - **Stream counters.** `num_started` follows the frame ID (frame 7 at 8 started), so it counts every frame the producer received, including those `NewestOnly` discarded. `num_delivered` counts only frames handed to the host.
 
 Loading it makes genicam print five lines such as "GenTL producer does not implement DSGetNumFlows" to stderr, one for each optional GenTL 1.6 function the producer lacks. They are harmless. The driver logs them at debug level instead of letting them reach the console.
+
+### 2026-11-11, preview, macOS and Windows
+
+The preview hardware tests (`pytest -m hardware -k "preview or region or max_size or eight_bit"`), on commit `c456fd3`, one camera at a time. [V]:
+
+- **Lab Mac** (macOS 27, Python 3.12): CM3-U3-50S5M `20305122` through Spinnaker, Aravis and FLIR's GenTL producer, and the IDS through Aravis: 8 passed on each. The scene was dim: the CM3 ran at its longest exposure (27.9 ms) and 22 dB of gain.
+- **Windows rig** (`DESKTOP-Q940IU7`, Windows 11, Python 3.12.10), through GenTL:
+  - All five CM3-U3-50S5M through FLIR's producer: 8 passed on each. A region preview started in 0.06–0.09 s, a move took 3–4 ms with the first frame 56 ms after asking, and a stop 0.07–0.08 s.
+  - The IDS through IDS peak's producer: 6 passed, 2 skipped. A region preview started in 0.35 s, a move took 0.09 s (a restart, since the offsets are locked while streaming) with the first frame 0.14 s after asking, and a stop 0.20 s. Skipped: the moved region's content (the scene was too flat to tell where a region was) and `not_before` (frames can't be timed through this producer).
+- **Windows rig again, 2026-11-12** (commit `e11ba4c`, with the frame period dropped after a live move), through GenTL: all five CM3-U3-50S5M 8 passed each, the first frame 84 ms after asking for a move (56 ms before). The IDS through IDS peak's producer 7 passed, 1 skipped (`not_before`): the moved region's content, skipped for a flat scene the day before, matched.
+- **Levels.** `max_size` by decimation kept the level: 0.999–1.004× a capture's on the CMs, 0.975–0.987× on the IDS.
+- **Mono8 is the top bits** of the CM3's Mono16 (12 bits, left-aligned): the two differed by no more than one Mono8 frame does from the next. The IDS's Mono10g40IDS agreed too (0.27 counts), but on a dark image that used 7 of its 10 bits, so that check is weak.
 
 ### 2026-11-09, Windows, GenTL, five cameras (stall runs)
 

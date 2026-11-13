@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from educelab.devices.app import _preview
 from educelab.devices.errors import StreamStalled
 
 # Imported where it's used, so other subcommands don't load the drivers.
@@ -85,6 +86,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         default=DEFAULT_TIMEOUT_S,
         help=f"seconds allowed per capture (default: {DEFAULT_TIMEOUT_S:g})",
     )
+    _preview.add_arguments(parser)
 
 
 def _count(text: str) -> int:
@@ -146,6 +148,10 @@ def run_benchmark(cameras: Sequence["GenICamCamera"], args: argparse.Namespace) 
 
     Returns the exit status: 1 if a setting was refused or a capture failed.
     """
+    problem = _preview.problem(args)
+    if problem:
+        print(f"el-devices: {problem}", file=sys.stderr)
+        return 1
     opened: list[GenICamCamera] = []
     try:
         for camera in cameras:
@@ -165,10 +171,15 @@ def run_benchmark(cameras: Sequence["GenICamCamera"], args: argparse.Namespace) 
             trigger=args.trigger == "software",
             save_dir=args.save_missing_trailer,
         )
+        failed = 0
+        if args.preview:
+            # One camera at a time, after the captures, with the same settings.
+            for camera in opened:
+                print(f"{camera.info.serial_number}:")
+                failed += _preview.run(camera, args)
     finally:
         for camera in reversed(opened):
             camera.close()
-    failed = 0
     for camera in opened:
         failed += _report(camera, results[camera], args.frames)
     return 1 if failed else 0

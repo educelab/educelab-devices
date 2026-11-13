@@ -2,18 +2,44 @@
   "id": "preview-mode_20261102",
   "title": "Camera Preview Mode",
   "type": "feature",
-  "status": "pending",
+  "status": "in_progress",
   "created": "2026-11-02T00:00:00Z",
-  "updated": "2026-11-02T00:00:00Z",
+  "updated": "2026-11-12T00:00:00Z",
   "phases": {
-    "total": 5,
-    "completed": 0
+    "total": 6,
+    "completed": 5
   },
   "tasks": {
-    "total": 21,
-    "completed": 0
+    "total": 28,
+    "completed": 28
   },
-  "current_phase": null,
-  "current_task": null,
-  "commits": []
+  "current_phase": 6,
+  "current_task": "6.5",
+  "commits": [
+    "8deb075: Prepare the preview-mode hardware discovery runs",
+    "c97e118: Record the discovery prep commit in the preview-mode metadata",
+    "5139a8f: Record the architecture review's preview inputs in the preview-mode plan",
+    "25e29d7: Record the Z7 II live-view display behavior; fix the geometry discovery script",
+    "e91ee59: Record the Aravis ROI and binning findings; list the Phase 1 runs still owed",
+    "816bb29: Add PreviewRegion and PreviewGeometry to the camera base",
+    "ff38b86: Write the camera preview contract",
+    "923a6dc: Make preview an explicit state on the Camera base",
+    "4691ac6: Preview the simulated cameras with a shared host crop and stride",
+    "486dbba: Record the preview discovery: Z7 II zoom geometry, GenICam binning and ROI",
+    "568f73d: Return PreviewFrame at full resolution and depth from preview",
+    "d49cc2c: Preview GenICam cameras through the explicit state, with a host crop",
+    "ab526ba: Switch gphoto2 live view on and off with the preview state",
+    "1993cfb: Map a preview region to a camera ROI and decimation",
+    "713ddda: Preview GenICam cameras through hardware ROI and decimation",
+    "aca1268: Zoom the Z7 II's live view to the preview region",
+    "9cd2122: Follow the Z7 II's image area in live-view zoom",
+    "d64f394: Add preview, region and max-size options to the camera subcommands",
+    "320c3c8: Start and stop the Z7 II's preview without reading the whole config tree",
+    "12906b9: Document preview in the guide and the hardware docs",
+    "3e6e9e2: Probe the live-view widgets by name instead of reading the config tree",
+    "b7d3d12: Write the Z7 II's zoom centre twice after a zoom-level change",
+    "2e4f196: Keep the exposure when preview shrinks the image",
+    "b10efc0: Add a runner for the preview hardware tests; record the hardware runs",
+    "c456fd3: Hold the frame rate during preview so the exposure stays"
+  ]
 }

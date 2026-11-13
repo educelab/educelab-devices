@@ -87,8 +87,9 @@ def test_software_trigger(camera):
 
 
 def test_preview(camera):
+    geometry = camera.start_preview(max_size=64)
     preview = camera.preview_frame()
-    assert preview.dtype == np.uint8
+    assert preview.pixels.shape[:2] == (geometry.height, geometry.width)
 
 
 def test_reopening(arv):

@@ -180,21 +180,20 @@ class PreviewGeometry:
             )
 
 
-def check_max_size(max_size: int | None) -> int | None:
-    """Check a preview's ``max_size``: a positive int, or ``None`` for no cap.
+def check_max_size(max_size: int | None, name: str = "max_size") -> int | None:
+    """Check a preview's ``max_size`` or ``min_size``: a positive int, or
+    ``None`` for no limit.
 
     Raises:
-        TypeError: ``max_size`` isn't an int or ``None``.
-        ValueError: ``max_size`` is less than 1.
+        TypeError: The size isn't an int or ``None``.
+        ValueError: The size is less than 1.
     """
     if max_size is None:
         return None
     if isinstance(max_size, bool) or not isinstance(max_size, Integral):
-        raise TypeError(
-            f"max_size must be an int or None, not {type(max_size).__name__}"
-        )
+        raise TypeError(f"{name} must be an int or None, not {type(max_size).__name__}")
     if max_size < 1:
-        raise ValueError(f"max_size must be at least 1, not {max_size}")
+        raise ValueError(f"{name} must be at least 1, not {max_size}")
     return int(max_size)
 
 
@@ -209,12 +208,28 @@ class PreviewFrame:
         timestamp: The time of the image, as a timezone-aware host time. A
             camera that can't time its frames reports when the image arrived.
         geometry: The sensor region and size of this image.
+        bit_depth: Bits per value in the pixel format, as a capture's
+            ``metadata["bit_depth"]`` gives them: 16 for ``Mono16``.
+        full_scale: The value a saturated pixel reads, as a capture's
+            ``metadata["full_scale"]`` gives it. Below ``2**bit_depth - 1``
+            where the camera has fewer bits than the format: 65520 for the
+            CM3's 12-bit ``Mono16``.
+
+    Left at 0, `bit_depth` and `full_scale` follow from the pixels' type.
     """
 
     pixels: npt.NDArray[Any]
     pixel_format: str
     timestamp: datetime
     geometry: PreviewGeometry
+    bit_depth: int = 0
+    full_scale: int = 0
+
+    def __post_init__(self) -> None:
+        if not self.bit_depth:
+            object.__setattr__(self, "bit_depth", 8 * self.pixels.dtype.itemsize)
+        if not self.full_scale:
+            object.__setattr__(self, "full_scale", 2**self.bit_depth - 1)
 
 
 @dataclass(frozen=True, eq=False)
@@ -336,6 +351,8 @@ class Camera(Device):
         self,
         region: PreviewRegion | tuple[float, float, float, float] | None = None,
         max_size: int | None = None,
+        *,
+        min_size: int | None = None,
     ) -> PreviewGeometry:
         """Start previewing, or change the preview if one is running.
 
@@ -346,20 +363,29 @@ class Camera(Device):
             max_size: Longest side of the preview images, in pixels, to have
                 the camera send less data. ``None`` keeps every sensor pixel
                 of the region.
+            min_size: The fewest pixels wanted on the longest side, e.g. a
+                view's size: the camera reduces as far as it can while
+                keeping at least that many, where the region has them.
+                ``max_size`` still caps it. ``None`` asks for no reduction
+                unless ``max_size`` does.
 
         Returns:
             The region and image size the camera applied. The region lies
             within the requested one.
 
         Raises:
-            TypeError, ValueError: ``region`` or ``max_size`` is invalid. The
-                preview is left as it was.
+            TypeError, ValueError: ``region``, ``max_size`` or ``min_size`` is
+                invalid, or ``min_size`` is above ``max_size``. The preview is
+                left as it was.
             DeviceError: The camera couldn't apply the preview. Preview ends.
         """
         wanted = PreviewRegion.of(region)
         cap = check_max_size(max_size)
+        floor = check_max_size(min_size, "min_size")
+        if cap is not None and floor is not None and floor > cap:
+            raise ValueError(f"min_size {floor} is above max_size {cap}")
         try:
-            geometry = self._start_preview(wanted, cap)
+            geometry = self._start_preview(wanted, cap, floor)
         except BaseException:
             self._end_preview()
             raise
@@ -440,10 +466,11 @@ class Camera(Device):
 
     @abstractmethod
     def _start_preview(
-        self, region: PreviewRegion, max_size: int | None
+        self, region: PreviewRegion, max_size: int | None, min_size: int | None
     ) -> PreviewGeometry:
         """Apply a preview and report what was applied. Called while
-        previewing too (`preview` is the old geometry), to reconfigure."""
+        previewing too (`preview` is the old geometry), to reconfigure.
+        ``min_size`` is never above ``max_size``."""
 
     @abstractmethod
     def _stop_preview(self) -> None:

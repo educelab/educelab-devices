@@ -18,7 +18,9 @@ from educelab.devices.cameras import (
     PreviewRegion,
     SimulatedCamera,
     SimulatedFileCamera,
+    SimulatedFocusDrive,
 )
+from educelab.devices.cameras.simulated import BLUR_STEPS_PER_PX
 from educelab.devices.errors import DeviceTimeout
 
 
@@ -40,10 +42,24 @@ class TestSimulatedAutoCamera(FrameCameraContract):
         return functools.partial(SimulatedCamera, auto=True)
 
 
+class TestSimulatedChartCamera(FrameCameraContract):
+    @pytest.fixture
+    def make_device(self):
+        return functools.partial(
+            SimulatedCamera, 320, 240, pattern="chart", focus=SimulatedFocusDrive()
+        )
+
+
 class TestSimulatedFileCamera(FileCameraContract):
     @pytest.fixture
     def make_device(self):
         return SimulatedFileCamera
+
+
+class TestSimulatedChartFileCamera(FileCameraContract):
+    @pytest.fixture
+    def make_device(self):
+        return functools.partial(SimulatedFileCamera, 320, 240, pattern="chart")
 
 
 class TestSimulatedFileCameraWithoutValues(FileCameraContract):
@@ -252,3 +268,72 @@ def test_preview_follows_exposure_changes():
         dim = camera.preview_frame().pixels.mean()
         camera.set_setting(EXPOSURE_TIME, 0.005)
         assert camera.preview_frame().pixels.mean() > dim
+
+
+def detail(pixels) -> float:
+    """Mean difference between neighbouring pixels: high where it's sharp."""
+    return float(np.abs(np.diff(pixels.astype(np.float64), axis=1)).mean())
+
+
+def test_the_chart_has_single_pixel_detail_at_full_resolution():
+    with SimulatedCamera(640, 480, pattern="chart") as camera:
+        whole = camera.capture_frame().pixels
+        # The 1-px bars, top left: columns alternate dark and light.
+        bars = whole[20:60, 20:60].astype(int)
+        assert (np.abs(np.diff(bars, axis=1)).mean()) > 50
+        # Previewed at 100%, the same pixels; reduced, the bars alias away.
+        camera.start_preview(PreviewRegion(0.0, 0.0, 0.25, 0.25))
+        assert detail(camera.preview_frame().pixels) > 20
+        camera.start_preview(max_size=80)
+        full = camera.preview
+        assert full.scale < 0.2
+
+
+def test_the_chart_saturates_its_patch_and_not_much_else():
+    with SimulatedCamera(640, 480, pattern="chart") as camera:
+        pixels = camera.capture_frame().pixels
+        clipped = pixels == 255
+        assert 0.002 < clipped.mean() < 0.05
+        # The patch is near the bottom right corner.
+        rows, cols = np.nonzero(clipped)
+        assert np.median(rows) > 0.75 * 480 and np.median(cols) > 0.75 * 640
+
+
+def test_chart_frames_differ_so_a_live_preview_shows():
+    with SimulatedCamera(320, 240, pattern="chart") as camera:
+        camera.start_preview()
+        first = camera.preview_frame().pixels.astype(int)
+        second = camera.preview_frame().pixels.astype(int)
+        assert 0 < np.abs(first - second).mean() < 10
+
+
+def test_a_focus_drive_blurs_the_image_away_from_sharp():
+    drive = SimulatedFocusDrive(travel_steps=1000, start=500, sharp_at=500)
+    with SimulatedCamera(320, 240, pattern="chart", focus=drive) as camera, drive:
+        camera.start_preview()
+        sharp = detail(camera.preview_frame().pixels)
+        drive.step(4 * BLUR_STEPS_PER_PX)
+        blurred = detail(camera.preview_frame().pixels)
+        drive.step(-4 * BLUR_STEPS_PER_PX)
+        again = detail(camera.preview_frame().pixels)
+        assert blurred < sharp / 3
+        assert again == pytest.approx(sharp, rel=0.1)
+
+
+def test_a_focus_drive_blurs_the_file_camera_too():
+    drive = SimulatedFocusDrive(start=0, sharp_at=1000)
+    with SimulatedFileCamera(320, 240, pattern="chart", focus=drive) as camera:
+        camera.start_preview()
+        assert detail(camera.preview_frame().pixels) < 5
+
+
+def test_an_unknown_pattern_is_refused():
+    with pytest.raises(ValueError, match="pattern"):
+        SimulatedCamera(pattern="stripes")
+    with pytest.raises(ValueError, match="pattern"):
+        SimulatedFileCamera(pattern="stripes")
+
+
+def test_sharp_at_must_lie_within_the_travel():
+    with pytest.raises(ValueError, match="sharp_at"):
+        SimulatedFocusDrive(travel_steps=100, start=50, sharp_at=101)

@@ -103,6 +103,7 @@ from educelab.devices.cameras._preview import (
     hardware_roi,
     host_crop,
     pick_decimation,
+    reduction,
 )
 
 
@@ -245,3 +246,63 @@ def test_decimation_goes_by_the_region_not_the_sensor():
     region = PreviewRegion(0.25, 0.25, 0.5, 0.5)
     assert pick_decimation(region, 1000, full=(2448, 2048), choices=(1, 2)) == 1
     assert pick_decimation(region, 612, full=(2448, 2048), choices=(1, 2)) == 2
+
+
+@pytest.mark.parametrize(
+    ("longest", "max_size", "min_size", "step"),
+    [
+        (1000, None, None, 1),
+        (1000, 300, None, 4),
+        # The coarsest step that keeps the floor: 1024 into 880 stays whole,
+        # where a cap of 880 would halve it to 512.
+        (1024, None, 880, 1),
+        (1024, 880, None, 2),
+        (2448, None, 880, 2),
+        (5136, None, 1000, 5),
+        # A side shorter than the floor is never reduced.
+        (300, None, 1000, 1),
+        # The cap wins over the floor.
+        (2448, 600, 500, 5),
+    ],
+)
+def test_reduction_keeps_the_floor_under_the_cap(longest, max_size, min_size, step):
+    assert reduction(longest, max_size, min_size) == step
+    kept = math.ceil(longest / step)
+    if max_size is not None:
+        assert kept <= max_size
+
+
+@pytest.mark.parametrize("min_size", [1, 7, 100, 333, 880, 1000, 1023, 1024, 4000])
+def test_reduction_is_the_coarsest_that_keeps_the_floor(min_size):
+    longest = 1024
+    step = reduction(longest, None, min_size)
+    assert math.ceil(longest / step) >= min(min_size, longest)
+    assert math.ceil(longest / (step + 1)) < min_size or step == longest
+
+
+def test_host_crop_keeps_at_least_min_size():
+    crop = host_crop(
+        PreviewRegion(), None, sensor=(2448, 2048), frame=(2448, 2048), min_size=880
+    )
+    assert (crop.geometry.width, crop.geometry.height) == (1224, 1024)
+
+
+def test_decimation_keeps_min_size_where_one_is_given():
+    full = (2448, 2048)
+    # A cap of 880 decimates by 2; a floor of 880 does too, and no further.
+    assert (
+        pick_decimation(
+            PreviewRegion(), None, full=full, choices=(1, 2, 4), min_size=880
+        )
+        == 2
+    )
+    assert (
+        pick_decimation(
+            PreviewRegion(), None, full=full, choices=(1, 2, 4), min_size=500
+        )
+        == 4
+    )
+    assert (
+        pick_decimation(PreviewRegion(), None, full=full, choices=(1, 2), min_size=1300)
+        == 1
+    )

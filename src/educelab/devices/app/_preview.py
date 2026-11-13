@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
-    """Add ``--preview``, ``--region`` and ``--max-size``."""
+    """Add ``--preview``, ``--region``, ``--max-size`` and ``--min-size``."""
     parser.add_argument(
         "--preview",
         type=_frames,
@@ -33,6 +33,13 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         metavar="PIXELS",
         help="with --preview, the longest side of the preview images (default: "
         "every sensor pixel of the region)",
+    )
+    parser.add_argument(
+        "--min-size",
+        type=_frames,
+        metavar="PIXELS",
+        help="with --preview, the fewest pixels wanted on the longest side: the "
+        "camera reduces no further than that",
     )
 
 
@@ -61,7 +68,7 @@ def run(camera: "Camera", args: argparse.Namespace) -> None:
         DeviceError: The camera couldn't preview.
     """
     started = time.perf_counter()
-    geometry = camera.start_preview(args.region, args.max_size)
+    geometry = camera.start_preview(args.region, args.max_size, min_size=args.min_size)
     ready = time.perf_counter()
     try:
         frame = camera.preview_frame()

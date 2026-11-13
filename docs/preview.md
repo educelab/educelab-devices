@@ -25,11 +25,11 @@ publishes:
 class Feed:
     """Previews one camera on its own thread; the UI reads `frame`."""
 
-    def __init__(self, camera, max_size):
-        self.camera, self.max_size = camera, max_size
-        self.frame = None          # the newest PreviewFrame
-        self.error = None          # set if the camera fails
-        self._asked = []           # at most one region waiting
+    def __init__(self, camera, view_size):
+        self.camera, self.view_size = camera, view_size
+        self.frame = None  # the newest PreviewFrame
+        self.error = None  # set if the camera fails
+        self._asked = []  # at most one region waiting
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
@@ -45,7 +45,7 @@ class Feed:
                 with self._lock:
                     asked, self._asked = self._asked, []
                 if asked:
-                    self.camera.start_preview(asked[0], self.max_size)
+                    self.camera.start_preview(asked[0], min_size=self.view_size)
                 self.frame = self.camera.preview_frame()
         except DeviceError as exc:
             self.error = exc
@@ -85,17 +85,24 @@ guide](guide.md#preview)). Scrolling and dragging produce dozens of regions a se
 
 ## 3. Ask for what the widget can show
 
-`start_preview(region, max_size)` reduces at the camera where it can, so less data
-crosses the link.
+`start_preview(region, max_size, min_size=...)` reduces at the camera where it can, so
+less data crosses the link. Cameras reduce in steps (GenICam decimation by 2, then
+every n-th pixel on the host; the Z7 II's live-view sizes), so ask by the size you
+need and let the driver find the step.
 
-- **`max_size` is the widget's longest side in device pixels.** A 1000-pixel view of a
-  20 MP sensor needs 1000 pixels across, not 5136.
-- **Zooming in is asking for a smaller region with the same `max_size`.** Once the
-  region has fewer sensor pixels than the widget, the camera sends every pixel and the
-  preview is at full resolution: that is the view for judging focus.
+- **`min_size` is the widget's longest side in device pixels.** The camera reduces as
+  far as it can while keeping at least that many, so the image is the nearest step at
+  or above the widget, and the widget scales it down a little. A 1000-pixel view of a
+  20 MP sensor gets about 1280 pixels across from the IDS, not 5136 or 852.
+- **`max_size` is a hard cap**, for when data matters more than detail. The image is
+  then the nearest step at or below it, which can be half the size: 1024 pixels into a
+  cap of 880 gives 512. Use both to bound a view from both sides.
+- **Zooming in is asking for a smaller region with the same `min_size`.** Once the
+  region has fewer capture pixels than the widget, the camera sends every pixel and the
+  preview is at full resolution (`scale` 1.0): that is the view for judging focus.
 - **Enlarge without smoothing** when the region is smaller than the widget, so one
   sensor pixel is a visible square.
-- **The other way to zoom** is to preview the whole sensor with no `max_size` and crop
+- **The other way to zoom** is to preview the whole sensor with neither size and crop
   on the host. Zoom and pan are then instant, but every frame is a full one: 8 frames/s
   and 20 MB each on the IDS. It suits a single camera and a short session.
 - **Thumbnails** are `start_preview(max_size=200)` per camera. Five cameras on one USB 3
@@ -131,11 +138,15 @@ A camera rounds the region to what it can deliver, and reports what it applied.
 Preview images are not converted ([ADR 0007](adr/0007-preview-is-an-explicit-camera-state.md)):
 they come at the camera's bit depth and pixel format.
 
-- **Scale deeper formats to 8 bits for the screen only.** Keep the original for
-  histograms and focus scores. Data is either left-aligned in 16 bits (the CM3's
-  `Mono16`, 12 bits) or right-aligned at the format's depth (the IDS's `Mono10g40IDS`).
-  Go by the format's name, and treat values at or above `1 << depth` as left-aligned.
-  `eight_bit()` in the viewer is that rule.
+- **Scale by `frame.full_scale`**, the value a saturated pixel reads. It's below the
+  format's range where the camera has fewer bits: the CM3's `Mono16` holds 12 bits at
+  the top, in steps of 16, and saturates at 65520. `frame.bit_depth` is the format's
+  depth (16 there), as a capture's `metadata["bit_depth"]` is, and captures carry the
+  same `metadata["full_scale"]`.
+- **Scale to 8 bits for the screen only.** Keep the original for histograms, focus
+  scores and clipping: a pixel at `full_scale` is clipped. Shifting right by
+  `full_scale.bit_length() - 8` keeps the top 8 bits of either alignment; `eight_bit()`
+  in the viewer does that.
 - **gphoto2 bodies send `RGB8`** from a JPEG, already display-ready.
 - **Bayer formats arrive raw.** Demosaic them yourself, or show them as mono.
 
@@ -146,10 +157,10 @@ they come at the camera's bit depth and pixel format.
 Captures raise `PreviewError` during preview. To take one:
 
 ```python
-feed.pause()                      # the worker lets go of the camera
+feed.pause()  # the worker lets go of the camera
 camera.stop_preview()
-frame = camera.capture_frame()    # or capture_files()
-camera.start_preview(region, max_size)
+frame = camera.capture_frame()  # or capture_files()
+camera.start_preview(region, min_size=view_size)
 feed.resume()
 ```
 
@@ -215,11 +226,31 @@ feed.resume()
   holds the region, then crops, so any region works and always shows all of what was
   asked for. Detail comes in steps: the whole view and any region wider than a quarter
   of it are cut from a 1024-pixel image, so a region a third of the width is about 340
-  pixels across, and one just under a quarter is 1024. Ask for 1024 pixels
-  or more: a `max_size` just under a frame's width costs half the pixels. Its screens go blank while live
+  pixels across, and one just under a quarter is 1024. Ask with `min_size`: a
+  `max_size` just under a frame's width costs half the pixels. Its screens go blank while live
   view runs and stay blank until `close()`. On macOS, `ptpcamerad` must be killed
   before opening ([gphoto2 cameras](hardware/gphoto2-cameras.md)).
 - **GenICam cameras through Aravis:** the smallest regions run at 60 frames/s on the
   IDS. Drawing can't keep up with that; draw at the display's rate and let frames go.
 - **Details and measurements** are in [USB3 Vision cameras](hardware/usb3-vision.md#preview)
   and [gphoto2 cameras](hardware/gphoto2-cameras.md).
+
+---
+
+## 11. Developing off the rig
+
+The simulated cameras can stand in for the lab's while a viewer is built and tested.
+
+- **Use the test chart.** `SimulatedCamera(2448, 2048, pattern="chart")` renders a
+  CM3-sized chart with detail down to single pixels: a Siemens star, bars 1, 2 and
+  3 px wide each way, a 64-px grid, a step wedge, and a patch that clips. On it, a
+  reduced preview shows aliasing in the bars, 100% shows each pixel, and the grid
+  shows where a region landed. Frames carry noise, so a live view can be told from a
+  frozen one. `el-devices preview simulated` shows it.
+- **Focus against it.** Give the camera `focus=SimulatedFocusDrive(sharp_at=...)` and
+  it blurs by the drive's distance from sharp, one pixel per `BLUR_STEPS_PER_PX` (25)
+  steps, so a focus aid or sweep can be built before the hardware is free.
+- **Preview a camera of your own** by cropping its frames with `host_crop` from
+  `educelab.devices.cameras`: `host_crop(region, max_size, sensor=..., frame=...,
+  min_size=...)` plans the crop, `.apply(frame)` makes each preview image, and
+  `.geometry` is what `_start_preview()` returns. That is all the simulated cameras do.

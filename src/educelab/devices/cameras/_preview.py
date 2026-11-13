@@ -8,7 +8,7 @@ import numpy.typing as npt
 
 from educelab.devices.cameras.base import PreviewGeometry, PreviewRegion
 
-__all__ = ["HostCrop", "hardware_roi", "host_crop", "pick_decimation"]
+__all__ = ["HostCrop", "hardware_roi", "host_crop", "pick_decimation", "reduction"]
 
 A = TypeVar("A", bound=npt.NDArray[Any])
 
@@ -44,13 +44,19 @@ def host_crop(
     frame: tuple[int, int],
     origin: tuple[int, int] = (0, 0),
     capture: tuple[int, int] | None = None,
+    min_size: int | None = None,
 ) -> HostCrop:
-    """Plan a host-side preview of ``region`` from frames of size ``frame``.
+    """Plan a preview of ``region`` cut from frames of size ``frame``.
+
+    For a camera that previews by cropping the frames it already has, such as
+    a simulated one: ``host_crop(...).apply(frame)`` is each preview image,
+    and ``.geometry`` what ``_start_preview()`` reports.
 
     The region is rounded inward to whole pixels and clipped to the part of
     the sensor the frames cover, so the reported region lies within the
-    requested one. Every n-th pixel is then kept, with n the smallest stride
-    that brings the longest side within ``max_size``.
+    requested one. Every n-th pixel is then kept: the largest n that leaves
+    ``min_size`` pixels on the longest side, but at least the smallest that
+    brings it within ``max_size``.
 
     Args:
         region: The requested region, in fractions of the sensor.
@@ -61,6 +67,7 @@ def host_crop(
         capture: The sensor's size in capture pixels, for the geometry's
             ``capture_size``. It differs from ``sensor`` when the frames are
             decimated.
+        min_size: The fewest pixels wanted on the longest side, or ``None``.
 
     Raises:
         ValueError: The region covers no whole pixel of the frames.
@@ -75,7 +82,7 @@ def host_crop(
             f"{sensor_h} sensor)"
         )
     width, height = x1 - x0, y1 - y0
-    stride = 1 if max_size is None else max(1, math.ceil(max(width, height) / max_size))
+    stride = reduction(max(width, height), max_size, min_size)
     applied = PreviewRegion(
         x0 / sensor_w, y0 / sensor_h, width / sensor_w, height / sensor_h
     )
@@ -98,24 +105,40 @@ def _span(
     return max(low, origin), min(high, origin + frame)
 
 
+def reduction(longest: int, max_size: int | None, min_size: int | None) -> int:
+    """Keep every n-th pixel of a side ``longest`` pixels long: the largest n
+    that leaves ``min_size`` pixels, but at least the smallest that brings it
+    within ``max_size``. 1 when neither asks for a reduction."""
+    step = 1
+    if min_size is not None and longest > min_size:
+        # ceil(longest / n) >= min_size holds for every n up to this one.
+        step = (longest - 1) // (min_size - 1) if min_size > 1 else longest
+    if max_size is not None:
+        step = max(step, math.ceil(longest / max_size))
+    return step
+
+
 def pick_decimation(
     region: PreviewRegion,
     max_size: int | None,
     *,
     full: tuple[int, int],
     choices: tuple[int, ...],
+    min_size: int | None = None,
 ) -> int:
-    """The largest decimation that still leaves ``max_size`` pixels on the
-    region's longest side; 1 when nothing asks for a reduction.
+    """The largest decimation that still leaves ``min_size`` pixels on the
+    region's longest side, or ``max_size`` when no ``min_size`` is given; 1
+    when nothing asks for a reduction. The host strides the rest.
 
     Args:
         full: The whole image at decimation 1, as ``(width, height)``.
         choices: The decimations the camera offers.
     """
-    if max_size is None:
+    keep = min_size if min_size is not None else max_size
+    if keep is None:
         return 1
     longest = max(region.width * full[0], region.height * full[1])
-    return max((d for d in choices if d > 1 and longest / d >= max_size), default=1)
+    return max((d for d in choices if d > 1 and longest / d >= keep), default=1)
 
 
 def hardware_roi(

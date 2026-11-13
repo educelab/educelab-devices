@@ -98,7 +98,7 @@ def opencv(monkeypatch):
         fake = FakeOpenCV(*script)
         monkeypatch.setitem(sys.modules, "cv2", fake)
         if camera is not None:
-            monkeypatch.setattr(preview, "_open", lambda args: camera)
+            monkeypatch.setattr(preview, "_open", lambda args, focus=None: camera)
         return fake
 
     return install
@@ -109,9 +109,9 @@ def spy(camera):
     asked = []
     start = camera.start_preview
 
-    def start_preview(region=None, max_size=None):
-        asked.append((region, max_size))
-        return start(region, max_size)
+    def start_preview(region=None, max_size=None, *, min_size=None):
+        asked.append((region, min_size))
+        return start(region, max_size, min_size=min_size)
 
     camera.start_preview = start_preview
     return asked
@@ -292,24 +292,24 @@ def test_a_view_waits_for_input_to_settle(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("value", "pixel_format", "expected"),
+    ("value", "full_scale", "expected"),
     [
-        (0x8000, "Mono16", 128),
-        (512, "Mono10", 128),
-        (2048, "Mono12", 128),
-        (512, "Mono10g40IDS", 128),
-        # A 12-bit format delivered left-aligned in 16 bits.
-        (0x8000, "Mono12", 128),
+        (0x8000, 65535, 128),
+        (512, 1023, 128),
+        (2048, 4095, 128),
+        # The CM3's 12 bits held at the top of Mono16.
+        (0x8000, 65520, 128),
+        (65520, 65520, 255),
     ],
 )
-def test_deeper_formats_are_scaled_to_eight_bits(value, pixel_format, expected):
-    shown = eight_bit(np.full((2, 3), value, np.uint16), pixel_format)
+def test_deeper_formats_are_scaled_to_eight_bits(value, full_scale, expected):
+    shown = eight_bit(np.full((2, 3), value, np.uint16), full_scale)
     assert shown.dtype == np.uint8 and (shown == expected).all()
 
 
 def test_eight_bit_pixels_are_shown_as_they_are():
     pixels = np.arange(6, dtype=np.uint8).reshape(2, 3)
-    assert eight_bit(pixels, "Mono8") is pixels
+    assert eight_bit(pixels, 255) is pixels
 
 
 def test_a_camera_error_ends_the_viewer_with_its_message(opencv, capsys):
@@ -384,3 +384,31 @@ def test_macos_helpers_do_nothing_elsewhere(monkeypatch):
 )
 def test_the_overlay_gives_the_scale_as_a_percentage(scale, text):
     assert preview._percent(scale) == text
+
+
+def test_the_simulated_camera_shows_a_chart_whose_focus_keys_move(monkeypatch):
+    monkeypatch.setattr(preview, "has_opencv", lambda: True)
+    monkeypatch.setattr(preview, "TICK_MS", 1)
+    for name in ("activate", "accept_first_clicks", "visible_screen_size"):
+        monkeypatch.setattr(preview._macos, name, lambda: None)
+    monkeypatch.setitem(sys.modules, "cv2", FakeOpenCV("]", "]", "[", "q"))
+    opened = []
+    real_open = preview._open
+
+    def spied(args, focus=None):
+        camera = real_open(args, focus)
+        opened.append((camera, focus))
+        steps = focus.step
+        focus.moves = []
+        focus.step = lambda n: (focus.moves.append(n), steps(n))[1]
+        return camera
+
+    monkeypatch.setattr(preview, "_open", spied)
+    assert main(["preview", "simulated", "--window", "300"]) == 0
+    ((camera, focus),) = opened
+    assert camera.info.model == "SimulatedCamera"
+    assert camera._width == 2448
+    assert camera._scene._pattern == "chart"
+    step = preview.FOCUS_KEY_STEPS
+    assert focus.moves == [step, step, -step]
+    assert not focus.is_open

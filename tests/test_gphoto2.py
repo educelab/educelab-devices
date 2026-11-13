@@ -1440,6 +1440,34 @@ def test_a_body_whose_image_size_is_unknown_reports_no_scale():
         assert geometry.capture_size is None and geometry.scale is None
 
 
+@pytest.mark.parametrize(
+    ("min_size", "size", "expected"),
+    [
+        # The whole frame into a smaller view: kept whole, not halved.
+        (880, "XGA", 1024),
+        (1024, "XGA", 1024),
+        # The least data that still gives the floor.
+        (600, "VGA", 640),
+        (300, "QVGA", 320),
+        # More than any size has: the most there is.
+        (2000, "XGA", 1024),
+    ],
+)
+def test_min_size_picks_the_least_data_that_keeps_it(min_size, size, expected):
+    attached = FakeCamera()
+    with opened(attached) as camera:
+        geometry = camera.start_preview(min_size=min_size)
+        assert attached.widgets["liveviewsize"].value == size
+        assert geometry.width == expected
+
+
+def test_a_preview_is_eight_bit_rgb():
+    with opened(FakeCamera()) as camera:
+        camera.start_preview()
+        frame = camera.preview_frame()
+        assert (frame.bit_depth, frame.full_scale) == (8, 255)
+
+
 def test_a_body_without_imagesize_crops_on_the_host():
     widgets = [w for w in NIKON_WIDGETS if w.name != "imagesize"]
     attached = FakeCamera(widgets=widgets)

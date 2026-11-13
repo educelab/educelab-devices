@@ -318,6 +318,9 @@ _SELF_SLOWING_VENDORS = frozenset({_IDS})
 # "Once" isn't offered: it reverts to "Off" by itself, so it never reads back.
 _AUTO_MODES = ("Off", "Continuous")
 _RATE_AUTO = "AcquisitionFrameRateAuto"
+# Bits each model actually has in a 16-bit format, held at the top. Measured
+# on the CM3s' frames: the low 4 bits never set (spinnaker.md, Preview).
+_SIXTEEN_BIT_MODELS = {"Chameleon3 CM3-U3-50S5M": 12}
 # A geometry change re-rounds the exposure a little; less than this is a cut.
 _EXPOSURE_KEPT = 0.99
 _US_PER_S = 1e6
@@ -888,6 +891,10 @@ class GenICamCamera(FrameCamera):
         ]
         return {d.name: d for d in found if d is not None}
 
+    def _full_scale(self, pixel_format: str) -> int:
+        """What a saturated pixel reads from this camera, in ``pixel_format``."""
+        return full_scale(pixel_format, self.info.model)
+
     def _exposure(self) -> float | None:
         """The exposure time in seconds, or None if the camera has no such node."""
         exposure = self._descriptors.get(EXPOSURE_TIME)
@@ -973,13 +980,17 @@ class GenICamCamera(FrameCamera):
         self._capture_geometry = _Geometry(1, 0, 0, width, height)
 
     def _start_preview(
-        self, region: PreviewRegion, max_size: int | None
+        self, region: PreviewRegion, max_size: int | None, min_size: int | None
     ) -> PreviewGeometry:
         capture = self._capture_geometry
         if capture is None:
-            return self._start_host_preview(region, max_size)
+            return self._start_host_preview(region, max_size, min_size)
         decimation = pick_decimation(
-            region, max_size, full=self._limits[1].full, choices=self._decimations
+            region,
+            max_size,
+            full=self._limits[1].full,
+            choices=self._decimations,
+            min_size=min_size,
         )
         current = self._applied or capture
         target = None
@@ -989,7 +1000,9 @@ class GenICamCamera(FrameCamera):
         if exposure is not None and target is not None:
             cap = self._exposure_caps.get(target.size)
             if cap is not None and cap < exposure * _EXPOSURE_KEPT:
-                return self._start_whole_frame_preview(region, max_size, exposure)
+                return self._start_whole_frame_preview(
+                    region, max_size, min_size, exposure
+                )
         if self._applied is None:
             self._limit_before_preview = self._read_limit()
         tearing = 0.0
@@ -1008,7 +1021,9 @@ class GenICamCamera(FrameCamera):
                     "cropping whole frames instead",
                     self,
                 )
-                return self._start_whole_frame_preview(region, max_size, exposure)
+                return self._start_whole_frame_preview(
+                    region, max_size, min_size, exposure
+                )
         elif target != current:
             self._applied = current
             tearing = self._move(target)
@@ -1025,11 +1040,16 @@ class GenICamCamera(FrameCamera):
             frame=(target.width, target.height),
             origin=(target.x, target.y),
             capture=self._limits[1].full,
+            min_size=min_size,
         )
         return self._crop.geometry
 
     def _start_whole_frame_preview(
-        self, region: PreviewRegion, max_size: int | None, exposure: float
+        self,
+        region: PreviewRegion,
+        max_size: int | None,
+        min_size: int | None,
+        exposure: float,
     ) -> PreviewGeometry:
         """Preview from whole frames, for an exposure too long for the frame
         rate of a smaller image (the CM3; usb3-vision.md, Preview)."""
@@ -1038,7 +1058,7 @@ class GenICamCamera(FrameCamera):
         if changed:
             self._keep_exposure(exposure, None)
             self._preview_floor = datetime.fromtimestamp(host_time(), UTC)
-        return self._start_host_preview(region, max_size)
+        return self._start_host_preview(region, max_size, min_size)
 
     def _hold_frame_rate(self) -> None:
         """Fix an automatic frame rate where it is before the image shrinks.
@@ -1102,7 +1122,7 @@ class GenICamCamera(FrameCamera):
         return True
 
     def _start_host_preview(
-        self, region: PreviewRegion, max_size: int | None
+        self, region: PreviewRegion, max_size: int | None, min_size: int | None
     ) -> PreviewGeometry:
         """Plan a crop and stride of the frames the camera already sends."""
         conn = self._connection
@@ -1121,7 +1141,13 @@ class GenICamCamera(FrameCamera):
 
         sensor, frame, origin = self._call("read the frame geometry", frames)
         self._crop = host_crop(
-            region, max_size, sensor=sensor, frame=frame, origin=origin, capture=sensor
+            region,
+            max_size,
+            sensor=sensor,
+            frame=frame,
+            origin=origin,
+            capture=sensor,
+            min_size=min_size,
         )
         return self._crop.geometry
 
@@ -1149,6 +1175,8 @@ class GenICamCamera(FrameCamera):
             frame.pixel_format,
             frame.timestamp,
             self._crop.geometry,
+            frame.metadata["bit_depth"],
+            frame.metadata["full_scale"],
         )
 
     def _enter_decimation(self, decimation: int) -> "_GeometryLimits":
@@ -1374,6 +1402,7 @@ class GenICamCamera(FrameCamera):
                     "timestamp_remeasured": remeasured,
                     "timestamp_source": taken.timestamp_source,
                     "bit_depth": bit_depth(taken.pixel_format),
+                    "full_scale": self._full_scale(taken.pixel_format),
                 }
                 return Frame(
                     taken.pixels,
@@ -1971,14 +2000,27 @@ def pfnc_name(code: int) -> str:
 
 
 def bit_depth(pixel_format: str) -> int:
-    """Significant bits per pixel value in a format the core can shape.
+    """Bits per pixel value in a format the core can shape.
 
-    Deeper formats come as ``uint16``, with the bits in the low end: a 10-bit
-    pixel runs from 0 to 1023.
+    Deeper formats come as ``uint16``. A 10-bit format has its bits in the
+    low end, running from 0 to 1023; a 16-bit one may carry fewer, as the
+    camera's `full_scale` says.
     """
     if pixel_format == "Mono10g40IDS":
         return 10
     return 16 if pixel_format.endswith("16") else 8
+
+
+def full_scale(pixel_format: str, model: str = "") -> int:
+    """The value a saturated pixel reads, in a format the core can shape.
+
+    A 16-bit format from a camera with fewer bits holds them at the top: the
+    CM3-U3-50S5M's 12 bits read 0, 16, 32, up to 65520 (spinnaker.md, Preview).
+    Other models are taken to fill all 16 (assumed).
+    """
+    depth = bit_depth(pixel_format)
+    bits = min(_SIXTEEN_BIT_MODELS.get(model, depth), depth)
+    return (2**bits - 1) << (depth - bits)
 
 
 def shaped_pixels(

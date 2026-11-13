@@ -391,7 +391,10 @@ shifts 16-bit pixels down for display should know whether the data is left-align
 The CM3-U3-50S5M's is (verified 2026-10-20: in Mono16 frames saved from
 20305113 and 20298452, the low 4 bits of every pixel were zero, so its 12-bit samples
 fill the top of the 16-bit range). Other models are unknown (Blackfly S sensors are
-10–12 bit); step 9's saved frames would show it.
+10–12 bit); step 9's saved frames would show it. The driver reports it: by model, the
+CM3-U3-50S5M's `Mono16` frames and previews carry `full_scale` 65520, and other models
+65535 (assumed). Whether a node such as `PixelDynamicRangeMax` or `AdcBitDepth` says
+the same, so the driver could read it rather than list models, is **unknown**.
 
 ## Differences from PySpin and SpinView
 

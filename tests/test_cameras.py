@@ -54,9 +54,9 @@ class StubCamera(FrameCamera):
         self.values[name] = value
 
     def _start_preview(
-        self, region: PreviewRegion, max_size: int | None
+        self, region: PreviewRegion, max_size: int | None, min_size: int | None
     ) -> PreviewGeometry:
-        self.preview_calls.append(("start", region, max_size))
+        self.preview_calls.append(("start", region, max_size, min_size))
         if self.fail_start:
             raise DeviceError("start failed")
         return PreviewGeometry(region, 4, 4)
@@ -359,7 +359,41 @@ def test_nearest_needs_numeric_choices_when_there_is_no_value():
 
 def test_start_preview_passes_the_validated_request(camera):
     camera.start_preview((0.5, 0.5, 0.5, 0.5), max_size=None)
-    assert camera.preview_calls == [("start", PreviewRegion(0.5, 0.5, 0.5, 0.5), None)]
+    camera.start_preview(max_size=300, min_size=200)
+    assert camera.preview_calls == [
+        ("start", PreviewRegion(0.5, 0.5, 0.5, 0.5), None, None),
+        ("start", PreviewRegion(), 300, 200),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "error"),
+    [
+        ({"min_size": 0}, ValueError),
+        ({"min_size": 1.5}, TypeError),
+        ({"min_size": True}, TypeError),
+        ({"min_size": 400, "max_size": 300}, ValueError),
+    ],
+)
+def test_an_invalid_min_size_leaves_preview_as_it_was(camera, kwargs, error):
+    geometry = camera.start_preview()
+    with pytest.raises(error, match="min_size"):
+        camera.start_preview(**kwargs)
+    assert camera.preview == geometry
+    assert len(camera.preview_calls) == 1
+
+
+def test_a_preview_frame_without_a_depth_takes_it_from_its_pixels():
+    geometry = PreviewGeometry(PreviewRegion(), 2, 2)
+    stamp = datetime.now(UTC)
+    deep = PreviewFrame(np.zeros((2, 2), np.uint16), "Mono16", stamp, geometry)
+    assert (deep.bit_depth, deep.full_scale) == (16, 65535)
+    shallow = PreviewFrame(np.zeros((2, 2), np.uint8), "Mono8", stamp, geometry)
+    assert (shallow.bit_depth, shallow.full_scale) == (8, 255)
+    given = PreviewFrame(
+        np.zeros((2, 2), np.uint16), "Mono16", stamp, geometry, 16, 65520
+    )
+    assert given.full_scale == 65520
 
 
 def test_preview_frame_passes_not_before_through(camera):

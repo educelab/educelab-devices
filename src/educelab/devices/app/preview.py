@@ -7,7 +7,6 @@ A development tool for framing, focus and debugging preview. It needs OpenCV
 import argparse
 import importlib.util
 import logging
-import re
 import sys
 import textwrap
 import threading
@@ -15,13 +14,14 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from educelab.devices.app import _macos
-from educelab.devices.errors import import_optional
+from educelab.devices.errors import FocusLimitReached, import_optional
 
 if TYPE_CHECKING:
     import numpy as np
     import numpy.typing as npt
 
     from educelab.devices.cameras import Camera, PreviewFrame
+    from educelab.devices.cameras.simulated import SimulatedFocusDrive
 
 logger = logging.getLogger(__name__)
 
@@ -44,8 +44,14 @@ controls, with the window focused:
   drag, or w a s d     move the region
   r                    back to the whole sensor
   c                    stop, capture, and resume the preview
+  [ and ]              simulated: move the focus nearer or farther
   q or Esc             quit
+
+The simulated camera is CM3-sized and shows a test chart, sharp at the focus
+it starts at.
 """
+# Focus steps per [ or ] on the simulated camera: a pixel of blur each.
+FOCUS_KEY_STEPS = 25
 
 
 def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") -> None:
@@ -147,18 +153,14 @@ class View:
         return None if side == 1.0 else (x, y, side, side)
 
 
-def eight_bit(pixels: "npt.NDArray[Any]", pixel_format: str) -> "npt.NDArray[np.uint8]":
-    """``pixels`` scaled to 8 bits, for display only."""
+def eight_bit(pixels: "npt.NDArray[Any]", full_scale: int) -> "npt.NDArray[np.uint8]":
+    """``pixels`` scaled to 8 bits by the value they saturate at, for display
+    only: the top 8 of the bits that ``full_scale`` uses."""
     import numpy as np
 
     if pixels.dtype == np.uint8:
         return pixels
-    # Left-aligned data fills 16 bits; otherwise go by the format's depth.
-    named = re.search(r"\d+", pixel_format)
-    depth = int(named.group()) if named else 16
-    if int(pixels.max()) >= 1 << depth:
-        depth = 16
-    return (pixels >> max(depth - 8, 0)).astype(np.uint8)
+    return (pixels >> max(full_scale.bit_length() - 8, 0)).astype(np.uint8)
 
 
 def run(args: argparse.Namespace) -> int:
@@ -168,10 +170,13 @@ def run(args: argparse.Namespace) -> int:
     limit = _window_limit()
     cv2.namedWindow(TITLE, cv2.WINDOW_AUTOSIZE)
     cv2.setMouseCallback(TITLE, _mouse_handler(cv2, view))
-    with _open(args) as camera:
+    focus = _simulated_focus() if args.backend == "simulated" else None
+    with _open(args, focus) as camera:
         if args.pixel_format:
             camera.set_setting("pixel_format", args.pixel_format)
-        camera.start_preview(max_size=args.window)
+        # At least the window's pixels, reduced no further: the nearest step
+        # above it, which the window then scales down.
+        camera.start_preview(min_size=args.window)
         feed = _Feed(camera, args.window)
         feed.start()
         activated = False
@@ -190,7 +195,7 @@ def run(args: argparse.Namespace) -> int:
                 shown = frame.geometry.region
                 scale = frame.geometry.scale
                 view.shown = (shown.x, shown.y, shown.width, shown.height)
-                pixels = eight_bit(frame.pixels, frame.pixel_format)
+                pixels = eight_bit(frame.pixels, frame.full_scale)
                 image = _fit(cv2, pixels, args.window, limit)
                 view.size = (image.shape[1], image.shape[0])
                 if view.changed_at is not None or not feed.caught_up.is_set():
@@ -225,11 +230,19 @@ def run(args: argparse.Namespace) -> int:
                 elif key == ord("c"):
                     feed.pause()
                     _capture(cv2, camera, args.window, limit)
-                    camera.start_preview(view.request(), args.window)
+                    camera.start_preview(view.request(), min_size=args.window)
                     feed.resume()
+                elif key in (ord("["), ord("]")) and focus is not None:
+                    step = FOCUS_KEY_STEPS if key == ord("]") else -FOCUS_KEY_STEPS
+                    try:
+                        focus.step(step)
+                    except FocusLimitReached as exc:
+                        print(f"focus at its {exc} limit")
         finally:
             feed.stop()
         camera.stop_preview()
+    if focus is not None:
+        focus.close()
     cv2.destroyAllWindows()
     return 0
 
@@ -241,9 +254,9 @@ class _Feed:
     a camera in the same thread makes dragging lag by seconds.
     """
 
-    def __init__(self, camera: "Camera", max_size: int) -> None:
+    def __init__(self, camera: "Camera", min_size: int) -> None:
         self._camera = camera
-        self._max_size = max_size
+        self._min_size = min_size
         self._lock = threading.Lock()
         self._asked: list[tuple[float, float, float, float] | None] = []
         self._running = threading.Event()
@@ -295,7 +308,9 @@ class _Feed:
                     asked, self._asked = self._asked, []
                 if asked:
                     started = time.perf_counter()
-                    geometry = self._camera.start_preview(asked[0], self._max_size)
+                    geometry = self._camera.start_preview(
+                        asked[0], min_size=self._min_size
+                    )
                     self.took = time.perf_counter() - started
                     print(f"{geometry} in {self.took:.2f} s")
                 frame = self._camera.preview_frame()
@@ -323,7 +338,17 @@ def _percent(scale: float | None) -> str:
     return f"{scale:.{digits}%} of capture, "
 
 
-def _open(args: argparse.Namespace) -> "Camera":
+def _simulated_focus() -> "SimulatedFocusDrive":
+    from educelab.devices.cameras.simulated import SimulatedFocusDrive
+
+    drive = SimulatedFocusDrive()
+    drive.open()
+    return drive
+
+
+def _open(
+    args: argparse.Namespace, focus: "SimulatedFocusDrive | None" = None
+) -> "Camera":
     backend = args.backend
     if backend == "gphoto2":
         from educelab.devices.cameras.gphoto2 import GPhoto2Camera
@@ -332,7 +357,7 @@ def _open(args: argparse.Namespace) -> "Camera":
     if backend == "simulated":
         from educelab.devices.cameras.simulated import SimulatedCamera
 
-        return SimulatedCamera()
+        return SimulatedCamera(2448, 2048, pattern="chart", focus=focus)
     if backend == "gentl":
         from educelab.devices.cameras.gentl import GenTLCamera
 
@@ -473,7 +498,10 @@ def _capture(
     started = time.perf_counter()
     if isinstance(camera, FrameCamera):
         frame = camera.capture_frame()
-        image = _fit(cv2, eight_bit(frame.pixels, frame.pixel_format), window, limit)
+        full = int(
+            frame.metadata.get("full_scale", 2 ** (8 * frame.pixels.itemsize) - 1)
+        )
+        image = _fit(cv2, eight_bit(frame.pixels, full), window, limit)
         height, width = frame.pixels.shape[:2]
         what = f"captured {width}x{height} {frame.pixel_format}"
     else:

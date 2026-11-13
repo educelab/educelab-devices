@@ -31,6 +31,9 @@ def assert_preview_frame_matches(camera):
     assert frame.geometry == camera.preview
     size = (frame.geometry.height, frame.geometry.width)
     assert frame.pixels.shape[:2] == size
+    assert 8 <= frame.bit_depth <= 8 * frame.pixels.dtype.itemsize
+    assert 0 < frame.full_scale <= 2**frame.bit_depth - 1
+    assert int(frame.pixels.max()) <= frame.full_scale
     return frame
 
 
@@ -121,6 +124,21 @@ class CameraContract(DeviceContract):
         assert small.capture_size == full.capture_size
         # Never larger; smaller wherever 64 pixels is a reduction.
         assert small.scale <= full.scale
+
+    def test_min_size_keeps_at_least_that_many_pixels(self, device):
+        full = device.start_preview()
+        longest = max(full.width, full.height)
+        for floor in (64, longest, longest + 100):
+            geometry = device.start_preview(min_size=floor)
+            kept = max(geometry.width, geometry.height)
+            # Every pixel the region has, if it has fewer than the floor.
+            assert min(floor, longest) <= kept <= longest
+            assert_preview_frame_matches(device)
+
+    def test_max_size_caps_what_min_size_asks_for(self, device):
+        geometry = device.start_preview(max_size=100, min_size=64)
+        assert max(geometry.width, geometry.height) <= 100
+        assert_preview_frame_matches(device)
 
     def test_uncapped_preview_is_at_least_as_large_as_a_capped_one(self, device):
         small = device.start_preview(max_size=64)
@@ -255,6 +273,8 @@ class FrameCameraContract(CameraContract):
             device.stop_preview()
             assert preview.pixel_format == capture.pixel_format
             assert preview.pixels.dtype == capture.pixels.dtype
+            assert preview.bit_depth == capture.metadata["bit_depth"]
+            assert preview.full_scale == capture.metadata["full_scale"]
 
     def test_capture_frame_during_preview_raises(self, device):
         device.start_preview()

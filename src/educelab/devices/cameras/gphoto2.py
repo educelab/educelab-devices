@@ -34,7 +34,7 @@ from educelab.devices.cameras._gphoto2 import (
     Widget,
     WidgetValue,
 )
-from educelab.devices.cameras._preview import HostCrop, host_crop
+from educelab.devices.cameras._preview import HostCrop, host_crop, reduction
 from educelab.devices.cameras.base import (
     APERTURE,
     CANONICAL_UNITS,
@@ -217,7 +217,9 @@ class GPhoto2Camera(FileCamera):
         self._focus_checked = False
         # The widget that turned live view on, so stopping can turn it off.
         self._live_view: str | None = None
-        self._preview_request: tuple[PreviewRegion, int | None] | None = None
+        self._preview_request: tuple[PreviewRegion, int | None, int | None] | None = (
+            None
+        )
         self._crop: HostCrop | None = None
         # The live-view image shape the crop was planned for.
         self._planned_for: tuple[int, int] | None = None
@@ -500,7 +502,7 @@ class GPhoto2Camera(FileCamera):
             raise self._error(exc, f"setting {name} to {value!r}") from exc
 
     def _start_preview(
-        self, region: PreviewRegion, max_size: int | None
+        self, region: PreviewRegion, max_size: int | None, min_size: int | None
     ) -> PreviewGeometry:
         session = self._require_session()
         if self._preview_request is None:
@@ -508,8 +510,8 @@ class GPhoto2Camera(FileCamera):
             if self._zoom_levels:
                 # The zoom centre is refused until live view is running.
                 self._grab_preview(session)
-        self._preview_request = (region, max_size)
-        self._view = self._zoom(session, region, max_size)
+        self._preview_request = (region, max_size, min_size)
+        self._view = self._zoom(session, region, max_size, min_size)
         # The live-view size is only known from an image, so grab one.
         return self._plan_crop(self._grab_preview(session))
 
@@ -535,11 +537,15 @@ class GPhoto2Camera(FileCamera):
             raise self._error(exc, "turning live view off") from exc
 
     def _zoom(
-        self, session: Session, region: PreviewRegion, max_size: int | None
+        self,
+        session: Session,
+        region: PreviewRegion,
+        max_size: int | None,
+        min_size: int | None,
     ) -> tuple[float, float, float, float]:
         """Point live view at the tightest zoom that contains ``region``, at
-        the smallest size that still gives ``max_size`` pixels, and return the
-        part of the sensor its images show."""
+        the smallest size that still gives the pixels asked for, and return
+        the part of the sensor its images show."""
         profile = _LIVE_VIEW.get(self._model or "")
         if profile is None or not self._zoom_levels:
             return _WHOLE_SENSOR
@@ -571,16 +577,19 @@ class GPhoto2Camera(FileCamera):
             return max(across, region.height / shown_h * frame_h)
 
         def delivered(size: str) -> float:
-            """Pixels left of that side once the host has fitted `max_size`."""
+            """Pixels left of that side once the host has reduced it."""
             side = longest(size)
-            if max_size is None:
-                return side
-            return side / max(math.ceil(side / max_size), 1)
+            return side / reduction(math.ceil(side), max_size, min_size)
 
-        # The smallest size that delivers nearly the most the cap allows. The
-        # first size past the cap isn't it: the host would halve that one.
         sizes = sorted(self._size_choices, key=profile.sizes.__getitem__)
-        enough = _NEARLY_BEST * max(map(delivered, sizes))
+        best = max(map(delivered, sizes))
+        if min_size is not None:
+            # The least data that still gives the floor, where any size does.
+            enough = min(float(min_size), best)
+        else:
+            # Nearly the most the cap allows. The first size past the cap
+            # isn't it: the host would halve that one.
+            enough = _NEARLY_BEST * best
         size = next(n for n in sizes if delivered(n) >= enough)
         wanted: dict[str, WidgetValue] = {
             "liveviewsize": size,
@@ -631,14 +640,14 @@ class GPhoto2Camera(FileCamera):
             crop = self._crop
         assert crop is not None
         return PreviewFrame(
-            np.ascontiguousarray(crop.apply(pixels)), "RGB8", arrived, crop.geometry
+            np.ascontiguousarray(crop.apply(pixels)), "RGB8", arrived, crop.geometry, 8
         )
 
     def _plan_crop(self, pixels: npt.NDArray[np.uint8]) -> PreviewGeometry:
         """Plan the host crop for live-view images the size of ``pixels``,
         which show the `_view` part of the sensor."""
         assert self._preview_request is not None
-        region, max_size = self._preview_request
+        region, max_size, min_size = self._preview_request
         height, width = pixels.shape[:2]
         size = (width, height)
         view_x, view_y, view_w, view_h = self._view
@@ -651,7 +660,7 @@ class GPhoto2Camera(FileCamera):
             min(region.width / view_w, 1.0 - x),
             min(region.height / view_h, 1.0 - y),
         )
-        crop = host_crop(within, max_size, sensor=size, frame=size)
+        crop = host_crop(within, max_size, sensor=size, frame=size, min_size=min_size)
         shown = crop.geometry.region
         on_sensor = PreviewRegion(
             view_x + shown.x * view_w,

@@ -1229,6 +1229,37 @@ def test_scale_is_preview_pixels_per_capture_pixel(roi_camera, roi_fake):
     assert roi_camera.preview_frame().geometry.scale == pytest.approx(0.25)
 
 
+def test_min_size_decimates_no_further_than_it_keeps(roi_camera, roi_fake):
+    # A cap of 880 halves the decimated image again, to 612; a floor keeps 1224.
+    geometry = roi_camera.start_preview(min_size=880)
+    assert roi_fake.get("DecimationVertical") == 2
+    assert (geometry.width, geometry.height) == (1224, 1024)
+    capped = roi_camera.start_preview(max_size=880)
+    assert (capped.width, capped.height) == (612, 512)
+
+
+@pytest.mark.parametrize(
+    ("model", "pixel_format", "full"),
+    [
+        # The CM3's 12 bits sit at the top of Mono16 (spinnaker.md).
+        ("Chameleon3 CM3-U3-50S5M", "Mono16", 65520),
+        ("Chameleon3 CM3-U3-50S5M", "Mono8", 255),
+        ("U3-36P0XCP-M", "Mono16", 65535),
+        ("U3-36P0XCP-M", "Mono10g40IDS", 1023),
+    ],
+)
+def test_frames_say_what_a_saturated_pixel_reads(model, pixel_format, full):
+    fake = FakeCamera(MONO, model, formats=("Mono8", "Mono16", "Mono10g40IDS"))
+    with GenICamCamera(MONO, FakeBackend([fake])) as camera:
+        camera.set_setting(PIXEL_FORMAT, pixel_format)
+        capture = camera.capture_frame()
+        assert capture.metadata["full_scale"] == full
+        camera.start_preview()
+        preview = camera.preview_frame()
+        assert preview.full_scale == full
+        assert preview.bit_depth == capture.metadata["bit_depth"]
+
+
 def test_max_size_decimates_and_strides_the_rest(roi_camera, roi_fake):
     geometry = roi_camera.start_preview(max_size=400)
     assert roi_fake.get("DecimationVertical") == 2

@@ -1229,6 +1229,23 @@ def test_scale_is_preview_pixels_per_capture_pixel(roi_camera, roi_fake):
     assert roi_camera.preview_frame().geometry.scale == pytest.approx(0.25)
 
 
+def test_sharpening_is_offered_where_the_camera_has_it_and_left_as_found():
+    fake = FakeCamera(MONO, **CM3, formats=("Mono8", "Mono16"), sharpness=True)
+    with GenICamCamera(MONO, FakeBackend([fake])) as camera:
+        # Unavailable in Mono8 on the CM3, so not offered there.
+        assert "SharpnessEnabled" not in camera.settings()
+        camera.set_setting(PIXEL_FORMAT, "Mono16")
+        assert camera.setting("SharpnessEnabled").value is True
+        assert not [name for name, _ in fake.writes if name == "SharpnessEnabled"]
+        camera.set_setting("SharpnessEnabled", False)
+        assert fake.get("SharpnessEnabled") is False
+        assert camera.setting("SharpnessEnabled").value is False
+
+
+def test_a_camera_without_sharpening_offers_no_such_setting(camera):
+    assert "SharpnessEnabled" not in camera.settings()
+
+
 def test_min_size_decimates_no_further_than_it_keeps(roi_camera, roi_fake):
     # A cap of 880 halves the decimated image again, to 612; a floor keeps 1224.
     geometry = roi_camera.start_preview(min_size=880)

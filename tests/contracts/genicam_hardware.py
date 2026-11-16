@@ -505,6 +505,23 @@ class GenICamHardwareTests:
         print(f"\nframe {(frame.timestamp - ready).total_seconds() * 1e3:.1f} ms on")
         assert frame.timestamp >= ready
 
+    def test_sharpening_can_be_turned_off_and_back_on(self, restore):
+        formats = restore.setting(PIXEL_FORMAT).choices or ()
+        offered = []
+        for pixel_format in formats:
+            restore.set_setting(PIXEL_FORMAT, pixel_format)
+            if "SharpnessEnabled" in restore.settings():
+                offered.append(pixel_format)
+        print(f"\nsharpening offered in {offered} of {formats}")
+        if not offered:
+            pytest.skip("this camera offers no SharpnessEnabled")
+        restore.set_setting(PIXEL_FORMAT, offered[0])
+        was = restore.setting("SharpnessEnabled").value
+        for value in (not was, was):
+            restore.set_setting("SharpnessEnabled", value)
+            assert restore.setting("SharpnessEnabled").value is value
+            restore.capture_frame(not_before=self.fresh(restore))
+
     def test_eight_bit_frames_are_the_top_bits_of_deeper_ones(self, restore):
         formats = restore.setting(PIXEL_FORMAT).choices or ()
         deeper = [f for f in formats if f in ("Mono16", "Mono10g40IDS")]

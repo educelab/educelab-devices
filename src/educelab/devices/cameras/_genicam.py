@@ -160,6 +160,8 @@ class Connection(Protocol):
 
     def get_string(self, name: str) -> str: ...
 
+    def get_bool(self, name: str) -> bool: ...
+
     def get_enum(self, name: str) -> str:
         """The symbolic name of the current entry."""
         ...
@@ -181,6 +183,8 @@ class Connection(Protocol):
     def set_int(self, name: str, value: int) -> None: ...
 
     def set_enum(self, name: str, symbol: str) -> None: ...
+
+    def set_bool(self, name: str, value: bool) -> None: ...
 
     def execute(self, name: str) -> None:
         """Run a command node, e.g. ``"TriggerSoftware"``."""
@@ -870,6 +874,8 @@ class GenICamCamera(FrameCamera):
             _Enum("ExposureAuto", "ExposureAuto", _AUTO_MODES),
             gain,
             _Enum("GainAuto", "GainAuto", _AUTO_MODES),
+            # On-camera sharpening, which the CM3 opens with on in Mono16.
+            _Bool("SharpnessEnabled", "SharpnessEnabled"),
             _Enum(PIXEL_FORMAT, "PixelFormat", _PIXEL_FORMATS, paused=True),
             # Read-only even where the camera could crop: only preview sets an ROI.
             _FrameSize(WIDTH, ("Width",), "px", integer=True),
@@ -1788,6 +1794,29 @@ class _Enum(_Descriptor):
         with camera._acquisition_paused():
             camera._set_enum(self.node, str(value), kind=CommandRejected)
         camera._raise_frame_rate()
+
+
+@dataclass(frozen=True)
+class _Bool(_Descriptor):
+    """A boolean node under its native name, while the camera offers it."""
+
+    name: str
+    node: str
+
+    def read(self, camera: GenICamCamera) -> Setting | None:
+        conn = camera._connection
+        if not conn.is_readable(self.node):
+            return None
+        value = camera._call(f"read {self.node}", lambda: conn.get_bool(self.node))
+        return Setting(self.name, value, read_only=not conn.is_writable(self.node))
+
+    def write(self, camera: GenICamCamera, value: SettingValue) -> None:
+        conn = camera._connection
+        camera._call(
+            f"set {self.node} to {value}",
+            lambda: conn.set_bool(self.node, bool(value)),
+            kind=CommandRejected,
+        )
 
 
 @dataclass(frozen=True)

@@ -303,6 +303,9 @@ class _AravisConnection:
     def get_enum(self, name: str) -> str:
         return self.get_string(name)
 
+    def get_bool(self, name: str) -> bool:
+        return bool(self._do(lambda: self._device.get_boolean_feature_value(name)))
+
     def float_range(self, name: str) -> tuple[float, float]:
         low, high = self._do(lambda: self._device.get_float_feature_bounds(name))
         return float(low), float(high)
@@ -328,6 +331,9 @@ class _AravisConnection:
 
     def set_enum(self, name: str, symbol: str) -> None:
         self._do(lambda: self._device.set_string_feature_value(name, symbol))
+
+    def set_bool(self, name: str, value: bool) -> None:
+        self._do(lambda: self._device.set_boolean_feature_value(name, value))
 
     def execute(self, name: str) -> None:
         self._do(lambda: self._device.execute_command(name))

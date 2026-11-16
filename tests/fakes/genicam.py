@@ -42,7 +42,7 @@ __all__ = [
     "payload_size",
 ]
 
-Kind = Literal["float", "int", "string", "enum", "command"]
+Kind = Literal["float", "int", "string", "enum", "command", "bool"]
 Access = Literal["RW", "RO", "WO", "NA"]
 ErrorKind = Literal["not_found", "access", "range", "timeout", "state", "busy"]
 
@@ -224,6 +224,8 @@ class FakeCamera:
         rate_auto: Add the CM3's ``AcquisitionFrameRateAuto``, on, and an
             ``AcquisitionFrameRate`` that is writable while it's off. Implies
             ``rate_caps_exposure``: the frame period is then the set rate's.
+        sharpness: Add the CM3's ``SharpnessEnabled``, on, available only in
+            16-bit pixel formats.
     """
 
     # Made-up figures, roughly a USB3 camera; nothing tests them against hardware.
@@ -268,6 +270,7 @@ class FakeCamera:
         limit_shrinks: bool = False,
         rate_caps_exposure: bool = False,
         rate_auto: bool = False,
+        sharpness: bool = False,
     ) -> None:
         self.arrival_latency = arrival_latency
         self.ids_nodes = ids_nodes
@@ -492,6 +495,17 @@ class FakeCamera:
         if ids_nodes:
             rate = self.MAX_FRAME_RATE
             nodes.append(Node("AcquisitionFrameRate", "float", rate, 0.1, rate))
+        if sharpness:
+            nodes.append(
+                Node(
+                    "SharpnessEnabled",
+                    "bool",
+                    True,
+                    access=lambda: (
+                        "RW" if self.get("PixelFormat").endswith("16") else "NA"
+                    ),
+                )
+            )
         if rate_auto:
             rate = self.MAX_FRAME_RATE
             nodes.append(enum("AcquisitionFrameRateAuto", "Continuous"))
@@ -603,6 +617,8 @@ class FakeCamera:
         if node.kind == "enum":
             if value not in node.entries:
                 raise FakeCameraError("range", f"{name} has no entry {value!r}")
+        elif node.kind == "bool" and not isinstance(value, bool):
+            raise FakeCameraError("range", f"{name} takes a bool, not {value!r}")
         elif node.kind in ("float", "int"):
             assert node.minimum is not None and node.maximum is not None
             if not node.minimum <= value <= node.maximum:
@@ -917,6 +933,9 @@ class FakeConnection:
     def get_enum(self, name: str) -> str:
         return str(self._read(name))
 
+    def get_bool(self, name: str) -> bool:
+        return bool(self._read(name))
+
     def float_range(self, name: str) -> tuple[float, float]:
         self.node_reads.append(name)
         low, high = self._do(lambda: self.camera.range(name))
@@ -939,6 +958,9 @@ class FakeConnection:
 
     def set_enum(self, name: str, symbol: str) -> None:
         self._do(lambda: self.camera.write(name, symbol))
+
+    def set_bool(self, name: str, value: bool) -> None:
+        self._do(lambda: self.camera.write(name, bool(value)))
 
     def execute(self, name: str) -> None:
         self._do(lambda: self.camera.execute(name))

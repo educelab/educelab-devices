@@ -10,7 +10,7 @@ import pytest
 
 from educelab.devices.cameras._genicam import BufferStatus
 from educelab.devices.errors import DeviceBusy, DeviceError, DeviceTimeout
-from fakes.genicam import FakeCamera, FrameSpec
+from fakes.genicam import FakeCamera, FrameSpec, Node
 
 SERIAL = "4108000001"
 OTHER = "4108000002"
@@ -139,6 +139,13 @@ class BackendContract:
         assert (low, high, inc) == sim.range("DeviceLinkThroughputLimit")
         conn.set_int("DeviceLinkThroughputLimit", low + inc)
         assert sim.get("DeviceLinkThroughputLimit") == low + inc
+
+    def test_booleans_read_and_write(self, conn, sim):
+        sim.nodes["SharpnessEnabled"] = Node("SharpnessEnabled", "bool", True)
+        assert conn.get_bool("SharpnessEnabled") is True
+        conn.set_bool("SharpnessEnabled", False)
+        assert sim.get("SharpnessEnabled") is False
+        assert conn.get_bool("SharpnessEnabled") is False
 
     def test_strings(self, conn):
         assert conn.get_string("DeviceSerialNumber") == SERIAL

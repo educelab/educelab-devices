@@ -201,6 +201,10 @@ class IEnumeration(_Node):
         return tuple(self._source.entries(self._name))
 
 
+class IBoolean(_Node):
+    pass
+
+
 class ICommand(_Node):
     def execute(self) -> None:
         _genapi(lambda: self._source.execute(self._name))
@@ -212,6 +216,7 @@ _NODE_TYPES = {
     "string": IString,
     "enum": IEnumeration,
     "command": ICommand,
+    "bool": IBoolean,
 }
 
 

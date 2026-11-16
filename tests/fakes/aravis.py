@@ -389,6 +389,12 @@ class FakeArvDevice:
     def get_string_feature_value(self, name: str) -> str:
         return str(self._read(name))
 
+    def get_boolean_feature_value(self, name: str) -> bool:
+        return bool(self._read(name))
+
+    def set_boolean_feature_value(self, name: str, value: bool) -> None:
+        self._write(name, bool(value))
+
     def set_string_feature_value(self, name: str, value: str) -> None:
         self._write(name, value)
 

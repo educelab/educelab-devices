@@ -324,7 +324,9 @@ camera.stop_preview()
 `educelab.devices.cameras` exports for type hints and `isinstance` checks. Besides the
 canonical settings they offer `TRIGGER` (`"Off"` or `"Software"`, where each capture
 fires a software trigger), `THROUGHPUT_LIMIT` in MB/s (`None` while the camera's limit is
-off), the camera's auto modes by their native names (`ExposureAuto`, `GainAuto`), and
+off), the camera's auto modes by their native names (`ExposureAuto`, `GainAuto`), the
+camera's on-board sharpening as `SharpnessEnabled` (`True` or `False`, while the camera
+offers it: the CM3 does in `Mono16` only, and opens with it on), and
 the read-only `current_throughput`, `resulting_frame_rate` and `link_speed`, each only
 where the camera has the feature. `link_speed` is in MB/s: the camera's
 `DeviceLinkSpeed`, or the nominal rate of its USB speed (625 for USB 3, 60 for USB 2)

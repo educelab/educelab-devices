@@ -410,8 +410,22 @@ and `PixelDynamicRangeMin` and `PixelDynamicRangeMax` both read 0 with no
 **On-camera processing.** In `Mono16` the camera opens with `SharpnessEnabled` true
 and `SharpnessAuto` `Continuous`, and `GammaEnabled` false; in `Mono8` all three are
 unavailable (`NA`), as are `LUTEnable` and the LUT nodes in both formats. The driver
-leaves them as the camera has them, so `Mono16` frames are sharpened. Read through
-PySpin's access modes (Aravis reports only that they aren't readable). **verified**
+leaves them as the camera has them, so `Mono16` frames are sharpened, but offers
+`SharpnessEnabled` as a setting under its own name while the camera has it readable,
+so a caller can turn it off: `camera.set_setting("SharpnessEnabled", False)` after
+choosing `Mono16`. It writes while acquiring, through Spinnaker and Aravis. Off, the
+saturated pixels that sharpening lifted to 65520 stay at 65504 (0.85% of a frame at
+3 dB on, none off). Read through PySpin's access modes (Aravis reports only that they
+aren't readable). **verified**
+
+All five of the lab's CM3-U3-50S5M agree (firmware 1.12.3.00, read 2026-11-16): in
+`Mono16`, `SharpnessEnabled` true, `SharpnessAuto` `Continuous`, `GammaEnabled` false,
+`Gamma` 1.0, LUT unavailable; in `Mono8`, sharpening, gamma and LUT unavailable, with
+`Sharpness` reading 1024. `BlackLevel` is 5.86 on each. With `SharpnessAuto` on, each
+camera picks its own strength for its scene: `Sharpness` read 1536 (`20305122`), 613
+(`20305113`), 1002 (`20305114`), 821 (`20298452`) and 550 (`20298479`), so `Mono16`
+from different cameras is sharpened by different amounts. Whether `Mono8` frames are
+sharpened, with the switch unavailable, is **unknown**. **verified**
 
 ## Differences from PySpin and SpinView
 
@@ -427,8 +441,9 @@ once it is closed.
 | `exposure_time` | `ExposureTime` | s → µs (× 10^6) | Read-only while `ExposureAuto` isn't `Off`; range depends on pixel format and frame rate ([Settings](#settings)) |
 | `gain` | `Gain` | dB → dB | Read-only while `GainAuto` isn't `Off` |
 | `ExposureAuto`, `GainAuto` | same | symbol → symbol | Choices are `Off` and `Continuous`; `Once` is left out |
+| `SharpnessEnabled` | same | bool → bool | Offered while readable: in `Mono16` only on the CM3-U3-50S5M, which opens with it on |
 | `pixel_format` | `PixelFormat` | symbol → symbol | Only Mono8, Mono16, RGB8 and 8/16-bit Bayer; changing it pauses acquisition |
-| `width`, `height` | `Width`, `Height` | px → px | Read-only: the size of the frames a capture returns. The driver never sets a region of interest. 2448 × 2048 on the CM3-U3-50S5M, matching captured frames (all five, 2026-10-29) |
+| `width`, `height` | `Width`, `Height` | px → px | Read-only: the size of the frames a capture returns. Only preview sets a region of interest, and puts the capture's back ([usb3-vision.md](usb3-vision.md#preview)). 2448 × 2048 on the CM3-U3-50S5M, matching captured frames (all five, 2026-10-29) |
 | `sensor_width`, `sensor_height` | `SensorWidth`, `SensorHeight` | px → px | Read-only; left out on a camera without them. 2448 × 2048 on the CM3-U3-50S5M: as found, no crop (`OffsetX` = `OffsetY` = 0) |
 | `throughput_limit` | `DeviceLinkThroughputLimit` | MB/s → bytes/s (× 10^6) | Reads `None` while `DeviceLinkThroughputLimitMode` is Off; writing sets the mode On first ([Settings](#settings)) |
 | `current_throughput` | `DeviceLinkCurrentThroughput` | MB/s ← bytes/s (÷ 10^6) | Read-only |

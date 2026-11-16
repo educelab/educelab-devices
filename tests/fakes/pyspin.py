@@ -420,6 +420,10 @@ class EnumNode(ValueNode):
         return self.GetCurrentEntry().symbolic
 
 
+class BooleanNode(ValueNode):
+    pass
+
+
 class CommandNode(Node):
     def Execute(self) -> None:
         self._source.execute(self._name)  # type: ignore[union-attr]
@@ -434,6 +438,7 @@ _NODE_CLASSES: dict[str, type[Node]] = {
     "string": StringNode,
     "enum": EnumNode,
     "command": CommandNode,
+    "bool": BooleanNode,
 }
 
 

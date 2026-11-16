@@ -30,7 +30,7 @@ A decoded pixel array captured by a camera, with its capture metadata.
 _Avoid_: Image (ambiguous with camera file)
 
 **Preview**:
-A camera state, entered and left explicitly, in which the camera delivers fresh, display-sized images for framing a shot and judging focus. Preview images are never captures.
+A camera state, entered and left explicitly, in which the camera delivers fresh images for framing a shot and judging focus, at its own resolution and pixel format unless the caller asks for a region or a smaller size. Preview images are never captures.
 _Avoid_: Live view, viewfinder
 
 **Preview region**:

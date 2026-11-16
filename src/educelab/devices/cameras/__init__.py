@@ -6,6 +6,7 @@ from educelab.devices.cameras._genicam import (
     GenICamCamera,
     host_time,
 )
+from educelab.devices.cameras._preview import HostCrop, host_crop
 from educelab.devices.cameras.aravis import AravisCamera
 from educelab.devices.cameras.base import (
     APERTURE,
@@ -23,6 +24,9 @@ from educelab.devices.cameras.base import (
     FileCamera,
     Frame,
     FrameCamera,
+    PreviewFrame,
+    PreviewGeometry,
+    PreviewRegion,
     Rounding,
     Setting,
     SettingValue,
@@ -59,6 +63,10 @@ __all__ = [
     "FrameCamera",
     "GenICamCamera",
     "GenTLCamera",
+    "HostCrop",
+    "PreviewFrame",
+    "PreviewGeometry",
+    "PreviewRegion",
     "Rounding",
     "Setting",
     "SettingValue",
@@ -67,5 +75,6 @@ __all__ = [
     "SimulatedFocusDrive",
     "SpinnakerCamera",
     "SpinnakerSystem",
+    "host_crop",
     "host_time",
 ]

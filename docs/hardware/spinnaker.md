@@ -300,7 +300,10 @@ streamed out by the device", in Spinnaker's `Camera.h`.
 
 A frame-rate setting (`AcquisitionFrameRateEnable` and `AcquisitionFrameRate` in the
 4.4.0 headers) is not exposed; the throughput limit covers the bandwidth problem. Older
-models may use other node names.
+models may use other node names. The CM3-U3-50S5M has `AcquisitionFrameRateAuto`
+(`Off`, `Continuous`) and `AcquisitionFrameRate`, writable while that is `Off`; preview
+holds the rate with them
+([usb3-vision.md](usb3-vision.md#preview)).
 
 **Exposure limits** (CM3-U3-50S5M, verified 2026-10-19):
 
@@ -381,13 +384,48 @@ bandwidth, makes each capture proportionally slower. 300 back-to-back captures d
 300 stale frames and re-measured the offset none of the time (hardware test, 2026-10-19
 and 2026-10-20), so buffers aren't leaked.
 
-`preview_frame()` takes the newest frame the same way (no `not_before`; in
-software-trigger mode it fires a trigger), shifts 16-bit pixels right by 8, and
-subsamples so the longest side is at most 1280 pixels. That assumes 16-bit data is
-left-aligned. The CM3-U3-50S5M's is (verified 2026-10-20: in Mono16 frames saved from
+`preview_frame()` takes a frame the same way (in software-trigger mode it fires a
+trigger) and returns it in the camera's pixel format, cropped to the preview region
+and subsampled only when `start_preview()` was given a `max_size`. A consumer that
+shifts 16-bit pixels down for display should know whether the data is left-aligned.
+The CM3-U3-50S5M's is (verified 2026-10-20: in Mono16 frames saved from
 20305113 and 20298452, the low 4 bits of every pixel were zero, so its 12-bit samples
 fill the top of the 16-bit range). Other models are unknown (Blackfly S sensors are
 10–12 bit); step 9's saved frames would show it.
+
+**Saturation.** The CM3-U3-50S5M saturates at 12-bit code 4094: 65504 in `Mono16`,
+never 65535, through Aravis and Spinnaker alike (`20305122`, 2026-11-16). With the
+camera's sharpening off, every saturated pixel read exactly 65504 at 0, 6 and 24 dB,
+for 10–74% of the frame. With it on, as it opens in `Mono16`, sharpening's overshoot
+lifts some to 65520 at low gain (about one in 5 to 15 at 0–6 dB; none from 12 dB). So
+the driver lists the model's `Mono16` `full_scale` as 65504, and clipping is
+`pixels >= full_scale`; other models are taken to reach 65535 (assumed). The top
+doesn't follow `BlackLevel` either: from 0 to 12 % (the camera's range; it opens at
+5.86) the black end rose from 16 to 7552 counts while saturated pixels stayed at
+65504. Mono8 clips at 255. The datasheet gives a 12-bit ADC but no saturation level,
+and `PixelDynamicRangeMin` and `PixelDynamicRangeMax` both read 0 with no
+`AdcBitDepth`, so no node says it. Why the top code is 4094 rather than 4095 is
+**unknown**; `VideoMode` other than Mode0 wasn't tried. **verified**
+
+**On-camera processing.** In `Mono16` the camera opens with `SharpnessEnabled` true
+and `SharpnessAuto` `Continuous`, and `GammaEnabled` false; in `Mono8` all three are
+unavailable (`NA`), as are `LUTEnable` and the LUT nodes in both formats. The driver
+leaves them as the camera has them, so `Mono16` frames are sharpened, but offers
+`SharpnessEnabled` as a setting under its own name while the camera has it readable,
+so a caller can turn it off: `camera.set_setting("SharpnessEnabled", False)` after
+choosing `Mono16`. It writes while acquiring, through Spinnaker and Aravis. Off, the
+saturated pixels that sharpening lifted to 65520 stay at 65504 (0.85% of a frame at
+3 dB on, none off). Read through PySpin's access modes (Aravis reports only that they
+aren't readable). **verified**
+
+All five of the lab's CM3-U3-50S5M agree (firmware 1.12.3.00, read 2026-11-16): in
+`Mono16`, `SharpnessEnabled` true, `SharpnessAuto` `Continuous`, `GammaEnabled` false,
+`Gamma` 1.0, LUT unavailable; in `Mono8`, sharpening, gamma and LUT unavailable, with
+`Sharpness` reading 1024. `BlackLevel` is 5.86 on each. With `SharpnessAuto` on, each
+camera picks its own strength for its scene: `Sharpness` read 1536 (`20305122`), 613
+(`20305113`), 1002 (`20305114`), 821 (`20298452`) and 550 (`20298479`), so `Mono16`
+from different cameras is sharpened by different amounts. Whether `Mono8` frames are
+sharpened, with the switch unavailable, is **unknown**. **verified**
 
 ## Differences from PySpin and SpinView
 
@@ -403,8 +441,9 @@ once it is closed.
 | `exposure_time` | `ExposureTime` | s → µs (× 10^6) | Read-only while `ExposureAuto` isn't `Off`; range depends on pixel format and frame rate ([Settings](#settings)) |
 | `gain` | `Gain` | dB → dB | Read-only while `GainAuto` isn't `Off` |
 | `ExposureAuto`, `GainAuto` | same | symbol → symbol | Choices are `Off` and `Continuous`; `Once` is left out |
+| `SharpnessEnabled` | same | bool → bool | Offered while readable: in `Mono16` only on the CM3-U3-50S5M, which opens with it on |
 | `pixel_format` | `PixelFormat` | symbol → symbol | Only Mono8, Mono16, RGB8 and 8/16-bit Bayer; changing it pauses acquisition |
-| `width`, `height` | `Width`, `Height` | px → px | Read-only: the size of the frames a capture returns. The driver never sets a region of interest. 2448 × 2048 on the CM3-U3-50S5M, matching captured frames (all five, 2026-10-29) |
+| `width`, `height` | `Width`, `Height` | px → px | Read-only: the size of the frames a capture returns. Only preview sets a region of interest, and puts the capture's back ([usb3-vision.md](usb3-vision.md#preview)). 2448 × 2048 on the CM3-U3-50S5M, matching captured frames (all five, 2026-10-29) |
 | `sensor_width`, `sensor_height` | `SensorWidth`, `SensorHeight` | px → px | Read-only; left out on a camera without them. 2448 × 2048 on the CM3-U3-50S5M: as found, no crop (`OffsetX` = `OffsetY` = 0) |
 | `throughput_limit` | `DeviceLinkThroughputLimit` | MB/s → bytes/s (× 10^6) | Reads `None` while `DeviceLinkThroughputLimitMode` is Off; writing sets the mode On first ([Settings](#settings)) |
 | `current_throughput` | `DeviceLinkCurrentThroughput` | MB/s ← bytes/s (÷ 10^6) | Read-only |
@@ -445,7 +484,7 @@ and writable again under `Off`, and every listed pixel format captures (hardware
 - **Incomplete frames dropped,** except `SPINNAKER_IMAGE_STATUS_MISSING_TRAILER`, which is
   accepted and flagged as `missing_trailer`.
 - **Pixels copied,** and every image buffer released, before a frame is returned.
-  `preview_frame()` is 8-bit and subsampled to at most 1280 px.
+  `preview_frame()` keeps the pixel format, and is cropped and subsampled on request.
 - **Errors:** every `SpinnakerException` becomes a `DeviceError` with no `__cause__` or
   `__context__` ([Hazards](#hazards)):
 
@@ -685,7 +724,7 @@ spin-4-min-80.log`), so a rerun doesn't overwrite an earlier one.
    camera's `-complete.png` and look for torn, shifted, or partly blank rows, especially
    at the bottom of the frame. Record how many were saved and whether they looked right.
    That settles whether accepting them is safe. The PNGs hold the raw 16-bit values; if
-   they look nearly black, the data is right-aligned (see `preview_frame()` above).
+   they look nearly black, the data is right-aligned (see the alignment note above).
 10. **Software trigger versus free-running.** With the same cameras on USB 3, Mono16,
     gain 10, 100 captures, run step 4's four runs again with `--trigger software` added,
     each with its own log (e.g. `spin-10-trig-min-80.log`), and rerun the free-running

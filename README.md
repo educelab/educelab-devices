@@ -51,7 +51,8 @@ with SimulatedStage() as stage:
 ```
 
 See [docs/guide.md](docs/guide.md) for how every device behaves (lifecycle,
-threading, errors, events) and [docs/hardware/](docs/hardware/README.md) for
+threading, errors, events), [docs/preview.md](docs/preview.md) for building a
+live preview into an application, and [docs/hardware/](docs/hardware/README.md) for
 what we know about each piece of hardware.
 
 ## Command line
@@ -64,6 +65,7 @@ el-devices spinnaker             # benchmark the attached Spinnaker cameras
 el-devices genicam --backend aravis   # ...or USB3 Vision cameras (aravis|gentl)
 el-devices simulate              # exercise every simulated device
 el-devices simulate stage light  # ...or only some roles
+el-devices preview simulated    # look at a camera's preview (needs the [viewer] extra)
 el-devices -v <command>          # log device traffic
 ```
 

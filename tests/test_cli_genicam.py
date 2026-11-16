@@ -342,3 +342,19 @@ def test_a_gain_past_the_cameras_choices_is_refused(monkeypatch, capsys, gain):
     assert main(["genicam", "--backend", "aravis", *args]) == 1
     assert "outside 0 to 18.06 dB" in capsys.readouterr().err
     assert sim.get("Gain") == 1.0
+
+
+def test_previews_each_camera_after_the_captures(backend, capsys):
+    args = ["--frames", "1", "--preview", "3", "--region", "0.25,0.25,0.5,0.5"]
+    assert main(["genicam", "--backend", backend, *args]) == 0
+    out = capsys.readouterr().out
+    # The 6 rows don't split at a quarter, so the region rounds inward.
+    assert "preview: 4x2 Mono8, region 0.25,0.3333,0.5,0.3333" in out
+    assert out.count("region 0.25,0.3333,0.5,0.3333") == 2
+    assert out.count("3 frame(s)") == 2
+
+
+def test_a_preview_region_off_the_sensor_fails(backend, capsys):
+    args = ["--frames", "1", "--preview", "--region", "0.9,0.9,0.5,0.5"]
+    assert main(["genicam", "--backend", backend, *args]) == 1
+    assert "region" in capsys.readouterr().err

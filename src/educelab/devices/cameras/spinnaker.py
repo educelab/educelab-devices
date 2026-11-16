@@ -16,7 +16,6 @@ from typing import Any, Self, TypeVar
 import numpy.typing as npt
 
 from educelab.devices.cameras._genicam import (
-    PREVIEW_MAX_SIZE,
     RETRIES_BEFORE_REMEASURE,
     THROUGHPUT_LIMIT,
     TIMESTAMP_SAMPLES,
@@ -35,7 +34,6 @@ from educelab.devices.errors import (
 
 __all__ = [
     "MIN_SPINNAKER_VERSION",
-    "PREVIEW_MAX_SIZE",
     "PYSPIN_INSTALL_HINT",
     "RETRIES_BEFORE_REMEASURE",
     "THROUGHPUT_LIMIT",
@@ -475,6 +473,9 @@ class _PySpinConnection:
     def get_string(self, name: str) -> str:
         return str(self._get(name, "CStringPtr", lambda n: n.GetValue()))
 
+    def get_bool(self, name: str) -> bool:
+        return bool(self._get(name, "CBooleanPtr", lambda n: n.GetValue()))
+
     def get_enum(self, name: str) -> str:
         return self._enum_symbol(name)
 
@@ -505,6 +506,10 @@ class _PySpinConnection:
 
     def set_enum(self, name: str, symbol: str) -> None:
         self._set_enum(name, symbol)
+
+    def set_bool(self, name: str, value: bool) -> None:
+        node = self._node(name, "CBooleanPtr")
+        self._do(lambda: node.SetValue(value))
 
     def execute(self, name: str) -> None:
         node = self._node(name, "CCommandPtr")

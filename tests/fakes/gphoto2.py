@@ -7,6 +7,7 @@ from collections import deque
 from collections.abc import Callable, Iterable, Mapping
 
 from educelab.devices.cameras._gphoto2 import (
+    GP_ERROR,
     GP_ERROR_BAD_PARAMETERS,
     GP_ERROR_CAMERA_ERROR,
     GP_ERROR_IO_USB_FIND,
@@ -43,6 +44,12 @@ NIKON_WIDGETS = (
         section="capturesettings",
     ),
     _radio("continuousaf", "On", ["Off", "On"], section="capturesettings"),
+    _radio("imagesize", "8256x5504", ["8256x5504", "6192x4128", "4128x2752"]),
+    _radio("liveviewsize", "VGA", ["QVGA", "VGA", "XGA"]),
+    _radio("liveviewzoomarea", "0", ["0", "512", "1024", "2048"]),
+    Widget(
+        "changeafarea", "Set Nikon Autofocus area", "text", "0x0", section="actions"
+    ),
     Widget(
         "colortemperature",
         "Color Temperature",
@@ -80,6 +87,20 @@ NIKON_WIDGETS = (
 )
 
 
+# The Z7 II's live-view frames (docs/hardware/gphoto2-cameras.md, Live view).
+LIVE_VIEW_SIZES = {"QVGA": (320, 212), "VGA": (640, 424), "XGA": (1024, 680)}
+
+
+def image_area(width, height):
+    """`NIKON_WIDGETS` with the camera set to another image area, e.g.
+    ``image_area(5408, 3600)`` for DX: ``imagesize`` lists that area's sizes."""
+    sizes = [f"{width * k // 4}x{height * k // 4}" for k in (4, 3, 2)]
+    return [
+        _radio("imagesize", sizes[0], sizes) if w.name == "imagesize" else w
+        for w in NIKON_WIDGETS
+    ]
+
+
 @functools.cache
 def jpeg(width=64, height=48):
     """A small JPEG, like a live-view frame."""
@@ -106,7 +127,8 @@ class FakeCamera:
         port: The camera's port, e.g. ``"usb:020,007"``.
         widgets: The config tree, flattened. Defaults to `NIKON_WIDGETS`.
         suffixes: Files each capture produces, by extension.
-        preview: Bytes `capture_preview()` returns. Defaults to a small JPEG.
+        preview: Bytes `capture_preview()` returns. Defaults to a JPEG the
+            size ``liveviewsize`` says, or a small one without that widget.
         focus_travel: Steps between the lens's near and far limits.
         focus_position: Where the lens starts, in steps from near.
 
@@ -130,7 +152,11 @@ class FakeCamera:
         self.port = port
         self.widgets = {w.name: w for w in widgets}
         self.suffixes = tuple(suffixes)
-        self.preview = jpeg() if preview is None else preview
+        self.preview = preview
+        # On from the first preview or viewfinder write until close, as on the
+        # Z7 II; changeafarea is refused before that.
+        self.live_view = False
+        self.af_areas: list[str] = []
         self.writes: list[dict[str, WidgetValue]] = []
         self.focus_travel = focus_travel
         self.focus_position = focus_position
@@ -162,6 +188,7 @@ class FakeCamera:
     def close(self) -> None:
         self._call("close")
         self.is_open = False
+        self.live_view = False
 
     def capture(self) -> FilePath:
         self._call("capture")
@@ -196,6 +223,14 @@ class FakeCamera:
         # A single-widget read can't see which section a widget is in.
         return None if widget is None else dataclasses.replace(widget, section="")
 
+    def find_widgets(self, names: Iterable[str]) -> dict[str, Widget]:
+        self._call("find_widgets")
+        return {
+            name: dataclasses.replace(self.widgets[name], section="")
+            for name in names
+            if name in self.widgets
+        }
+
     def value(self, name: str) -> WidgetValue | None:
         self._call("value")
         widget = self.widgets.get(name)
@@ -206,11 +241,18 @@ class FakeCamera:
         for name, value in values.items():
             if not self._accepts(self.widgets[name], value):
                 raise GPhoto2Error(GP_ERROR_BAD_PARAMETERS, "Bad parameters")
+        if "changeafarea" in values and not self.live_view:
+            raise GPhoto2Error(GP_ERROR, "Unspecified error")
         self.writes.append(dict(values))
         for name, value in values.items():
             if name == "manualfocusdrive":
                 self._drive_focus(float(value))
+            elif name == "changeafarea":
+                # Reads back 0x0 after every write.
+                self.af_areas.append(str(value))
             else:
+                if name == "viewfinder" and value:
+                    self.live_view = True
                 self.widgets[name] = dataclasses.replace(
                     self.widgets[name], value=value
                 )
@@ -239,7 +281,24 @@ class FakeCamera:
 
     def capture_preview(self) -> bytes:
         self._call("capture_preview")
-        return self.preview
+        self.live_view = True
+        if self.preview is not None:
+            return self.preview
+        size = self.widgets.get("liveviewsize")
+        if size is None:
+            return jpeg()
+        width, height = LIVE_VIEW_SIZES[str(size.value)]
+        zoomed = self.widgets["liveviewzoomarea"].value != "0"
+        if size.value == "QVGA" and zoomed:
+            height = 216
+        area = self.widgets.get("imagesize")
+        if area is not None and not zoomed:
+            # Unzoomed frames take the image area's shape, in a 4:3 box.
+            area_w, area_h = map(int, area.choices[0].split("x"))
+            if abs(area_w / area_h - 1.5) > 0.01:
+                fitted = min(width, round(0.75 * width * area_w / area_h))
+                width, height = fitted, round(fitted * area_h / area_w)
+        return jpeg(width, height)
 
 
 class FakeLibrary:

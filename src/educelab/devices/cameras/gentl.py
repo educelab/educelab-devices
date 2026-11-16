@@ -552,6 +552,9 @@ class _Features:
     def get_enum(self, name: str) -> str:
         return str(self._get(name))
 
+    def get_bool(self, name: str) -> bool:
+        return bool(self._get(name))
+
     def float_range(self, name: str) -> tuple[float, float]:
         node = self._node(name)
         return self._do(lambda: (float(node.min), float(node.max)))
@@ -574,6 +577,9 @@ class _Features:
 
     def set_enum(self, name: str, symbol: str) -> None:
         self._set(name, symbol)
+
+    def set_bool(self, name: str, value: bool) -> None:
+        self._set(name, bool(value))
 
     def execute(self, name: str) -> None:
         node = self._node(name)

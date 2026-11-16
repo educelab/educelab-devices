@@ -5,6 +5,8 @@ import sys
 from pathlib import Path, PurePath
 from typing import TYPE_CHECKING
 
+from educelab.devices.app import _preview
+
 # Imported where it's used, so other subcommands don't load the driver.
 if TYPE_CHECKING:
     from educelab.devices.cameras.gphoto2 import GPhoto2Camera
@@ -33,9 +35,7 @@ def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") 
         help="capture once and save every file to this directory, created if needed, "
         "under the camera's file names",
     )
-    parser.add_argument(
-        "--preview", action="store_true", help="grab one live-view frame"
-    )
+    _preview.add_arguments(parser)
     parser.add_argument(
         "--focus-steps",
         type=int,
@@ -49,6 +49,10 @@ def run(args: argparse.Namespace) -> int:
     from educelab.devices.cameras import EXPOSURE_TIME
     from educelab.devices.cameras.gphoto2 import GPhoto2Camera
 
+    problem = _preview.problem(args)
+    if problem:
+        print(f"el-devices: {problem}", file=sys.stderr)
+        return 1
     camera = GPhoto2Camera(args.port)
     try:
         camera.open()
@@ -67,9 +71,8 @@ def run(args: argparse.Namespace) -> int:
             print(f"exposure_time set to {nearest:.4g} s")
         if args.capture is not None and not _capture(camera, args.capture):
             return 1
-        if args.preview:
-            height, width = camera.preview_frame().shape[:2]
-            print(f"preview: {width}x{height}")
+        if args.preview and _preview.run(camera, args):
+            return 1
         if args.focus_steps is not None and not _step_focus(camera, args.focus_steps):
             return 1
     return 0

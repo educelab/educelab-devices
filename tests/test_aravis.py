@@ -278,6 +278,35 @@ def test_grab_returns_the_newest_frame_and_recycles_older_ones(camera, sim):
     assert stream.get_n_buffers() == (BUFFER_COUNT, 0)
 
 
+def test_a_released_buffer_rests_before_going_back_to_the_stream(
+    camera, sim, monkeypatch
+):
+    # Handed straight back, Aravis's async mode loses it (usb3-vision.md).
+    monkeypatch.setattr(aravis, "BUFFER_REST_S", 0.05)
+    conn = connection_of(camera)
+    stream = conn._stream
+    stream.arrive(1)
+    conn.grab(1.0).release()
+    assert stream.get_n_buffers() == (BUFFER_COUNT - 1, 0)
+    # The next grab waits out the rest and returns it first.
+    stream.arrive(1)
+    started = time.perf_counter()
+    buffer = conn.grab(1.0)
+    assert stream.get_n_buffers() == (BUFFER_COUNT - 1, 0)
+    assert time.perf_counter() - started >= 0.04
+    buffer.release()
+
+
+def test_stopping_returns_a_resting_buffer(camera, sim, monkeypatch):
+    monkeypatch.setattr(aravis, "BUFFER_REST_S", 0.05)
+    conn = connection_of(camera)
+    conn._stream.arrive(1)
+    conn.grab(1.0).release()
+    assert len(sim.held) == 1
+    camera.close()
+    assert sim.held == []
+
+
 def test_frames_landing_while_nobody_grabs_leave_only_the_newest(camera, sim):
     # Otherwise Aravis fills every buffer and then drops the newer frames.
     stream = connection_of(camera)._stream
@@ -550,6 +579,7 @@ class TestAravisCameraContract(FrameCameraContract):
     def test_closing_lets_go_of_the_camera(self, make_device, repository):
         with make_device() as camera:
             camera.capture_frame()
+            camera.start_preview()
             camera.preview_frame()
         assert not repository.cameras[0].opened
         assert repository.cameras[0].held == []
@@ -579,3 +609,16 @@ def test_el_devices_discover_lists_aravis_cameras(
     out = capsys.readouterr().out
     assert "aravis: 2 found" in out
     assert re.search(rf"U3-36P0XCP-M +{MONO} +usb:1-1", out)
+
+
+def test_an_roi_preview_resizes_the_stream_and_puts_it_back():
+    sim = FakeCamera(MONO, width=320, height=240, roi=True, decimation=2)
+    with AravisCamera(MONO, repository=FakeRepository([sim])) as camera:
+        geometry = camera.start_preview((0.25, 0.25, 0.25, 0.25), max_size=40)
+        assert sim.get("DecimationVertical") == 2
+        frame = camera.preview_frame()
+        assert frame.pixels.shape == (geometry.height, geometry.width)
+        moved = camera.start_preview((0.5, 0.5, 0.25, 0.25), max_size=40)
+        assert camera.preview_frame().geometry == moved
+        camera.stop_preview()
+        assert camera.capture_frame().pixels.shape == (240, 320)

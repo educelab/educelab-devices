@@ -345,6 +345,7 @@ class TestSpinnakerCameraContract(FrameCameraContract):
     def test_closing_releases_the_sdk(self, make_device, pyspin):
         with make_device() as camera:
             camera.capture_frame()
+            camera.start_preview()
             camera.preview_frame()
         assert_released(pyspin)
 
@@ -357,3 +358,18 @@ class TestSpinnakerCameraContractSoftwareTrigger(TestSpinnakerCameraContract):
         with make_device() as camera:
             camera.set_setting(TRIGGER, "Software")
             yield camera
+
+
+def test_an_roi_preview_resizes_the_stream_and_puts_it_back():
+    sim = flir_camera(
+        MONO, "Chameleon3 CM3-U3-50S5M", width=320, height=240, roi=True, decimation=2
+    )
+    with SpinnakerCamera(MONO, pyspin=FakePySpin([sim])) as camera:
+        geometry = camera.start_preview((0.25, 0.25, 0.25, 0.25), max_size=40)
+        assert sim.get("DecimationVertical") == 2
+        frame = camera.preview_frame()
+        assert frame.pixels.shape == (geometry.height, geometry.width)
+        moved = camera.start_preview((0.5, 0.5, 0.25, 0.25), max_size=40)
+        assert camera.preview_frame().geometry == moved
+        camera.stop_preview()
+        assert camera.capture_frame().pixels.shape == (240, 320)

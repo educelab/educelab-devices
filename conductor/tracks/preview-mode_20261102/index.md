@@ -1,7 +1,7 @@
 # Track: Camera Preview Mode
 
 **ID:** preview-mode_20261102
-**Status:** Pending
+**Status:** In Progress
 
 ## Documents
 

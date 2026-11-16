@@ -1463,13 +1463,17 @@ def test_a_preview_keeps_an_exposure_the_smaller_image_still_allows():
         assert fake.get("ExposureTime") == 2_000.0
 
 
-def test_a_size_known_to_cut_the_exposure_is_not_tried_again():
+def test_a_size_known_to_cut_the_exposure_is_not_tried_again(caplog):
     fake = capped_camera(20_000.0)
     with GenICamCamera(MONO, FakeBackend([fake])) as camera:
         camera.start_preview(QUARTER)
         fake.writes.clear()
-        camera.start_preview(PreviewRegion(0.5, 0.5, 0.25, 0.25))
+        caplog.clear()
+        with caplog.at_level(logging.INFO):
+            camera.start_preview(PreviewRegion(0.5, 0.5, 0.25, 0.25))
         assert fake.writes == []
+        # Skipping the attempt still says why the frames are whole.
+        assert "cropping whole frames instead" in caplog.text
         # A shorter exposure fits, so the camera crops again.
         camera.set_setting(EXPOSURE_TIME, 0.002)
         camera.start_preview(QUARTER)
@@ -1554,6 +1558,16 @@ def test_a_limit_that_cannot_be_restored_is_logged_not_raised(caplog):
         assert "throughput limit not restored" in caplog.text
         assert geometry_of(fake) == (0, 0, 2448, 2048)
         del fake.failures[name]
+
+
+def test_a_camera_without_a_writable_roi_says_why_it_crops_on_the_host(caplog):
+    with (
+        caplog.at_level(logging.INFO),
+        GenICamCamera(MONO, FakeBackend([FakeCamera(MONO)])),
+    ):
+        pass
+    assert "previews will crop on the host" in caplog.text
+    assert "OffsetX" in caplog.text
 
 
 def test_a_camera_without_decimation_strides_on_the_host():

@@ -966,7 +966,13 @@ class GenICamCamera(FrameCamera):
         self._exposure_caps = {}
         self._decimations = (1,)
         nodes = ("Width", "Height", "OffsetX", "OffsetY")
-        if not all(conn.is_writable(node) for node in nodes):
+        locked = [node for node in nodes if not conn.is_writable(node)]
+        if locked:
+            logger.info(
+                "%r: previews will crop on the host: %s not writable",
+                self,
+                ", ".join(locked),
+            )
             return
         try:
             if conn.is_writable("DecimationVertical"):
@@ -1016,11 +1022,6 @@ class GenICamCamera(FrameCamera):
                 self._write_geometry(target, decimate=False)
             self._raise_frame_rate()
             if exposure is not None and not self._keep_exposure(exposure, target):
-                logger.info(
-                    "%r: a smaller image would shorten the exposure; "
-                    "cropping whole frames instead",
-                    self,
-                )
                 return self._start_whole_frame_preview(
                     region, max_size, min_size, exposure
                 )
@@ -1053,6 +1054,12 @@ class GenICamCamera(FrameCamera):
     ) -> PreviewGeometry:
         """Preview from whole frames, for an exposure too long for the frame
         rate of a smaller image (the CM3; usb3-vision.md, Preview)."""
+        logger.info(
+            "%r: a smaller image would shorten the exposure (%g); "
+            "cropping whole frames instead",
+            self,
+            exposure,
+        )
         changed = self._applied is not None
         self._stop_preview()
         if changed:

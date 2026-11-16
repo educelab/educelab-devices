@@ -197,7 +197,7 @@ Checked on the Z7 II, 2026-11-13, after the code review and cleanup: `min_size=8
 
 ### Verification
 
-- [ ] The maintainer confirms pgs-scan works against this phase.
+- [x] The maintainer confirms pgs-scan works against this phase (2026-11-16, against `b38afdf`). Its feedback, none blocking: the whole-frame fallback logged only the first time and the host-crop fallback not at all, so both now log at info each time; `width` and `height` keep describing captures, by design, and the guide now points to `PreviewGeometry` for the live size.
 
 ## Maintainer sign-off
 

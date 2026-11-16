@@ -311,7 +311,8 @@ camera.stop_preview()
   ```
 
 - **Settings can change during preview** and apply to the next images. `width` and
-  `height` keep describing captures.
+  `height` keep describing captures; the preview's size and region are in the
+  `PreviewGeometry` that `start_preview()` returns and each frame's `geometry`.
 - **`preview_frame(not_before=...)`** skips images from before a moment, such as the
   end of a focus step. A camera that can't time its frames raises `DeviceError`
   instead, as it does for `capture_frame()`.

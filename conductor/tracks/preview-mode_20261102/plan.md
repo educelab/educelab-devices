@@ -199,6 +199,15 @@ Checked on the Z7 II, 2026-11-13, after the code review and cleanup: `min_size=8
 
 - [ ] The maintainer confirms pgs-scan works against this phase.
 
+## Maintainer sign-off
+
+Approved by the maintainer, 2026-11-16:
+
+- The ADR 0007 and `CONTEXT.md` (**Preview**) edits.
+- Phase 6's changes to the camera interface: `min_size`, the `_start_preview(region, max_size, min_size)` hook, `bit_depth` and `full_scale` on frames, `capture_size` and `scale` on geometry, and the base class retrying a failed stop before a capture.
+- Resetting a GenICam camera's ROI and decimation at open, so an ROI set in a vendor tool no longer survives.
+- Dropping the explicit acquisition-mode refactor (Task 3.2), since preview isn't a third mode.
+
 ## Final Verification
 
 - [ ] All acceptance criteria met

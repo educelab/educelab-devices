@@ -90,8 +90,13 @@ All of the above went into this track (Phase 6 of `plan.md`). What pgs-scan need
 1. **Bit depth:** `PreviewFrame.bit_depth` and `PreviewFrame.full_scale`, matching a
    capture's `metadata["bit_depth"]` and new `metadata["full_scale"]`. Drop the
    `eight_bit()` copy and the low-bits heuristic; scale by `full_scale`.
-2. **CM3 `Mono16`:** `full_scale` is 65520; `bit_depth` stays 16, the format's depth.
+2. **CM3 `Mono16`:** `full_scale` is 65504, not the 65520 reported above: measured
+   2026-11-16, saturated pixels read 12-bit 4094 at every gain, and only the camera's
+   sharpening lifts a few to 65520. `bit_depth` stays 16, the format's depth.
    Clipping is `pixels >= frame.full_scale`.
+6. **Sharpening:** every CM3 opens with on-camera sharpening on in `Mono16`, at a
+   strength each picks for its scene. The driver leaves it as found;
+   `set_setting("SharpnessEnabled", False)` turns it off (spinnaker.md).
 3. **The floor:** `start_preview(region, max_size, *, min_size=None)`. Ask with
    `min_size=` the view's size to get the nearest step at or above it; keep
    `max_size` for hard caps such as thumbnails. **Breaking for subclasses:** the

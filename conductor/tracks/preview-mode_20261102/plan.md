@@ -210,10 +210,10 @@ Approved by the maintainer, 2026-11-16:
 
 ## Final Verification
 
-- [ ] All acceptance criteria met
-- [ ] Tests passing
-- [ ] Documentation updated
-- [ ] Ready for review
+- [x] All acceptance criteria met (checked against the code 2026-11-16; the spec's signature now shows `min_size`, added in Phase 6)
+- [x] Tests passing (2862 passed, 52 skipped; ruff and mypy clean; hardware suites on every camera, Phase 6 above)
+- [x] Documentation updated (guide, `docs/preview.md`, ADR 0007, CONTEXT.md, the gphoto2 and USB3 Vision docs, `spinnaker.md`; the IDS's preview is in `usb3-vision.md`)
+- [x] Ready for review (PR #36)
 
 ---
 

@@ -234,9 +234,9 @@ Numeric arguments can be Python numbers or numpy scalars (e.g. values from `np.l
 
 Frames with more than 8 bits per value come as `uint16`. `frame.metadata["bit_depth"]`
 is the format's depth, and `frame.metadata["full_scale"]` the value a saturated pixel
-reads. They differ where the camera has fewer bits than the format: a 10-bit format
-runs from 0 to 1023, but the CM3's `Mono16` holds 12 bits at the top and saturates at
-65520.
+reads: any pixel at or above it is clipped. They differ where the camera saturates
+below the format's top: a 10-bit format runs from 0 to 1023, but the CM3's `Mono16`
+holds 12 bits at the top and saturates at 65504.
 
 On Windows before Python 3.13, `datetime.now()` and `time.time()` tick every 15.6 ms,
 so a `not_before` taken from them can be up to 15.6 ms early, letting through a frame
@@ -402,7 +402,7 @@ A frame's `metadata` holds:
 |---|---|
 | `exposure_time`, `gain` | The settings when the frame was taken, in seconds and dB; `None` if the camera has no such node |
 | `bit_depth` | Bits per pixel value in the pixel format |
-| `full_scale` | The value a saturated pixel reads: `2**bit_depth - 1`, or less where the camera has fewer bits (65520 for the CM3's `Mono16`) |
+| `full_scale` | The value saturated pixels read, so clipping is `pixels >= full_scale`: `2**bit_depth - 1`, or less where the camera saturates lower (65504 for the CM3's `Mono16`) |
 | `device_timestamp_ns` | The camera's own timestamp counter, which marks the end of exposure; `frame.timestamp` is the start, in host time |
 | `frame_id` | The camera's frame counter |
 | `timestamp_source` | How `frame.timestamp` was found: `"latch"` (the camera's timestamp latch), `"arrival"` (when frames reach the host, about a millisecond less exact), `"trigger"` (the software trigger that exposed it), or `None` |

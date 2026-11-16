@@ -33,7 +33,7 @@ def assert_preview_frame_matches(camera):
     assert frame.pixels.shape[:2] == size
     assert 8 <= frame.bit_depth <= 8 * frame.pixels.dtype.itemsize
     assert 0 < frame.full_scale <= 2**frame.bit_depth - 1
-    assert int(frame.pixels.max()) <= frame.full_scale
+    assert int(frame.pixels.max()) <= 2**frame.bit_depth - 1
     return frame
 
 

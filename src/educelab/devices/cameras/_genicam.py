@@ -317,8 +317,9 @@ _SELF_SLOWING_VENDORS = frozenset({_IDS})
 _AUTO_MODES = ("Off", "Continuous")
 _RATE_AUTO = "AcquisitionFrameRateAuto"
 # Bits each model actually has in a 16-bit format, held at the top. Measured
-# on the CM3s' frames: the low 4 bits never set (spinnaker.md, Preview).
-_SIXTEEN_BIT_MODELS = {"Chameleon3 CM3-U3-50S5M": 12}
+# Where a model saturates in a format, below the format's top. The CM3 saturates
+# at 12-bit 4094 (65504); its sharpening lifts a few to 65520 (spinnaker.md).
+_SATURATION = {("Chameleon3 CM3-U3-50S5M", "Mono16"): 65504}
 # A geometry change re-rounds the exposure a little; less than this is a cut.
 _EXPOSURE_KEPT = 0.99
 _US_PER_S = 1e6
@@ -2009,15 +2010,10 @@ def bit_depth(pixel_format: str) -> int:
 
 
 def full_scale(pixel_format: str, model: str = "") -> int:
-    """The value a saturated pixel reads, in a format the core can shape.
-
-    A 16-bit format from a camera with fewer bits holds them at the top: the
-    CM3-U3-50S5M's 12 bits read 0, 16, 32, up to 65520 (spinnaker.md, Preview).
-    Other models are taken to fill all 16 (assumed).
-    """
-    depth = bit_depth(pixel_format)
-    bits = min(_SIXTEEN_BIT_MODELS.get(model, depth), depth)
-    return (2**bits - 1) << (depth - bits)
+    """The value saturated pixels read, in a format the core can shape: any
+    pixel at or above it is clipped. The format's top unless the model is
+    known to saturate lower; others are taken to reach it (assumed)."""
+    return _SATURATION.get((model, pixel_format), 2 ** bit_depth(pixel_format) - 1)
 
 
 def shaped_pixels(

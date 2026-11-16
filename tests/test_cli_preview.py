@@ -301,8 +301,8 @@ def test_a_view_waits_for_input_to_settle(monkeypatch):
         (512, 1023, 128),
         (2048, 4095, 128),
         # The CM3's 12 bits held at the top of Mono16.
-        (0x8000, 65520, 128),
-        (65520, 65520, 255),
+        (0x8000, 65504, 128),
+        (65504, 65504, 255),
     ],
 )
 def test_deeper_formats_are_scaled_to_eight_bits(value, full_scale, expected):

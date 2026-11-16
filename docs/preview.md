@@ -138,9 +138,10 @@ A camera rounds the region to what it can deliver, and reports what it applied.
 Preview images are not converted ([ADR 0007](adr/0007-preview-is-an-explicit-camera-state.md)):
 they come at the camera's bit depth and pixel format.
 
-- **Scale by `frame.full_scale`**, the value a saturated pixel reads. It's below the
-  format's range where the camera has fewer bits: the CM3's `Mono16` holds 12 bits at
-  the top, in steps of 16, and saturates at 65520. `frame.bit_depth` is the format's
+- **Scale by `frame.full_scale`**, the value saturated pixels read. It's below the
+  format's range where the camera saturates lower: the CM3's `Mono16` holds 12 bits at
+  the top, in steps of 16, and saturated pixels read 65504 (sharpening lifts a few to 65520). Treat
+  `pixels >= frame.full_scale` as clipped. `frame.bit_depth` is the format's
   depth (16 there), as a capture's `metadata["bit_depth"]` is, and captures carry the
   same `metadata["full_scale"]`.
 - **Scale to 8 bits for the screen only.** Keep the original for histograms, focus

@@ -391,9 +391,9 @@ def test_a_preview_frame_without_a_depth_takes_it_from_its_pixels():
     shallow = PreviewFrame(np.zeros((2, 2), np.uint8), "Mono8", stamp, geometry)
     assert (shallow.bit_depth, shallow.full_scale) == (8, 255)
     given = PreviewFrame(
-        np.zeros((2, 2), np.uint16), "Mono16", stamp, geometry, 16, 65520
+        np.zeros((2, 2), np.uint16), "Mono16", stamp, geometry, 16, 65504
     )
-    assert given.full_scale == 65520
+    assert given.full_scale == 65504
 
 
 def test_preview_frame_passes_not_before_through(camera):

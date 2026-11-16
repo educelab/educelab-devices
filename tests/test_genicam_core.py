@@ -1241,8 +1241,8 @@ def test_min_size_decimates_no_further_than_it_keeps(roi_camera, roi_fake):
 @pytest.mark.parametrize(
     ("model", "pixel_format", "full"),
     [
-        # The CM3's 12 bits sit at the top of Mono16 (spinnaker.md).
-        ("Chameleon3 CM3-U3-50S5M", "Mono16", 65520),
+        # The CM3 saturates at 12-bit 4094, at the top of Mono16 (spinnaker.md).
+        ("Chameleon3 CM3-U3-50S5M", "Mono16", 65504),
         ("Chameleon3 CM3-U3-50S5M", "Mono8", 255),
         ("U3-36P0XCP-M", "Mono16", 65535),
         ("U3-36P0XCP-M", "Mono10g40IDS", 1023),

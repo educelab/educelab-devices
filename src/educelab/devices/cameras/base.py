@@ -226,10 +226,10 @@ class PreviewFrame:
         geometry: The sensor region and size of this image.
         bit_depth: Bits per value in the pixel format, as a capture's
             ``metadata["bit_depth"]`` gives them: 16 for ``Mono16``.
-        full_scale: The value a saturated pixel reads, as a capture's
-            ``metadata["full_scale"]`` gives it. Below ``2**bit_depth - 1``
-            where the camera has fewer bits than the format: 65520 for the
-            CM3's 12-bit ``Mono16``.
+        full_scale: The value saturated pixels read, as a capture's
+            ``metadata["full_scale"]`` gives it: any pixel at or above it is
+            clipped. Below ``2**bit_depth - 1`` where the camera saturates
+            lower: 65504 for the CM3's 12-bit ``Mono16``.
 
     Left at 0, `bit_depth` and `full_scale` follow from the pixels' type.
     """

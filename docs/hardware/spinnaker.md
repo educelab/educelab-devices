@@ -391,10 +391,27 @@ shifts 16-bit pixels down for display should know whether the data is left-align
 The CM3-U3-50S5M's is (verified 2026-10-20: in Mono16 frames saved from
 20305113 and 20298452, the low 4 bits of every pixel were zero, so its 12-bit samples
 fill the top of the 16-bit range). Other models are unknown (Blackfly S sensors are
-10–12 bit); step 9's saved frames would show it. The driver reports it: by model, the
-CM3-U3-50S5M's `Mono16` frames and previews carry `full_scale` 65520, and other models
-65535 (assumed). Whether a node such as `PixelDynamicRangeMax` or `AdcBitDepth` says
-the same, so the driver could read it rather than list models, is **unknown**.
+10–12 bit); step 9's saved frames would show it.
+
+**Saturation.** The CM3-U3-50S5M saturates at 12-bit code 4094: 65504 in `Mono16`,
+never 65535, through Aravis and Spinnaker alike (`20305122`, 2026-11-16). With the
+camera's sharpening off, every saturated pixel read exactly 65504 at 0, 6 and 24 dB,
+for 10–74% of the frame. With it on, as it opens in `Mono16`, sharpening's overshoot
+lifts some to 65520 at low gain (about one in 5 to 15 at 0–6 dB; none from 12 dB). So
+the driver lists the model's `Mono16` `full_scale` as 65504, and clipping is
+`pixels >= full_scale`; other models are taken to reach 65535 (assumed). The top
+doesn't follow `BlackLevel` either: from 0 to 12 % (the camera's range; it opens at
+5.86) the black end rose from 16 to 7552 counts while saturated pixels stayed at
+65504. Mono8 clips at 255. The datasheet gives a 12-bit ADC but no saturation level,
+and `PixelDynamicRangeMin` and `PixelDynamicRangeMax` both read 0 with no
+`AdcBitDepth`, so no node says it. Why the top code is 4094 rather than 4095 is
+**unknown**; `VideoMode` other than Mode0 wasn't tried. **verified**
+
+**On-camera processing.** In `Mono16` the camera opens with `SharpnessEnabled` true
+and `SharpnessAuto` `Continuous`, and `GammaEnabled` false; in `Mono8` all three are
+unavailable (`NA`), as are `LUTEnable` and the LUT nodes in both formats. The driver
+leaves them as the camera has them, so `Mono16` frames are sharpened. Read through
+PySpin's access modes (Aravis reports only that they aren't readable). **verified**
 
 ## Differences from PySpin and SpinView
 

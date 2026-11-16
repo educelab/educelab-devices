@@ -21,11 +21,10 @@ Project-level context outside this directory:
 
 <!-- Auto-populated by /conductor:new-track -->
 
-- [XLC Lights and X-Carve Stage](./tracks/xlc-xcarve_20261012/index.md) — pending
 - [Documentation Site and Machine Setup](./tracks/docs-site_20261012/index.md) — pending
-- [Camera Preview Mode](./tracks/preview-mode_20261102/index.md) — pending
-- [gphoto2 Single-Setting Reads](./tracks/gphoto2-single-setting_20261102/index.md) — pending
-- [GenTL Stream Stall](./tracks/gentl-stall_20261109/index.md) — pending
+- [CLI Errors and Missing SDKs](./tracks/cli-missing-sdks_20261104/index.md) — pending
+- [Lab Board Connection and GRBL Link](./tracks/serial-drivers_20261104/index.md) — pending
+- [Second Roles and Stage Helpers](./tracks/stages-second-roles_20261104/index.md) — pending
 
 ## Completed Tracks
 
@@ -36,7 +35,12 @@ Project-level context outside this directory:
 - [Spinnaker Camera](./tracks/_archive/spinnaker-camera_20261012/index.md) — complete (archived)
 - [USB3 Vision Camera](./tracks/_archive/usb3-vision-camera_20261021/index.md) — complete (archived)
 - [Acroname USB Hub](./tracks/_archive/acroname-hub_20261012/index.md) — complete (archived)
+- [Camera Preview Mode](./tracks/_archive/preview-mode_20261102/index.md) — complete (archived)
+- [XLC Lights and X-Carve Stage](./tracks/_archive/xlc-xcarve_20261012/index.md) — complete (archived)
+- [gphoto2 Single-Setting Reads](./tracks/_archive/gphoto2-single-setting_20261102/index.md) — complete (archived)
+- [GenICam Deepening](./tracks/_archive/genicam-deepening_20261104/index.md) — complete (archived)
+- [GenTL Stream Stall](./tracks/_archive/gentl-stall_20261109/index.md) — complete (archived)
 
 ## Getting Started
 
-Tracks are listed in planned order. `xlc-xcarve` is ready to start. The docs site and machine setup track starts once `usb3-vision-camera` (PR #12) merges.
+Tracks are listed in planned order; `tracks.md` has each one's status. Completed tracks move to `tracks/_archive/` once their PR merges.

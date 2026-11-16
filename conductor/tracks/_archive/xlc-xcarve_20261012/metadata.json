@@ -39,5 +39,6 @@
     "64b2bdb: Record the X-Carve's hardware test run after the switch repair",
     "6828e7d: Tick the xlc-xcarve acceptance criteria",
     "e8f3f4a: Report the X-Carve's per-axis rates, as pgs-scan needs"
-  ]
+  ],
+  "archived": true
 }

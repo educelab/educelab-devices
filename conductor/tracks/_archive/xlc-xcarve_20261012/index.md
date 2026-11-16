@@ -1,7 +1,7 @@
 # Track: XLC Lights and X-Carve Stage
 
 **ID:** xlc-xcarve_20261012
-**Status:** Pending
+**Status:** Complete (archived)
 
 ## Documents
 
@@ -15,5 +15,5 @@
 
 ## Quick Links
 
-- [Back to Tracks](../../tracks.md)
-- [Product Context](../../product.md)
+- [Back to Tracks](../../../tracks.md)
+- [Product Context](../../../product.md)

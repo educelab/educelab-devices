@@ -1,7 +1,7 @@
 # Track: GenTL Stream Stall
 
 **ID:** gentl-stall_20261109
-**Status:** Complete
+**Status:** Complete (archived)
 **Issue:** [#32](https://github.com/educelab/educelab-devices/issues/32)
 
 ## Documents
@@ -16,5 +16,5 @@
 
 ## Quick Links
 
-- [Back to Tracks](../../tracks.md)
-- [Product Context](../../product.md)
+- [Back to Tracks](../../../tracks.md)
+- [Product Context](../../../product.md)

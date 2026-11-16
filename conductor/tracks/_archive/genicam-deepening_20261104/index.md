@@ -1,7 +1,7 @@
 # Track: GenICam Deepening
 
 **ID:** genicam-deepening_20261104
-**Status:** Complete
+**Status:** Complete (archived)
 
 ## Documents
 
@@ -10,5 +10,5 @@
 
 ## Quick Links
 
-- [Back to Tracks](../../tracks.md)
-- [Product Context](../../product.md)
+- [Back to Tracks](../../../tracks.md)
+- [Product Context](../../../product.md)

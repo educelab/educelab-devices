@@ -24,5 +24,6 @@
     "5befac6: Record Phase 1 of gphoto2 single-setting reads",
     "950ce20: Prepare the Z7 II timing run, and correct what gphoto2 setting writes cost",
     "98bbe8a: Record the Z7 II's single-setting read and write times"
-  ]
+  ],
+  "archived": true
 }

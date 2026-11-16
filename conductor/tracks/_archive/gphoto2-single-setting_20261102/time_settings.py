@@ -1,7 +1,7 @@
 """Time gphoto2 setting reads and writes on a real camera (Task 2.1).
 
-    python conductor/tracks/gphoto2-single-setting_20261102/time_settings.py
-    python conductor/tracks/gphoto2-single-setting_20261102/time_settings.py \
+    python conductor/tracks/_archive/gphoto2-single-setting_20261102/time_settings.py
+    python conductor/tracks/_archive/gphoto2-single-setting_20261102/time_settings.py \
         --port usb:020,007 --repeats 10
 
 Set the camera to M with a numeric shutter speed and ISO (not Bulb or Auto).

@@ -3,11 +3,11 @@
 **Track ID:** preview-mode_20261102
 **Type:** Feature
 **Created:** 2026-11-02
-**Status:** Draft
+**Status:** Complete
 
 ## Summary
 
-Make preview an explicit camera state with a requested preview region and output size, so consumers can frame shots and assist focus at native resolution without pulling full frames over the link. The design is recorded in [ADR 0007](../../../docs/adr/0007-preview-is-an-explicit-camera-state.md).
+Make preview an explicit camera state with a requested preview region and output size, so consumers can frame shots and assist focus at native resolution without pulling full frames over the link. The design is recorded in [ADR 0007](../../../../docs/adr/0007-preview-is-an-explicit-camera-state.md).
 
 ## Context
 

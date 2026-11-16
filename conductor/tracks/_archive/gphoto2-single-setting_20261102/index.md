@@ -1,7 +1,7 @@
 # Track: gphoto2 Single-Setting Reads
 
 **ID:** gphoto2-single-setting_20261102
-**Status:** Complete
+**Status:** Complete (archived)
 
 ## Documents
 
@@ -15,5 +15,5 @@
 
 ## Quick Links
 
-- [Back to Tracks](../../tracks.md)
-- [Product Context](../../product.md)
+- [Back to Tracks](../../../tracks.md)
+- [Product Context](../../../product.md)

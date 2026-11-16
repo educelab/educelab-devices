@@ -24,7 +24,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[3]
+ROOT = Path(__file__).resolve().parents[4]
 BACKENDS = {
     "gentl": ("GENTL_SERIAL", "educelab.devices.cameras.gentl", "GenTLCamera"),
     "spinnaker": (

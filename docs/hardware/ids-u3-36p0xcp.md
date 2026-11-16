@@ -55,8 +55,11 @@ What the driver reaches, and what's missing. Verified with `arv-tool-0.8 -n <id>
 | `resulting_frame_rate` | `AcquisitionFrameRate` | There is no `AcquisitionResultingFrameRate`, so the driver reports `AcquisitionFrameRate`, read-only. That is the camera's cap, not a measured rate: under a trigger, frames come only as fast as the triggers. See [Frame rate](#frame-rate). |
 | `trigger` | `TriggerSelector`, `TriggerMode`, `TriggerSource`, `TriggerSoftware` | `FrameStart` (used) and `ExposureStart`; sources `Software` and `Line0`. |
 | timestamps | `Timestamp`, `TimestampLatch` | **Missing.** See [Timestamps](#timestamps). |
+| `SharpnessEnabled` | none | **Missing**, with no gamma or lookup table either; see below. |
 
 Other nodes worth knowing: `TLParamsLocked` (see [Hazards](#hazards)), `TransferControlMode` (read-only, `Automatic`), `DeviceClockFrequency` (171,666,666 Hz, `DeviceClockSelector = Sensor`), and `TestPattern` (`Off`, `ColorBar`, `White`). Event timestamps exist only for errors, dropped events, a test event and the UART, not for exposure or frame start. There is no chunk data.
+
+**No on-camera processing.** Of the camera's 193 nodes, none is sharpening, gamma, a lookup table, denoising or edge enhancement, so frames come off the sensor without them (unlike the CM3-U3-50S5M, which sharpens `Mono16`; spinnaker.md, On-camera processing). The processing-related nodes it has: `BlackLevel` 0.0, writable, with `BlackLevelAuto` fixed at `ContinuousWithOffset` (its only entry) and `BlackLevelSelector` read-only at `Offset8Bit`; `DeviceOpticalFilterType` `GL`, which describes the glass lid; and `PixelColorFilter` `None`. Read from its GenICam XML through Aravis (`4110091493`, 2026-11-16); through IDS peak's producer it should be the same description, unchecked. Verified.
 
 ## Pixel formats
 

@@ -26,7 +26,7 @@ def test_lights_each_channel_then_turns_off(board, capsys):
     fake, firmware = board
     assert main(["xlc", "--port", "/dev/cu.usbmodem00001", "--dwell", "0"]) == 0
     out = capsys.readouterr().out
-    assert "XLC2 at /dev/cu.usbmodem00001, firmware 2.0.0, hardware 1.0" in out
+    assert "XLC2 at /dev/cu.usbmodem00001, firmware 2.1.0, hardware 1.0" in out
     assert "white at 25%" in out and "940nm at 25%" in out
     lit = [line for line in fake.written if line.endswith(",64>")]
     assert lit == ["<B,64>", "<X,64>"]

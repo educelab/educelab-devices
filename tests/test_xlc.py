@@ -8,6 +8,7 @@ from educelab.devices.errors import (
     DeviceError,
     DeviceNotFound,
     DeviceTimeout,
+    NotConnected,
 )
 from educelab.devices.lights import ChannelKind, xlc
 from educelab.devices.lights.xlc import XLC2
@@ -40,9 +41,9 @@ def scripted(*steps):
     )
 
 
-def emulated():
+def emulated(**firmware_options):
     """A board running emulated firmware, and the firmware."""
-    firmware = XLCFirmware()
+    firmware = XLCFirmware(**firmware_options)
     return ScriptedSerial(respond=firmware), firmware
 
 
@@ -57,6 +58,17 @@ def test_firmware_emulation_matches_the_documented_protocol():
     assert firmware.pixels[54:56] == [1, 2]
     assert firmware("<X, 7 >") == ["OK"]
     assert firmware.xl4 == 7
+    assert firmware("<U,XLC2-01>") == ["OK"]
+    assert firmware("<?>") == ["EduceLab XLC2,1.0,2.1.0,XLC2-01"]
+    for bad in ("<U>", "<U,>", "<U,a b>", "<U,a,b>", "<U,ABCDEFGHIJKLMNOPQ>"):
+        assert firmware(bad) == ["ERR invalid command"], bad
+    assert firmware.unit_id == "XLC2-01"
+
+
+def test_firmware_emulation_plays_2_0_0():
+    firmware = XLCFirmware("2.0.0", unit_id="ignored")
+    assert firmware("<?>") == ["EduceLab XLC2,1.0,2.0.0"]
+    assert firmware("<U,XLC2-01>") == ["ERR unknown command"]
 
 
 class TestXLC2Contract(LightContract):
@@ -75,7 +87,8 @@ def test_open_identifies_the_board_and_turns_both_outputs_off():
     assert light.info.backend == "xlc"
     assert light.info.model == "XLC2"
     assert light.info.address == "/dev/ttyXLC"
-    assert light.info.firmware_version == "2.0.0"
+    assert light.info.firmware_version == "2.1.0"
+    assert light.info.serial_number is None
     assert light.hardware_version == "1.0"
     assert light.level("white") == 0.0
     assert light.level("940nm") == 0.0
@@ -90,6 +103,72 @@ def test_open_skips_chatter_and_ignores_name_case():
         ]
     )
     assert opened(make_xlc2(fake)).info.firmware_version == "2.1.0"
+
+
+def test_open_reports_the_unit_id_as_the_serial_number():
+    light = opened(make_xlc2(emulated(unit_id="XLC2-01")[0]))
+    assert light.info.serial_number == "XLC2-01"
+    assert "XLC2-01" in repr(light)
+
+
+def test_2_0_0_firmware_opens_without_a_serial_number():
+    light = opened(make_xlc2(emulated(firmware="2.0.0")[0]))
+    assert light.info.firmware_version == "2.0.0"
+    assert light.info.serial_number is None
+
+
+def test_serial_number_is_unknown_before_open():
+    assert make_xlc2(emulated(unit_id="XLC2-01")[0]).info.serial_number is None
+
+
+@pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        ("EduceLab XLC2,1.0,2.0.0", ("1.0", "2.0.0", None)),
+        ("EduceLab XLC2,1.0,2.1.0,", ("1.0", "2.1.0", None)),
+        ("EduceLab XLC2,1.0,2.1.0, XLC2-01 ", ("1.0", "2.1.0", "XLC2-01")),
+        ("EduceLab XLC2 (FW 1.2.0)", (None, "1.2.0", None)),
+        ("EduceLab XLC2,1.0,2.1.0,a,b", None),
+        ("EduceLab XLC2,1.0", None),
+    ],
+)
+def test_handshake_replies_parse_with_or_without_a_unit_id(reply, expected):
+    assert xlc._parse_identity(reply) == expected
+
+
+# Setting the unit ID
+
+
+def test_set_unit_id_stores_it_and_reports_it():
+    fake, firmware = emulated()
+    light = opened(make_xlc2(fake))
+    light.set_unit_id("XLC2-07")
+    assert firmware.unit_id == "XLC2-07"
+    assert light.info.serial_number == "XLC2-07"
+
+
+@pytest.mark.parametrize("unit_id", ["", "a b", "a,b", "é", "X" * 17])
+def test_set_unit_id_refuses_an_invalid_id_without_sending_it(unit_id):
+    fake, _ = emulated()
+    light = opened(make_xlc2(fake))
+    sent = len(fake.written)
+    with pytest.raises(ValueError):
+        light.set_unit_id(unit_id)
+    assert len(fake.written) == sent
+
+
+def test_set_unit_id_needs_2_1_0_firmware():
+    fake, _ = emulated(firmware="2.0.0")
+    light = opened(make_xlc2(fake))
+    sent = len(fake.written)
+    with pytest.raises(DeviceError, match="2.1.0"):
+        light.set_unit_id("XLC2-01")
+    assert len(fake.written) == sent
+
+
+def test_set_unit_id_needs_an_open_board():
+    with pytest.raises(NotConnected):
+        make_xlc2(emulated()[0]).set_unit_id("XLC2-01")
 
 
 def test_default_transport_uses_the_xlc_port_settings():

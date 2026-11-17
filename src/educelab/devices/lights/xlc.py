@@ -13,7 +13,7 @@ from educelab.devices._serial import (
     parse_version,
     port_with_serial_number,
 )
-from educelab.devices.device import DeviceInfo
+from educelab.devices.device import DeviceInfo, synchronized
 from educelab.devices.errors import DeviceError, DeviceNotFound
 from educelab.devices.lights.base import RGB, Channel, Light
 
@@ -32,6 +32,9 @@ REPLY_TIMEOUT_S = 1.0
 NAME = "EduceLab XLC2"
 # 2.0.0 is the first firmware that acknowledges every command (ADR 0004).
 MIN_FIRMWARE = (2, 0, 0)
+# 2.1.0 adds the unit ID: stored in EEPROM, reported in the handshake.
+UNIT_ID_FIRMWARE = (2, 1, 0)
+UNIT_ID = re.compile(r"[A-Za-z0-9_-]{1,16}")
 # Both outputs take a duty from 0 to 255.
 MAX_DUTY = 255
 
@@ -79,6 +82,7 @@ class XLC2(Light):
         self._serial_number = serial_number
         self._firmware_version: str | None = None
         self._hardware_version: str | None = None
+        self._unit_id: str | None = None
 
     @property
     def info(self) -> DeviceInfo:
@@ -86,7 +90,7 @@ class XLC2(Light):
             backend="xlc",
             model="XLC2",
             address=self._port,
-            serial_number=self._serial_number,
+            serial_number=self._unit_id,
             firmware_version=self._firmware_version,
         )
 
@@ -108,8 +112,39 @@ class XLC2(Light):
     def channels(self) -> tuple[Channel, ...]:
         return CHANNELS
 
+    @synchronized
+    def set_unit_id(self, unit_id: str) -> None:
+        """Store a unit ID on the board, reported as its serial number from now on.
+
+        The ID is kept in the board's EEPROM, so it survives power cycles and
+        reflashing. Needs firmware 2.1.0 or newer.
+
+        Args:
+            unit_id: 1–16 characters from ``A–Z``, ``a–z``, ``0–9``, ``_``
+                and ``-``, e.g. ``"XLC2-01"``.
+
+        Raises:
+            ValueError: ``unit_id`` isn't a valid ID.
+            DeviceError: The firmware is too old to store one.
+        """
+        if not UNIT_ID.fullmatch(unit_id):
+            raise ValueError(
+                f"an XLC2 unit ID is 1-16 letters, digits, '_' or '-', not {unit_id!r}"
+            )
+        if parse_version(self._firmware_version or "") < UNIT_ID_FIRMWARE:
+            raise DeviceError(
+                f"{self!r} has firmware {self._firmware_version}, which can't store "
+                "a unit ID; reflash it with 2.1.0 or newer "
+                "(docs/hardware/xlc2.md#flashing)"
+            )
+        self._command("U", unit_id)
+        self._unit_id = unit_id
+
     def __repr__(self) -> str:
-        return f"<XLC2 {self._port or self._serial_number or '(no port)'}>"
+        where = self._port or self._serial_number or "(no port)"
+        return (
+            f"<XLC2 {self._unit_id} at {where}>" if self._unit_id else f"<XLC2 {where}>"
+        )
 
     def _open(self) -> None:
         if self._serial_number is not None:
@@ -131,7 +166,7 @@ class XLC2(Light):
                     f"no XLC2 answered on {self._port!r}; check the port, "
                     "or that the board isn't held by another program"
                 )
-            hardware, firmware = identity
+            hardware, firmware, unit_id = identity
             if parse_version(firmware) < MIN_FIRMWARE:
                 minimum = ".".join(map(str, MIN_FIRMWARE))
                 raise DeviceError(
@@ -142,6 +177,7 @@ class XLC2(Light):
                 )
             self._hardware_version = hardware
             self._firmware_version = firmware
+            self._unit_id = unit_id
             self._all_off()
             for channel in CHANNELS:
                 self._remember(channel, 0.0)
@@ -190,14 +226,16 @@ def _default_transport(port: str) -> SerialTransport:
     )
 
 
-def _parse_identity(line: str) -> tuple[str | None, str] | None:
-    """(hardware, firmware) if ``line`` is an XLC2's handshake reply.
+def _parse_identity(line: str) -> tuple[str | None, str, str | None] | None:
+    """(hardware, firmware, unit ID) if ``line`` is an XLC2's handshake reply.
 
+    From 2.1.0 a fourth field holds the unit ID, empty if none is set.
     Recognizes the pre-2.0.0 reply too, so old boards are refused as old
     rather than not found.
     """
     parts = [part.strip() for part in line.split(",")]
-    if len(parts) == 3 and parts[0].casefold() == NAME.casefold():
-        return parts[1], parts[2]
+    if len(parts) in (3, 4) and parts[0].casefold() == NAME.casefold():
+        unit_id = parts[3] if len(parts) == 4 and parts[3] else None
+        return parts[1], parts[2], unit_id
     old = re.fullmatch(rf"{NAME} \(FW ([^)]*)\)", line.strip(), re.IGNORECASE)
-    return (None, old[1]) if old else None
+    return (None, old[1], None) if old else None

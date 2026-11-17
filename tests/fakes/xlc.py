@@ -1,20 +1,38 @@
 """An emulation of the XLC2 firmware's serial protocol."""
 
-XLC2_IDENTITY = "EduceLab XLC2,1.0,2.0.0"
+import re
+
+from educelab.devices._serial import parse_version
+
 XLC2_PIXELS = 222
 # Fields each command takes.
 ARITY = {"B": 1, "X": 1, "S": 4, "L": 2}
+UNIT_ID = re.compile(r"[A-Za-z0-9_-]{1,16}")
+
+
+def identity(firmware: str = "2.1.0", unit_id: str | None = None) -> str:
+    """The handshake reply of an XLC2 running ``firmware``."""
+    if parse_version(firmware) < (2, 1, 0):
+        return f"EduceLab XLC2,1.0,{firmware}"
+    return f"EduceLab XLC2,1.0,{firmware},{unit_id or ''}"
+
+
+XLC2_IDENTITY = identity()
 
 
 class XLCFirmware:
-    """Answers commands the way XLC2 firmware 2.0.0 does.
+    """Answers commands the way XLC2 firmware 2.1.0 (or 2.0.0) does.
 
     Pass an instance as a `ScriptedSerial` responder. ``pixels`` holds the
-    strip's grey levels and ``xl4`` the 940 nm array's duty, both 0–255.
+    strip's grey levels, ``xl4`` the 940 nm array's duty, both 0–255, and
+    ``unit_id`` the ID in EEPROM. Setting ``identity`` replaces the handshake
+    reply verbatim, e.g. to play older firmware.
     """
 
-    def __init__(self, identity: str = XLC2_IDENTITY) -> None:
-        self.identity = identity
+    def __init__(self, firmware: str = "2.1.0", unit_id: str | None = None) -> None:
+        self.firmware = firmware
+        self.unit_id = unit_id
+        self.identity: str | None = None
         self.pixels = [0] * XLC2_PIXELS
         self.xl4 = 0
 
@@ -25,10 +43,15 @@ class XLCFirmware:
             return []
         body = line[start + 1 : end]
         if body == "?" or body.upper() == "ID":
-            return [self.identity]
+            return [self.identity or identity(self.firmware, self.unit_id)]
         if len(body) > 31:
             return ["ERR invalid command"]
         command, *fields = body.split(",")
+        if command == "U" and parse_version(self.firmware) >= (2, 1, 0):
+            if len(fields) != 1 or not UNIT_ID.fullmatch(fields[0]):
+                return ["ERR invalid command"]
+            self.unit_id = fields[0]
+            return ["OK"]
         if command not in ARITY:
             return ["ERR unknown command"]
         values = [_level(field) for field in fields]

@@ -25,6 +25,7 @@ Project-level context outside this directory:
 - [CLI Errors and Missing SDKs](./tracks/cli-missing-sdks_20261104/index.md) — pending
 - [Lab Board Connection and GRBL Link](./tracks/serial-drivers_20261104/index.md) — pending
 - [Second Roles and Stage Helpers](./tracks/stages-second-roles_20261104/index.md) — pending
+- [XLC2 Unit ID and Probing](./tracks/xlc2-unit-id_20261117/index.md) — pending
 
 ## Completed Tracks
 

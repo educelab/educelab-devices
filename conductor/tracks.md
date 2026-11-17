@@ -18,5 +18,6 @@
 | [ ] | [serial-drivers_20261104](./tracks/serial-drivers_20261104/index.md) | Lab Board Connection and GRBL Link | 2026-11-04 | 2026-11-04 |
 | [ ] | [stages-second-roles_20261104](./tracks/stages-second-roles_20261104/index.md) | Second Roles and Stage Helpers | 2026-11-04 | 2026-11-04 |
 | [x] | [gentl-stall_20261109](./tracks/_archive/gentl-stall_20261109/index.md) | GenTL Stream Stall | 2026-11-09 | 2026-11-09 |
+| [ ] | [xlc2-unit-id_20261117](./tracks/xlc2-unit-id_20261117/index.md) | XLC2 Unit ID and Probing | 2026-11-17 | 2026-11-17 |
 
 <!-- Tracks registered by /conductor:new-track. Planned order is in product.md. -->

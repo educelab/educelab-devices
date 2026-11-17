@@ -1,3 +1,5 @@
+import time
+
 import pytest
 
 from contracts import LightContract
@@ -72,6 +74,10 @@ def test_firmware_emulation_plays_2_0_0():
 
 
 class TestXLC2Contract(LightContract):
+    @pytest.fixture(autouse=True)
+    def no_ports(self, monkeypatch):
+        monkeypatch.setattr(_serial, "list_ports", list)
+
     @pytest.fixture
     def make_device(self):
         return lambda: make_xlc2(emulated()[0])
@@ -330,12 +336,27 @@ def test_close_after_unplugging_still_closes(caplog):
     assert "could not turn off" in caplog.text
 
 
-# Discovery and finding a board by serial number
+# Discovery, probing and finding a board by its unit ID
 
-CH340 = PortInfo(
-    "/dev/cu.usbserial-110", vid=0x1A86, pid=0x7523, serial_number="XLC2-0001"
+HOLTEK = PortInfo("/dev/cu.usbmodem00001", vid=0x04D9, pid=0xB534, serial_number="0000")
+CH340 = PortInfo("/dev/cu.usbserial-110", vid=0x1A86, pid=0x7523)
+FTDI = PortInfo(
+    "/dev/cu.usbserial-A1", vid=0x0403, pid=0x6001, serial_number="XCONTROLLER3"
 )
-OTHER = PortInfo("/dev/cu.usbserial-120", vid=0x1A86, pid=0x7523, serial_number="A1")
+OTHER_CH340 = PortInfo("/dev/cu.usbserial-120", vid=0x1A86, pid=0x7523)
+
+
+def silent():
+    return ScriptedSerial(respond=lambda line: [])
+
+
+def untouchable():
+    def refuse(line):
+        raise AssertionError(f"{line!r} was sent to a port that isn't an XLC2's")
+
+    fake = ScriptedSerial(respond=refuse)
+    fake.open = refuse
+    return fake
 
 
 def attach(monkeypatch, boards):
@@ -350,35 +371,142 @@ def attach(monkeypatch, boards):
     return boards
 
 
-def test_discover_finds_nothing_without_touching_ports(monkeypatch):
-    def no_listing():
-        raise AssertionError("discover() listed ports")
-
-    monkeypatch.setattr(_serial, "list_ports", no_listing)
-    assert XLC2.discover() == []
-
-
-def test_serial_number_picks_the_port_ignoring_case(monkeypatch):
-    boards = attach(monkeypatch, {OTHER: ScriptedSerial(), CH340: emulated()[0]})
-    with XLC2(serial_number="xlc2-0001") as light:
-        assert light.info.address == CH340.device
-        assert light.info.serial_number == "XLC2-0001"
-    assert boards[OTHER].opened_with is None
+def test_discover_lists_xlc2_bridges_without_opening_them(monkeypatch):
+    attach(
+        monkeypatch,
+        {HOLTEK: untouchable(), CH340: untouchable(), FTDI: untouchable()},
+    )
+    found = XLC2.discover()
+    assert [(i.address, i.serial_number) for i in found] == [
+        (HOLTEK.device, None),
+        (CH340.device, None),
+    ]
+    assert {(i.backend, i.model) for i in found} == {("xlc", "XLC2")}
 
 
-def test_serial_number_must_match_exactly(monkeypatch):
-    attach(monkeypatch, {CH340: emulated()[0]})
-    with pytest.raises(DeviceNotFound, match="XLC2-000"):
-        XLC2(serial_number="XLC2-000").open()
+def test_probe_identifies_each_xlc2(monkeypatch):
+    attach(
+        monkeypatch,
+        {
+            HOLTEK: emulated(unit_id="XLC2-01")[0],
+            CH340: emulated(firmware="2.0.0")[0],
+        },
+    )
+    found = {i.address: i for i in XLC2.probe()}
+    assert found[HOLTEK.device].serial_number == "XLC2-01"
+    assert found[HOLTEK.device].firmware_version == "2.1.0"
+    assert found[CH340.device].serial_number is None
+    assert found[CH340.device].firmware_version == "2.0.0"
+
+
+def test_probe_reports_old_firmware_so_it_can_be_reflashed(monkeypatch):
+    fake, firmware = emulated()
+    firmware.identity = "EduceLab XLC2 (FW 1.2.0)"
+    attach(monkeypatch, {HOLTEK: fake})
+    assert [i.firmware_version for i in XLC2.probe()] == ["1.2.0"]
+
+
+def test_probe_closes_every_port(monkeypatch):
+    boards = attach(monkeypatch, {HOLTEK: emulated()[0], CH340: silent()})
+    XLC2.probe()
+    assert not any(fake.is_open for fake in boards.values())
+    assert all(fake.opened_with for fake in boards.values())
+
+
+def test_probe_never_opens_ports_off_the_allowlist(monkeypatch):
+    attach(monkeypatch, {FTDI: untouchable(), HOLTEK: emulated()[0]})
+    assert [i.address for i in XLC2.probe()] == [HOLTEK.device]
+
+
+def test_probe_skips_ports_another_driver_claims(monkeypatch):
+    monkeypatch.setattr(
+        xlc, "OTHER_DEVICES", (_serial.PortMatch(vid=0x1A86, pid=0x7523),)
+    )
+    attach(monkeypatch, {CH340: untouchable(), HOLTEK: emulated()[0]})
+    assert [i.address for i in XLC2.probe()] == [HOLTEK.device]
+
+
+def test_probe_skips_busy_and_silent_ports(monkeypatch, caplog):
+    caplog.set_level("DEBUG", logger=xlc.__name__)
+    attach(
+        monkeypatch,
+        {
+            CH340: ScriptedSerial(present=False),
+            OTHER_CH340: silent(),
+            HOLTEK: emulated(unit_id="XLC2-01")[0],
+        },
+    )
+    assert [i.serial_number for i in XLC2.probe()] == ["XLC2-01"]
+    assert CH340.device in caplog.text and OTHER_CH340.device in caplog.text
+
+
+def test_an_unexpected_probe_failure_leaves_no_port_open(monkeypatch):
+    def broken(line):
+        raise RuntimeError("driver bug")
+
+    boards = attach(
+        monkeypatch,
+        {CH340: ScriptedSerial(respond=broken), HOLTEK: emulated()[0]},
+    )
+    with pytest.raises(RuntimeError, match="driver bug"):
+        XLC2.probe()
+    assert not any(fake.is_open for fake in boards.values())
+
+
+def test_probe_waits_for_every_port_at_once(monkeypatch):
+    monkeypatch.setattr(xlc, "HANDSHAKE_TIMEOUT_S", 0.3)
+    ports = [
+        PortInfo(f"/dev/cu.usbserial-{n}", vid=0x1A86, pid=0x7523) for n in range(4)
+    ]
+    attach(monkeypatch, {port: silent() for port in ports})
+    start = time.monotonic()
+    assert XLC2.probe() == []
+    assert time.monotonic() - start < 0.9
+
+
+def test_serial_number_opens_the_board_with_that_unit_id(monkeypatch):
+    boards = attach(
+        monkeypatch,
+        {
+            CH340: emulated(unit_id="XLC2-02")[0],
+            HOLTEK: emulated(unit_id="XLC2-01")[0],
+        },
+    )
+    with XLC2(serial_number="XLC2-01") as light:
+        assert light.info.address == HOLTEK.device
+        assert light.info.serial_number == "XLC2-01"
+        light.set_level("white", 1.0)
+        assert boards[CH340].is_open is False
+    # Opened once: the probe's connection was kept, not reopened.
+    assert boards[HOLTEK].written.count("<?>") == 1
+
+
+def test_serial_number_is_matched_exactly(monkeypatch):
+    attach(monkeypatch, {HOLTEK: emulated(unit_id="XLC2-01")[0]})
+    with pytest.raises(DeviceNotFound, match=r"xlc2-01.*XLC2-01"):
+        XLC2(serial_number="xlc2-01").open()
+
+
+def test_serial_number_shared_by_two_boards_is_refused(monkeypatch):
+    boards = attach(
+        monkeypatch,
+        {
+            CH340: emulated(unit_id="XLC2-01")[0],
+            HOLTEK: emulated(unit_id="XLC2-01")[0],
+        },
+    )
+    with pytest.raises(DeviceError, match="2 XLC2s"):
+        XLC2(serial_number="XLC2-01").open()
+    assert not any(fake.is_open for fake in boards.values())
 
 
 def test_reopening_by_serial_number_finds_a_replugged_board(monkeypatch):
-    attach(monkeypatch, {CH340: emulated()[0]})
-    light = XLC2(serial_number="XLC2-0001")
+    attach(monkeypatch, {HOLTEK: emulated(unit_id="XLC2-01")[0]})
+    light = XLC2(serial_number="XLC2-01")
     light.open()
     light.close()
-    replugged = PortInfo("/dev/cu.usbserial-140", serial_number="XLC2-0001")
-    attach(monkeypatch, {replugged: emulated()[0]})
+    replugged = PortInfo("/dev/cu.usbmodem00002", vid=0x04D9, pid=0xB534)
+    attach(monkeypatch, {replugged: emulated(unit_id="XLC2-01")[0]})
     light.open()
     assert light.info.address == replugged.device
 

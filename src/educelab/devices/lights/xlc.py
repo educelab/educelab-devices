@@ -5,19 +5,27 @@ Protocol, firmware history and flashing: docs/hardware/xlc2.md.
 
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 
+from educelab.devices import _serial
 from educelab.devices._serial import (
+    PortInfo,
+    PortMatch,
     SerialTransport,
     command,
     handshake,
     parse_version,
-    port_with_serial_number,
 )
 from educelab.devices.device import DeviceInfo, synchronized
 from educelab.devices.errors import DeviceError, DeviceNotFound
 from educelab.devices.lights.base import RGB, Channel, Light
+from educelab.devices.lights.misha import NAMED_PANELS
+from educelab.devices.stages.xcarve import XCONTROLLERS
 
 __all__ = ["XLC2"]
+
+# (hardware version, firmware version, unit ID) from a handshake reply.
+Identity = tuple[str | None, str, str | None]
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +46,15 @@ UNIT_ID = re.compile(r"[A-Za-z0-9_-]{1,16}")
 # Both outputs take a duty from 0 to 255.
 MAX_DUTY = 255
 
+# USB-serial bridges found on XLC2s. Only these ports are probed, since
+# probing opens the port, which resets the board behind it.
+BRIDGES = (
+    PortMatch(vid=0x04D9, pid=0xB534),  # Holtek HT42B534
+    PortMatch(vid=0x1A86, pid=0x7523),  # WCH CH340
+)
+# Ports other drivers claim are never probed, whatever their bridge.
+OTHER_DEVICES = (XCONTROLLERS, NAMED_PANELS)
+
 CHANNELS = (Channel("white"), Channel("940nm", wavelength_nm=940.0))
 # The command letter that sets each channel's duty.
 COMMANDS = {"white": "B", "940nm": "X"}
@@ -54,10 +71,9 @@ class XLC2(Light):
 
     Args:
         port: Serial port, e.g. ``"COM3"`` or ``"/dev/ttyUSB0"``.
-        serial_number: USB serial number of the board's port, matched exactly
-            but ignoring case. Found again on each `open()`, so it survives
-            the port being renamed after a replug. Only useful for a board
-            whose bridge has a unique one (docs/hardware/xlc2.md).
+        serial_number: The board's unit ID, as set with `set_unit_id()`,
+            matched exactly. `open()` finds it with `probe()` each time, so it
+            survives the port being renamed after a replug.
         transport: Connection to use instead of opening ``port`` with
             pyserial. For tests.
 
@@ -96,12 +112,39 @@ class XLC2(Light):
 
     @classmethod
     def discover(cls) -> list[DeviceInfo]:
-        """Find nothing: an XLC2 can't be recognized without opening its port.
+        """List ports that could be an XLC2, without opening them.
 
-        Its USB descriptors don't identify it, and opening a port to ask
-        resets the board behind it (docs/hardware/xlc2.md#identity).
+        These are the ports with a USB-serial bridge seen on XLC2s, so other
+        boards with the same bridge are listed too. Serial numbers are unknown
+        until a board is opened or probed (docs/hardware/xlc2.md#identity).
+
+        Raises:
+            ImportError: pyserial isn't installed.
         """
-        return []
+        return [_info(port.device) for port in _candidates()]
+
+    @classmethod
+    def probe(cls) -> list[DeviceInfo]:
+        """Find the XLC2s attached by sending each candidate port the handshake.
+
+        Unlike `discover()`, this opens ports, which resets the boards behind
+        them and turns their lights off. Only ports with an XLC2's USB bridge
+        are opened, never one another driver claims (such as an X-Controller)
+        or one another program holds. Boards are probed at once, so this
+        takes about 4 s however many there are.
+
+        Returns:
+            One `DeviceInfo` per XLC2 that answered, with its unit ID as
+            ``serial_number`` (``None`` if unset) and its firmware version.
+            Boards with firmware too old for this driver are included.
+
+        Raises:
+            ImportError: pyserial isn't installed.
+        """
+        found = _probe_all()
+        for _, _, transport in found:
+            transport.close()
+        return [_info(port, identity) for port, identity, _ in found]
 
     @property
     def hardware_version(self) -> str | None:
@@ -149,23 +192,10 @@ class XLC2(Light):
     def _open(self) -> None:
         if self._serial_number is not None:
             # Found again on each open, in case a replug renamed the port.
-            port = port_with_serial_number(self._serial_number)
-            self._transport = _default_transport(port.device)
-            self._port = port.device
-            self._serial_number = port.serial_number
-        if self._transport is None:
-            raise DeviceNotFound(
-                "XLC2 needs port= or serial_number=; it can't be found any other way"
-            )
-        transport = self._transport
-        transport.open()
+            transport, identity = self._find_unit()
+        else:
+            transport, identity = self._open_port()
         try:
-            identity = handshake(transport, "<?>", _parse_identity, HANDSHAKE_TIMEOUT_S)
-            if identity is None:
-                raise DeviceNotFound(
-                    f"no XLC2 answered on {self._port!r}; check the port, "
-                    "or that the board isn't held by another program"
-                )
             hardware, firmware, unit_id = identity
             if parse_version(firmware) < MIN_FIRMWARE:
                 minimum = ".".join(map(str, MIN_FIRMWARE))
@@ -184,6 +214,55 @@ class XLC2(Light):
         except BaseException:
             transport.close()
             raise
+
+    def _open_port(self) -> tuple[SerialTransport, Identity]:
+        """Open the given port and handshake, leaving it open if an XLC2 answered."""
+        if self._transport is None:
+            raise DeviceNotFound(
+                "XLC2 needs port= or serial_number=; XLC2.probe() lists the "
+                "boards attached"
+            )
+        transport = self._transport
+        transport.open()
+        try:
+            identity = handshake(transport, "<?>", _parse_identity, HANDSHAKE_TIMEOUT_S)
+        except BaseException:
+            transport.close()
+            raise
+        if identity is None:
+            transport.close()
+            raise DeviceNotFound(
+                f"no XLC2 answered on {self._port!r}; check the port, "
+                "or that the board isn't held by another program"
+            )
+        return transport, identity
+
+    def _find_unit(self) -> tuple[SerialTransport, Identity]:
+        """Probe for the board with our unit ID, keeping its port open."""
+        found = _probe_all()
+        matches = [f for f in found if f[1][2] == self._serial_number]
+        keep = matches[0][2] if len(matches) == 1 else None
+        for _, _, transport in found:
+            if transport is not keep:
+                transport.close()
+        if not matches:
+            seen = ", ".join(
+                f"{ident[2] or '(no ID)'} at {port}" for port, ident, _ in found
+            )
+            raise DeviceNotFound(
+                f"no XLC2 has unit ID {self._serial_number!r}; "
+                + (f"found {seen}" if seen else "found no XLC2s")
+            )
+        if len(matches) > 1:
+            where = ", ".join(port for port, _, _ in matches)
+            raise DeviceError(
+                f"{len(matches)} XLC2s have unit ID {self._serial_number!r} "
+                f"({where}); give one a new ID with set_unit_id()"
+            )
+        port, identity, transport = matches[0]
+        self._transport = transport
+        self._port = port
+        return transport, identity
 
     def _close(self) -> None:
         try:
@@ -226,7 +305,7 @@ def _default_transport(port: str) -> SerialTransport:
     )
 
 
-def _parse_identity(line: str) -> tuple[str | None, str, str | None] | None:
+def _parse_identity(line: str) -> Identity | None:
     """(hardware, firmware, unit ID) if ``line`` is an XLC2's handshake reply.
 
     From 2.1.0 a fourth field holds the unit ID, empty if none is set.
@@ -239,3 +318,67 @@ def _parse_identity(line: str) -> tuple[str | None, str, str | None] | None:
         return parts[1], parts[2], unit_id
     old = re.fullmatch(rf"{NAME} \(FW ([^)]*)\)", line.strip(), re.IGNORECASE)
     return (None, old[1], None) if old else None
+
+
+def _candidates() -> list[PortInfo]:
+    """Ports with an XLC2's bridge that no other driver claims."""
+    return [
+        port
+        for port in _serial.list_ports()
+        if any(m.matches(port) for m in BRIDGES)
+        and not any(m.matches(port) for m in OTHER_DEVICES)
+    ]
+
+
+def _info(port: str, identity: Identity | None = None) -> DeviceInfo:
+    _, firmware, unit_id = identity or (None, None, None)
+    return DeviceInfo(
+        backend="xlc",
+        model="XLC2",
+        address=port,
+        serial_number=unit_id,
+        firmware_version=firmware,
+    )
+
+
+def _probe_all() -> list[tuple[str, Identity, SerialTransport]]:
+    """Handshake every candidate at once. The XLC2s' ports are left open."""
+    ports = [port.device for port in _candidates()]
+    if not ports:
+        return []
+    with ThreadPoolExecutor(max_workers=len(ports)) as pool:
+        futures = [pool.submit(_probe_one, port) for port in ports]
+    found, failure = [], None
+    for future in futures:
+        try:
+            if (result := future.result()) is not None:
+                found.append(result)
+        except Exception as exc:  # noqa: BLE001 - re-raised once ports are closed
+            failure = failure or exc
+    if failure is not None:
+        for _, _, transport in found:
+            transport.close()
+        raise failure
+    return found
+
+
+def _probe_one(port: str) -> tuple[str, Identity, SerialTransport] | None:
+    transport = _default_transport(port)
+    try:
+        transport.open()
+    except DeviceNotFound as exc:
+        logger.debug("not probing %s: %s", port, exc)
+        return None
+    try:
+        identity = handshake(transport, "<?>", _parse_identity, HANDSHAKE_TIMEOUT_S)
+    except DeviceError as exc:
+        logger.debug("probing %s failed: %s", port, exc)
+        identity = None
+    except BaseException:
+        transport.close()
+        raise
+    if identity is None:
+        logger.debug("no XLC2 answered on %s", port)
+        transport.close()
+        return None
+    return port, identity, transport

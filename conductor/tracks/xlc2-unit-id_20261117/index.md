@@ -1,7 +1,7 @@
 # Track: XLC2 Unit ID and Probing
 
 **ID:** xlc2-unit-id_20261117
-**Status:** Pending
+**Status:** In progress (hardware checks owed)
 
 ## Documents
 
@@ -10,8 +10,8 @@
 
 ## Progress
 
-- Phases: 0/6 complete
-- Tasks: 0/20 complete
+- Phases: 5/6 complete
+- Tasks: 16/20 complete
 
 ## Quick Links
 

@@ -30,6 +30,7 @@ From the architecture review of 2026-11-04. "Lab board" is defined in `CONTEXT.m
 - [ ] `_lab_board.py` holds a lab board connection, configured per board with the ID command, identity parser, minimum firmware, reflash doc and port match. It owns finding the port, opening it, the handshake, the firmware check and closing after a failed open.
 - [ ] MISHA and XLC2 each *hold* a lab board connection (composition) and keep only their channel behaviour. Roles stay single-inheritance.
 - [ ] A transport passed in always wins and is never replaced. A serial number is looked up again on each open. Port and serial number are mutually exclusive. One reflash message format.
+- [ ] The lab board identity carries an optional unit ID (ADR 0004's fourth handshake field). XLC2's serial number is its unit ID, found with `XLC2.probe()`, not a USB serial number (`xlc2-unit-id_20261117`).
 - [ ] A `LabBoardContract` runs against both firmware fakes and replaces the mirrored tests.
 - [ ] X-Carve shares the port-resolution part only.
 - [ ] `stages/_grbl.py` holds the GRBL link, tested directly against `fakes/grbl.GrblMachine`. Its rules hold: one reply per line, abandoned lines, and a reset discarding owed replies. No test patches X-Carve privates to provoke a race.
@@ -40,7 +41,7 @@ From the architecture review of 2026-11-04. "Lab board" is defined in `CONTEXT.m
 ## Dependencies
 
 - Existing code: `_serial.py`, `lights/misha.py`, `lights/xlc.py`, `stages/xcarve.py`, `stages/base.py`. Tests: `tests/test_{misha,xlc,xcarve,serial_transport,stages}.py`, `tests/fakes/grbl.py`, the firmware fakes.
-- Runs after `cli-missing-sdks_20261104`.
+- Runs after `cli-missing-sdks_20261104` and `xlc2-unit-id_20261117`.
 
 ## Out of Scope
 

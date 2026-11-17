@@ -68,7 +68,9 @@ closed one. A closed device can be opened again.
 - **Calling a role method on a closed device raises `NotConnected`.**
 - **`discover()` is a classmethod** that lists devices of that type attached to the host,
   as `DeviceInfo`s, without opening them. Drivers that can't enumerate return `[]`.
-  `el-devices discover` runs every installed backend's `discover()`.
+  `el-devices discover` runs every installed backend's `discover()`. A device that can
+  only be identified by talking to it (the XLC2) also has `probe()`, which opens
+  candidate ports and so resets the boards behind them; nothing calls it implicitly.
 - **`info` identifies a device**: `backend`, `model`, and, where known, `address`,
   `serial_number`, `firmware_version` and `vendor`. Every camera reports `vendor` once
   open, if the hardware can say; most drivers fill in more once open. A camera's hardware

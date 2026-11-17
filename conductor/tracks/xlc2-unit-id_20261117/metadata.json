@@ -2,15 +2,17 @@
   "id": "xlc2-unit-id_20261117",
   "title": "XLC2 Unit ID and Probing",
   "type": "feature",
-  "status": "pending",
+  "status": "in_progress",
   "created": "2026-11-17T00:00:00Z",
   "updated": "2026-11-17T00:00:00Z",
   "phases": {
     "total": 6,
-    "completed": 0
+    "completed": 5
   },
   "tasks": {
     "total": 20,
-    "completed": 0
-  }
+    "completed": 16
+  },
+  "current_phase": 6,
+  "current_task": "6.1"
 }

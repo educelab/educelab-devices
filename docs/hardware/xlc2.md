@@ -3,8 +3,8 @@
 A lab-built LED controller for the `pgs-scan` gantry rigs: an Arduino-class board on
 USB serial that drives a white DotStar pixel strip and the XL4 940 nm infrared array
 (the "XMount" LEDs). Its firmware lives in [`firmware/xlc2/`](../../firmware/xlc2/). It
-was copied from `pgs-scan` `dev` at `aed0b5e` (2022-11-01) and updated to 2.0.0 here
-(see [Version history](#version-history)).
+was copied from `pgs-scan` `dev` at `aed0b5e` (2022-11-01) and updated to 2.0.0 and
+2.1.0 here (see [Version history](#version-history)).
 
 **XLC1**, an earlier controller for one RGB strip, is a separate device rather than an
 older revision of this board. Its units have been retired (maintainer, 2026-10-29), so
@@ -13,12 +13,17 @@ this repository's history (commit `3f85a42`).
 
 Driver: `educelab.devices.lights.xlc.XLC2`. Manual check: `el-devices xlc`.
 
-`discover()` finds nothing, and a board is opened by `port=` or by its USB
-`serial_number=`. Nothing in the USB descriptors identifies an XLC2 (see
-[Identity](#identity)), and opening a port to send the handshake resets the board
-behind it, which could be the X-Carve's homed GRBL controller. The one XLC2 checked has
-serial number `0000`, a placeholder, so `serial_number=` can't tell XLC2s apart. Revisit
-this if the units' descriptors can be rewritten.
+Nothing in the USB descriptors identifies an XLC2 or tells two apart (see
+[Identity](#identity)), so from firmware 2.1.0 each board stores a **unit ID** in EEPROM
+and reports it in the handshake. The driver reports it as `info.serial_number`.
+
+- `discover()` lists the ports with a USB-serial bridge seen on XLC2s, without opening
+  them, so their serial numbers are unknown. Other boards with the same bridge are
+  listed too.
+- `XLC2.probe()` sends those ports the handshake and reports each XLC2's unit ID and
+  firmware. Opening a port resets the board behind it, so probing is limited to make
+  that safe; see [Finding boards](#finding-boards).
+- A board is opened by `port=`, or by its unit ID with `serial_number=`, which probes.
 
 Unless marked otherwise, everything below is **assumed**: it is read from the firmware
 source and from `pgs-scan`'s `XLC2` class (`pgs_scan/components/lights.py`, `dev`), not
@@ -27,8 +32,12 @@ against stubbed Arduino libraries, not on a board.
 
 ## Identity
 
-- **Handshake reply**: `EduceLab XLC2,1.0,2.0.0` from 2.0.0 on; `EduceLab XLC2 (FW 1.2.0)`
+- **Handshake reply**: `EduceLab XLC2,1.0,2.1.0,<unit ID>` from 2.1.0, with the unit ID
+  empty until one is set; `EduceLab XLC2,1.0,2.0.0` in 2.0.0; `EduceLab XLC2 (FW 1.2.0)`
   before.
+- **Unit ID**: 1–16 characters from `A–Z`, `a–z`, `0–9`, `_` and `-`, stored in the
+  Nano's EEPROM by `<U,id>` (see [Setting a unit ID](#setting-a-unit-id)). The lab
+  labels units `XLC2-NN`; nothing enforces it.
 - **Hardware version**: `1.0`, the `HW_VERSION` define compiled into the firmware. Like
   MISHA's, it's a label, not something read from the board.
 - **Lights**: an Adafruit DotStar strip, 60 LED/m, white 6000–6500 K (`XLSγ` in
@@ -50,9 +59,9 @@ against stubbed Arduino libraries, not on a board.
 
 `04D9:B534` is a Holtek HT42B534 USB-to-UART bridge (**assumed**, from the VID:PID).
 Its serial number `0000` is a placeholder rather than a unique one, so it can't be told
-apart from another XLC2, or from any other HT42B534, by its descriptors. Whether the
-HT42B534's descriptors can be rewritten, as MISHA's CP2102N's were, is **unknown**;
-Holtek's datasheet or configuration tool would settle it. The `usbmodem` name suggests
+apart from another XLC2, or from any other HT42B534, by its descriptors. Unlike MISHA's
+CP2102N, its descriptors can't be rewritten on this board (maintainer, issue #37,
+2026-11), which is why the unit ID lives in the firmware's EEPROM instead. The `usbmodem` name suggests
 the bridge is a USB CDC device, which macOS names from the serial number (**assumed**).
 Other units may have other bridges, since `pgs-scan` also searches for the CH340's VID.
 
@@ -71,6 +80,29 @@ number. Windows binds Microsoft's in-box CDC driver, so pyserial reports the des
   bootloader blinking its LED on D13, which is also the SPI clock to the strip, so stray
   bits reach the strip until `setup()` clears it (**assumed**). Harmless, but a camera
   exposing while the port opens could catch it.
+
+### Finding boards
+
+Opening a port resets the board behind it (DTR), which loses an X-Carve's homing and
+turns an XLC2's lights off. `discover()` never opens a port. `XLC2.probe()`, and
+`XLC2(serial_number=...)`, which uses it, open a port only if:
+
+- its VID:PID is a bridge seen on XLC2s: `04D9:B534` (Holtek HT42B534) or `1A86:7523`
+  (WCH CH340, which `pgs-scan` searches for; **assumed**, no CH340 unit checked yet);
+- it opens. Every serial port is opened exclusively, so a port another program holds
+  is skipped. On Windows that's any program. On Linux and macOS pyserial takes an
+  advisory `flock`, which only stops programs that also lock the port (this package,
+  or pyserial with `exclusive=True`); `screen`, `minicom` or a plain pyserial script
+  don't, so their boards can still be reset. Close them before probing.
+
+The allowlist must never include another driver's ports: the X-Controller is an FTDI
+`0403:6001` and MISHA a CP2102N `10C4:EA60`. A test checks that the bridges' vendor IDs
+don't overlap.
+
+Candidates are probed at once, so a probe takes about 4 s (2 s reset settle, up to 2 s
+for the handshake) however many there are. A port that doesn't answer with an XLC2
+handshake is skipped and logged at debug level. `XLC2(serial_number=...)` keeps the
+matching board's port open from the probe, so that board is reset once, not twice.
 
 ## Transport
 
@@ -95,7 +127,7 @@ number. Windows binds Microsoft's in-box CDC driver, so pyserial reports the des
   0.3.0 changed the timeout right after sending the handshake, so it never found an
   XLC2 on Windows.
 
-## Protocol (2.0.0)
+## Protocol (2.1.0)
 
 Commands are framed by `<` and `>`. Anything outside a frame is ignored, so a trailing
 line ending is harmless. A `<` inside a frame starts a new frame, dropping the
@@ -103,11 +135,12 @@ unfinished one. Fields are separated by commas, and spaces around a number are a
 A frame longer than 31 characters is rejected.
 
 `<?>` or `<ID>` (any case) is the handshake. The reply is one line,
-`name,hardware version,firmware version`, the same shape as MISHA's:
+`name,hardware version,firmware version,unit ID`. The first three fields are the same
+shape as MISHA's, and the unit ID is empty until one is set (ADR 0004):
 
 ```
 > <?>
-< EduceLab XLC2,1.0,2.0.0
+< EduceLab XLC2,1.0,2.1.0,XLC2-01
 ```
 
 Every other command is answered with exactly one line: `OK` if it was carried out, or
@@ -120,6 +153,7 @@ whole numbers from 0 to 255.
 | `<X,n>` | XL4 PWM duty `n` |
 | `<S,a,b,c,d>` | Clears the strip, then sets four segments (pixels 0–54, 55–110, 111–166, 167–221) to grey `a`–`d` |
 | `<L,i,n>` | Pixel `i` (0–221) to grey `n` |
+| `<U,id>` | Stores unit ID `id` in EEPROM (2.1.0) |
 
 The driver uses `<B>` for channel `white` and `<X>` for channel `940nm`. These channel
 IDs are stable: consumers store them in presets and metadata (`pgs-scan` does, keeping
@@ -130,8 +164,26 @@ through a level exactly, which a test pins.
 | Reply | Cause |
 |---|---|
 | `ERR unknown command` | The command letter isn't one of these, or the frame is empty |
-| `ERR invalid command` | Wrong number of fields, a value that isn't a number from 0 to 255, or a frame that's too long |
+| `ERR invalid command` | Wrong number of fields, a value that isn't a number from 0 to 255, a unit ID that isn't 1–16 allowed characters, or a frame that's too long |
 | `ERR index out of range` | `<L>` with an index past the strip |
+
+2.0.0 is the same, except that its handshake has no fourth field and `<U>` gets
+`ERR unknown command`.
+
+### Setting a unit ID
+
+```shell
+el-devices xlc --port /dev/cu.usbmodem00001 --set-id XLC2-01
+```
+
+or `XLC2.set_unit_id("XLC2-01")` on an open board. `el-devices xlc --set-id` with no
+port probes, and refuses unless exactly one XLC2 answers. The ID is written to EEPROM
+as a magic byte (`0xEC`), a length, then the characters; blank EEPROM (`0xFF`) has no
+magic byte, so it reads as unset. The magic byte is cleared before the characters are
+written and set last, so a write cut short reads as unset rather than garbled.
+Uploading a sketch through the Nano's bootloader leaves EEPROM alone, so the ID survives
+reflashing from the Arduino IDE, and power cycles (**verified**, 2026-11-18). A board
+that has never had an ID reports an empty field (**verified** on one board).
 
 ## Protocol before 2.0.0 (FW 1.2.0)
 
@@ -171,6 +223,11 @@ and an unknown command looks the same as a failure. Hazards of this firmware, fi
 
 ## Hazards
 
+- **Probing resets other boards on the same bridge**: `XLC2.probe()`,
+  `XLC2(serial_number=...)` and `el-devices xlc` without `--port` open every port with
+  an XLC2's bridge that isn't locked (see [Finding boards](#finding-boards)). Any other
+  CH340 or HT42B534 board on the host is reset too. The X-Controller and MISHA panels
+  aren't, being on other bridges.
 - **Reflashing a board in use**: `pgs-scan` `dev` refuses 2.0.0 boards (see
   [Compatibility with `pgs-scan` `dev`](#compatibility-with-pgs-scan-dev)). Reflash a
   rig's board only when that rig moves to this package's drivers.
@@ -188,6 +245,9 @@ Checked by reading `pgs_scan/components/lights.py` on `dev` against the 2.0.0 re
 
 ## Version history
 
+- **2.1.0**: a unit ID, stored in EEPROM by `<U,id>` and reported as a fourth handshake
+  field, empty until set. Drivers for 2.0.0 that split the reply into exactly three
+  fields don't recognize it.
 - **2.0.0**: every command is answered with `OK` or `ERR <reason>`, and the debug lines
   are gone. Values outside 0–255, missing or extra fields, pixel indices past the
   strip, and over-long frames are rejected without changing anything. The handshake
@@ -217,8 +277,10 @@ bootloader this one has is **unknown**.
 
 - The USB-serial bridge in the units not yet checked, and whether they're all Nanos.
   Settle by plugging in each unit and recording its `list_ports` entry.
-- Whether the HT42B534's serial number and description can be rewritten, which
-  would let `serial_number=` pick out one XLC2.
+- Whether CH340 units use PID `7523`, the only CH340 PID probed.
+- Whether probing leaves a homed X-Carve homed. It should, since its FTDI bridge isn't
+  on the allowlist, but it hasn't been tried with both attached.
+- Whether exclusive open behaves on Windows and Linux as on macOS.
 - The XL4's current and thermal limits at full duty.
 - Whether any deployed unit runs firmware other than 1.2.0.
 - What a mid-reply timeout change on Windows wedges: the CDC driver, the HT42B534 or
@@ -228,7 +290,45 @@ bootloader this one has is **unknown**.
 
 ## Manual check
 
+### Still owed
+
+Tracked in issue #39.
+
+- `el-devices xlc` with no port while the X-Carve is attached and homed: it must stay
+  homed.
+- Exclusive open on Windows (and Linux, if a rig is available), and for MISHA and
+  X-Carve ports.
+- The VID:PID of any unit with a CH340.
+
 ### Last run
+
+2026-11-18, macOS 27.2, Python 3.12, pyserial 3.5, the HT42B534 board at
+`/dev/cu.usbmodem00001` (serial `0000`), the only USB-serial device attached. Branch
+`xlc2-unit-id`.
+
+On 2.0.0, before reflashing:
+
+- `XLC2.discover()` listed the port without opening it; `XLC2.probe()` found the board
+  (firmware 2.0.0, no unit ID) in 2.0 s.
+- `el-devices xlc` with no port probed, found the board, and lit and cleared both
+  channels.
+- `pytest -m hardware tests/test_xlc_hardware.py`: 9 passed, 2 skipped (unit ID).
+- **Exclusive open**: with the port held by one process, `el-devices xlc --port`
+  in another failed with `Could not exclusively lock port … [Errno 35] Resource
+  temporarily unavailable`, without resetting the board; a probe skipped the port. Once
+  the first process closed it, the port opened normally.
+
+Flashed 2.1.0 from the Arduino IDE (maintainer):
+
+- `el-devices xlc` reported `(no ID)`; `--set-id XLC2-01` was acknowledged, and
+  `--serial-number XLC2-01` then found and opened the board by probing.
+  `--serial-number XLC2-02` failed with `no XLC2 has unit ID 'XLC2-02'; found XLC2-01
+  at /dev/cu.usbmodem00001`.
+- `XLC2_UNIT_ID=XLC2-01 pytest -m hardware tests/test_xlc_hardware.py`: 11 passed.
+- The ID was still `XLC2-01` after a power cycle (unplug and replug; same port name)
+  and after reflashing 2.1.0 from the Arduino IDE.
+
+### Run of 2026-11-02
 
 2026-11-02, Windows 11, Python 3.12, pyserial 3.5, the same board at COM4. This was the
 `fix/serial-fixed-timeout` branch (0.3.1), which never changes the port's timeout.
@@ -237,7 +337,7 @@ bootloader this one has is **unknown**.
   and 940 nm to 25% and turned all off, with no errors. On 0.3.0 the same check failed
   with `DeviceNotFound` (see [Transport](#transport)).
 
-### Earlier run
+### Run of 2026-10-29
 
 2026-10-29, macOS, the XLC2 at `/dev/cu.usbmodem00001` (HT42B534 bridge, serial `0000`),
 flashed with 2.0.0 from the Arduino IDE by the maintainer. Its port kept the same name

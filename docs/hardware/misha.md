@@ -93,6 +93,9 @@ firmware reflashes. Write the name on the panel's housing too.
 ## Transport
 
 - USB serial at 9600 baud, 8N1 (the firmware's `Serial.begin(9600)`).
+- Ports are opened exclusively, so a second program, or a second device object, can't
+  open a port that's in use. On Linux and macOS this is an advisory lock that only
+  stops programs that also lock the port ([xlc2.md](xlc2.md#finding-boards)).
 - The transport never changes an open port's timeout: on Windows, doing it while a reply
   was arriving cut an XLC2 off ([xlc2.md](xlc2.md#transport)). Untested on a panel.
 - ASCII lines ending in `\n`. The firmware trims surrounding whitespace, so `\r\n`

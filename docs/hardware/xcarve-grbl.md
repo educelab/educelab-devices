@@ -36,6 +36,9 @@ case, as `pgs-scan` does. That every X-Controller's serial number contains it is
 ## Transport
 
 - 115200 baud, 8N1.
+- Ports are opened exclusively, so a second program, or a second device object, can't
+  open a port that's in use. On Linux and macOS this is an advisory lock that only
+  stops programs that also lock the port ([xlc2.md](xlc2.md#finding-boards)).
 - The transport never changes an open port's timeout: on Windows, doing it while a reply
   was arriving cut an XLC2 off ([xlc2.md](xlc2.md#transport)). Library 0.3.0 changed it once, when
   the reader thread started; whether that disturbed GRBL on Windows is unknown.

@@ -21,6 +21,20 @@ def test_missing_pyserial_names_the_extra(monkeypatch):
         _serial.list_ports()
 
 
+def test_ports_open_exclusively(monkeypatch):
+    # So a port another process holds is refused rather than reset under it.
+    opened = {}
+
+    class Serial:
+        def __init__(self, port, baudrate, **options):
+            opened.update(options, port=port, baudrate=baudrate)
+
+    monkeypatch.setitem(sys.modules, "serial", type(sys)("serial"))
+    monkeypatch.setattr(sys.modules["serial"], "Serial", Serial, raising=False)
+    _serial._open_pyserial("/dev/ttyUSB0", 9600, 0.05)
+    assert opened["exclusive"] is True
+
+
 NANO = _serial.PortInfo(
     "/dev/ttyUSB0", vid=0x1A86, pid=0x7523, description="USB Serial"
 )

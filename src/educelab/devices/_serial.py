@@ -425,6 +425,12 @@ def parse_version(text: str) -> tuple[int, ...]:
 
 def _open_pyserial(port: str, baudrate: int, timeout: float) -> Any:
     pyserial = import_optional("serial", extra="serial")
+    # Exclusive, so a port another process holds is refused rather than shared.
+    # Windows ports are always exclusive; on POSIX pyserial takes a flock.
     return pyserial.Serial(
-        port, baudrate, timeout=timeout, write_timeout=WRITE_TIMEOUT_S
+        port,
+        baudrate,
+        timeout=timeout,
+        write_timeout=WRITE_TIMEOUT_S,
+        exclusive=True,
     )

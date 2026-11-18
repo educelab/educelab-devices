@@ -6,7 +6,12 @@
  * line: OK if it was carried out, or ERR <reason> if it wasn't. A rejected
  * command changes nothing.
  *
- *   <?> or <ID> - Report "name,hardware version,firmware version".
+ *   <?> or <ID> - Report "name,hardware version,firmware version,unit ID". The
+ *   unit ID is empty until one is set.
+ *
+ *   <U,id> - Store a unit ID in EEPROM: 1-16 characters from A-Z, a-z, 0-9,
+ *   '_' and '-', with no spaces. It survives power cycles and reflashing through the
+ *   bootloader.
  *
  *   <B, #> - Set brightness for all LEDs on the pixel strip, where # is a value from 0 to 255.
  *
@@ -22,11 +27,21 @@
 
 #include <Adafruit_DotStar.h>
 #include <SPI.h>
+#include <EEPROM.h>
 
 // Device identification, reported in response to the <?> handshake command
 #define DEVICE_NAME "EduceLab XLC2"
 #define HW_VERSION  "1.0"
-#define SW_VERSION  "2.0.0"
+#define SW_VERSION  "2.1.0"
+
+// Unit ID in EEPROM: a magic byte, a length, then the characters. Blank EEPROM
+// (0xFF) has no magic byte, so it reads as unset.
+#define ID_MAGIC      0xEC
+#define ID_MAGIC_ADDR 0
+#define ID_LEN_ADDR   1
+#define ID_TEXT_ADDR  2
+#define ID_MAX_LEN    16
+char unitId[ID_MAX_LEN + 1] = "";
 
 // The PWM pin for the XMount LED array
 // Hardware SPI is a little faster, but must be wired to specific pins
@@ -53,6 +68,8 @@ void setup() {
   // Setup lights
   strip.fill(strip.Color(0,0,0), 0, NUMPIXELS);
   strip.show();
+
+  loadUnitId();
 
   // Start serial
   Serial.begin(9600);
@@ -109,7 +126,18 @@ void handleCommand() {
 
   // Handshake: the one command answered with something other than OK/ERR
   if(strcmp(receivedChars, "?") == 0 || strcasecmp(receivedChars, "ID") == 0) {
-    Serial.println(DEVICE_NAME "," HW_VERSION "," SW_VERSION);
+    Serial.print(DEVICE_NAME "," HW_VERSION "," SW_VERSION ",");
+    Serial.println(unitId);
+    return;
+  }
+
+  // The unit ID isn't a level, so it's checked on its own
+  if(receivedChars[0] == 'U' && (receivedChars[1] == ',' || receivedChars[1] == '\0')) {
+    if(receivedChars[1] == '\0' || !storeUnitId(receivedChars + 2)) {
+      Serial.println("ERR invalid command");
+      return;
+    }
+    Serial.println("OK");
     return;
   }
 
@@ -199,6 +227,47 @@ boolean parseLevels(char ** fields, int * values, int count) {
       return false;
     }
   }
+  return true;
+}
+
+// Reads the unit ID from EEPROM, leaving it empty if none was stored.
+void loadUnitId() {
+  unitId[0] = '\0';
+  if(EEPROM.read(ID_MAGIC_ADDR) != ID_MAGIC) {
+    return;
+  }
+  byte length = EEPROM.read(ID_LEN_ADDR);
+  if(length == 0 || length > ID_MAX_LEN) {
+    return;
+  }
+  for(byte c = 0; c < length; c++) {
+    unitId[c] = EEPROM.read(ID_TEXT_ADDR + c);
+  }
+  unitId[length] = '\0';
+}
+
+// Validates and stores a unit ID. Returns false, changing nothing, if it's invalid.
+boolean storeUnitId(const char * text) {
+  int length = strlen(text);
+  if(length == 0 || length > ID_MAX_LEN) {
+    return false;
+  }
+  for(int c = 0; c < length; c++) {
+    char ch = text[c];
+    boolean allowed = (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
+                      (ch >= '0' && ch <= '9') || ch == '_' || ch == '-';
+    if(!allowed) {
+      return false;
+    }
+  }
+  // Cleared first, so a write cut short reads as unset rather than garbled
+  EEPROM.update(ID_MAGIC_ADDR, 0xFF);
+  for(int c = 0; c < length; c++) {
+    EEPROM.update(ID_TEXT_ADDR + c, text[c]);
+  }
+  EEPROM.update(ID_LEN_ADDR, length);
+  EEPROM.update(ID_MAGIC_ADDR, ID_MAGIC);
+  strcpy(unitId, text);
   return true;
 }
 

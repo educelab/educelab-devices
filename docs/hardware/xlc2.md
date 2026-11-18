@@ -287,6 +287,8 @@ bootloader this one has is **unknown**.
 
 ### Still owed
 
+Tracked in issue #39.
+
 - `el-devices xlc` with no port while the X-Carve is attached and homed: it must stay
   homed.
 - Exclusive open on Windows (and Linux, if a rig is available), and for MISHA and

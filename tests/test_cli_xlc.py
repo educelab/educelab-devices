@@ -82,6 +82,20 @@ def test_no_board_found(attach, capsys):
     assert "no XLC2" in capsys.readouterr().err
 
 
+def test_no_board_found_mentions_ports_in_use(attach, monkeypatch, capsys):
+    # A port another program holds is skipped, so its board doesn't answer.
+    attach({HOLTEK: XLCFirmware()})
+    monkeypatch.setattr(
+        xlc,
+        "_default_transport",
+        lambda port: SerialTransport(
+            port, baudrate=9600, opener=ScriptedSerial(present=False).open
+        ),
+    )
+    assert main(["xlc"]) == 1
+    assert "in use" in capsys.readouterr().err
+
+
 def test_set_id_stores_it_without_lighting(board, capsys):
     fake, firmware = board
     assert main(["xlc", "--set-id", "XLC2-09"]) == 0

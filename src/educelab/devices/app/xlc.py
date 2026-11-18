@@ -70,7 +70,10 @@ def run(args: argparse.Namespace) -> int:
     if port is None and args.serial_number is None:
         found = XLC2.probe()
         if not found:
-            raise DeviceNotFound("no XLC2 answered; give its port with --port")
+            raise DeviceNotFound(
+                "no XLC2 answered. Ports in use by another program are skipped, "
+                "so close it, or give the port with --port"
+            )
         if len(found) > 1:
             boards = ", ".join(
                 f"{i.serial_number or '(no ID)'} at {i.address}" for i in found

@@ -176,8 +176,9 @@ port probes, and refuses unless exactly one XLC2 answers. The ID is written to E
 as a magic byte (`0xEC`), a length, then the characters; blank EEPROM (`0xFF`) has no
 magic byte, so it reads as unset. The magic byte is cleared before the characters are
 written and set last, so a write cut short reads as unset rather than garbled.
-Uploading a sketch through the Nano's bootloader leaves EEPROM alone, so the ID should
-survive reflashing (**assumed**; see [Unknowns](#unknowns)).
+Uploading a sketch through the Nano's bootloader leaves EEPROM alone, so the ID survives
+reflashing from the Arduino IDE, and power cycles (**verified**, 2026-11-18). A board
+that has never had an ID reports an empty field (**verified** on one board).
 
 ## Protocol before 2.0.0 (FW 1.2.0)
 
@@ -271,9 +272,10 @@ bootloader this one has is **unknown**.
 
 - The USB-serial bridge in the units not yet checked, and whether they're all Nanos.
   Settle by plugging in each unit and recording its `list_ports` entry.
-- Whether the unit ID survives reflashing and power cycles on a real board. It should,
-  since the bootloader doesn't erase EEPROM.
 - Whether CH340 units use PID `7523`, the only CH340 PID probed.
+- Whether probing leaves a homed X-Carve homed. It should, since its FTDI bridge isn't
+  on the allowlist, but it hasn't been tried with both attached.
+- Whether exclusive open behaves on Windows and Linux as on macOS.
 - The XL4's current and thermal limits at full duty.
 - Whether any deployed unit runs firmware other than 1.2.0.
 - What a mid-reply timeout change on Windows wedges: the CDC driver, the HT42B534 or
@@ -283,20 +285,43 @@ bootloader this one has is **unknown**.
 
 ## Manual check
 
-### Owed (track `xlc2-unit-id_20261117`)
+### Still owed
 
-Firmware 2.1.0 has only been checked by compiling the sketch on a host against stubbed
-Arduino libraries, and the probe on fakes. Still to run on a board:
-
-- Flash 2.1.0, `el-devices xlc --set-id XLC2-01`, then confirm the ID after a reflash
-  and a power cycle.
-- `el-devices xlc` with no port, and `pytest -m hardware tests/test_xlc_hardware.py`
-  with `XLC2_UNIT_ID` set, while the X-Carve is attached and homed: it must stay homed.
-- A second program can't open an XLC2, MISHA or X-Carve port in use (macOS, Windows,
-  and Linux if a rig is available).
-- Record the VID:PID of any unit with a CH340.
+- `el-devices xlc` with no port while the X-Carve is attached and homed: it must stay
+  homed.
+- Exclusive open on Windows (and Linux, if a rig is available), and for MISHA and
+  X-Carve ports.
+- The VID:PID of any unit with a CH340.
 
 ### Last run
+
+2026-11-18, macOS 27.2, Python 3.12, pyserial 3.5, the HT42B534 board at
+`/dev/cu.usbmodem00001` (serial `0000`), the only USB-serial device attached. Branch
+`xlc2-unit-id`.
+
+On 2.0.0, before reflashing:
+
+- `XLC2.discover()` listed the port without opening it; `XLC2.probe()` found the board
+  (firmware 2.0.0, no unit ID) in 2.0 s.
+- `el-devices xlc` with no port probed, found the board, and lit and cleared both
+  channels.
+- `pytest -m hardware tests/test_xlc_hardware.py`: 9 passed, 2 skipped (unit ID).
+- **Exclusive open**: with the port held by one process, `el-devices xlc --port`
+  in another failed with `Could not exclusively lock port … [Errno 35] Resource
+  temporarily unavailable`, without resetting the board; a probe skipped the port. Once
+  the first process closed it, the port opened normally.
+
+Flashed 2.1.0 from the Arduino IDE (maintainer):
+
+- `el-devices xlc` reported `(no ID)`; `--set-id XLC2-01` was acknowledged, and
+  `--serial-number XLC2-01` then found and opened the board by probing.
+  `--serial-number XLC2-02` failed with `no XLC2 has unit ID 'XLC2-02'; found XLC2-01
+  at /dev/cu.usbmodem00001`.
+- `XLC2_UNIT_ID=XLC2-01 pytest -m hardware tests/test_xlc_hardware.py`: 11 passed.
+- The ID was still `XLC2-01` after a power cycle (unplug and replug; same port name)
+  and after reflashing 2.1.0 from the Arduino IDE.
+
+### Run of 2026-11-02
 
 2026-11-02, Windows 11, Python 3.12, pyserial 3.5, the same board at COM4. This was the
 `fix/serial-fixed-timeout` branch (0.3.1), which never changes the port's timeout.
@@ -305,7 +330,7 @@ Arduino libraries, and the probe on fakes. Still to run on a board:
   and 940 nm to 25% and turned all off, with no errors. On 0.3.0 the same check failed
   with `DeviceNotFound` (see [Transport](#transport)).
 
-### Earlier run
+### Run of 2026-10-29
 
 2026-10-29, macOS, the XLC2 at `/dev/cu.usbmodem00001` (HT42B534 bridge, serial `0000`),
 flashed with 2.0.0 from the Arduino IDE by the maintainer. Its port kept the same name

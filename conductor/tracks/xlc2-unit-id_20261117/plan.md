@@ -79,14 +79,15 @@ Firmware first, with the firmware fake updated alongside it so the driver can be
 
 ### Tasks
 
-- [ ] Task 6.1: Flash 2.1.0. Run `el-devices xlc --set-id XLC2-01`, then confirm the ID survives a reflash and a power cycle.
-- [ ] Task 6.2: With the X-Carve attached and homed, run `probe()` and `el-devices xlc` with no target. The X-Carve must not reset.
-- [ ] Task 6.3: Exclusive open: a second process can't open an XLC2, MISHA or X-Carve that's in use, on macOS and Windows, and Linux if a rig is available.
-- [ ] Task 6.4: Run `pytest -m hardware tests/test_xlc_hardware.py`, extended for the ID. Record the results, and any CH340 unit's VID:PID, in `docs/hardware/xlc2.md`.
+- [x] Task 6.1: Flash 2.1.0. Run `el-devices xlc --set-id XLC2-01`, then confirm the ID survives a reflash and a power cycle.
+- [ ] Task 6.2 (owed; needs the rig): With the X-Carve attached and homed, run `probe()` and `el-devices xlc` with no target. The X-Carve must not reset.
+- [~] Task 6.3: Exclusive open: a second process can't open an XLC2, MISHA or X-Carve that's in use, on macOS and Windows, and Linux if a rig is available.
+  - XLC2 on macOS verified 2026-11-18. Windows, Linux, MISHA and X-Carve still owed.
+- [x] Task 6.4: Run `pytest -m hardware tests/test_xlc_hardware.py`, extended for the ID. Record the results, and any CH340 unit's VID:PID, in `docs/hardware/xlc2.md`.
 
 ### Verification
 
-- [ ] Results are recorded in the hardware doc's Manual check section.
+- [x] Results are recorded in the hardware doc's Manual check section (2026-11-18, macOS). No CH340 unit was available.
 
 ## Final Verification
 

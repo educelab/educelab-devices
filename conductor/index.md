@@ -26,6 +26,7 @@ Project-level context outside this directory:
 - [Lab Board Connection and GRBL Link](./tracks/serial-drivers_20261104/index.md) — pending
 - [Second Roles and Stage Helpers](./tracks/stages-second-roles_20261104/index.md) — pending
 - [XLC2 Unit ID and Probing](./tracks/xlc2-unit-id_20261117/index.md) — pending
+- [Camera Lens Information](./tracks/camera-lens-info_20261118/index.md) — pending
 
 ## Completed Tracks
 

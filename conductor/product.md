@@ -43,6 +43,7 @@ Planned tracks, in order. All are registered in [tracks.md](./tracks.md).
 | 14 | Lab board connection and GRBL link | Shared ADR 0004 open sequence for MISHA and XLC2; GRBL protocol out of the X-Carve stage; Stage base can lose homing |
 | 15 | Second roles and stage helpers | One open rule for the halo and the focus drive; typed Foldio transport; Axis offset and clamp helpers |
 | 16 | XLC2 unit ID and probing | EEPROM unit ID in the 2.1.0 handshake; `discover()` by bridge VID:PID; `XLC2.probe()`; exclusive serial open. From issue #37, for `pgs-scan` per-rig device lists. Before track 14 |
+| 17 | Camera lens information | Focal length and lens info on the `Camera` base, `None` when the camera can't report it. Stub from issue #40; design questions settled at start |
 
 ## Out of scope
 

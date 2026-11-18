@@ -5,7 +5,7 @@ Protocol, firmware history and flashing: docs/hardware/xlc2.md.
 
 import logging
 import re
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 
 from educelab.devices import _serial
 from educelab.devices._serial import (
@@ -19,8 +19,6 @@ from educelab.devices._serial import (
 from educelab.devices.device import DeviceInfo, synchronized
 from educelab.devices.errors import DeviceError, DeviceNotFound
 from educelab.devices.lights.base import RGB, Channel, Light
-from educelab.devices.lights.misha import NAMED_PANELS
-from educelab.devices.stages.xcarve import XCONTROLLERS
 
 __all__ = ["XLC2"]
 
@@ -47,13 +45,12 @@ UNIT_ID = re.compile(r"[A-Za-z0-9_-]{1,16}")
 MAX_DUTY = 255
 
 # USB-serial bridges found on XLC2s. Only these ports are probed, since
-# probing opens the port, which resets the board behind it.
+# probing resets the board behind a port; they must never include another
+# driver's ports, such as the X-Controller's FTDI (docs/hardware/xlc2.md).
 BRIDGES = (
     PortMatch(vid=0x04D9, pid=0xB534),  # Holtek HT42B534
     PortMatch(vid=0x1A86, pid=0x7523),  # WCH CH340
 )
-# Ports other drivers claim are never probed, whatever their bridge.
-OTHER_DEVICES = (XCONTROLLERS, NAMED_PANELS)
 
 CHANNELS = (Channel("white"), Channel("940nm", wavelength_nm=940.0))
 # The command letter that sets each channel's duty.
@@ -106,7 +103,7 @@ class XLC2(Light):
             backend="xlc",
             model="XLC2",
             address=self._port,
-            serial_number=self._unit_id,
+            serial_number=self._unit_id or self._serial_number,
             firmware_version=self._firmware_version,
         )
 
@@ -129,9 +126,11 @@ class XLC2(Light):
 
         Unlike `discover()`, this opens ports, which resets the boards behind
         them and turns their lights off. Only ports with an XLC2's USB bridge
-        are opened, never one another driver claims (such as an X-Controller)
-        or one another program holds. Boards are probed at once, so this
-        takes about 4 s however many there are.
+        are opened. Ports that can't be opened are skipped: on Windows, any
+        port another program has open; on Linux and macOS, only one held by a
+        program that locks it (as this package does), so close other serial
+        programs first. Boards are probed at once, so this takes about 4 s
+        however many there are.
 
         Returns:
             One `DeviceInfo` per XLC2 that answered, with its unit ID as
@@ -182,6 +181,9 @@ class XLC2(Light):
             )
         self._command("U", unit_id)
         self._unit_id = unit_id
+        if self._serial_number is not None:
+            # Opened by its ID, so reopening must look for the new one.
+            self._serial_number = unit_id
 
     def __repr__(self) -> str:
         where = self._port or self._serial_number or "(no port)"
@@ -321,12 +323,9 @@ def _parse_identity(line: str) -> Identity | None:
 
 
 def _candidates() -> list[PortInfo]:
-    """Ports with an XLC2's bridge that no other driver claims."""
+    """Ports with an XLC2's bridge."""
     return [
-        port
-        for port in _serial.list_ports()
-        if any(m.matches(port) for m in BRIDGES)
-        and not any(m.matches(port) for m in OTHER_DEVICES)
+        port for port in _serial.list_ports() if any(m.matches(port) for m in BRIDGES)
     ]
 
 
@@ -346,20 +345,27 @@ def _probe_all() -> list[tuple[str, Identity, SerialTransport]]:
     ports = [port.device for port in _candidates()]
     if not ports:
         return []
-    with ThreadPoolExecutor(max_workers=len(ports)) as pool:
-        futures = [pool.submit(_probe_one, port) for port in ports]
-    found, failure = [], None
-    for future in futures:
-        try:
-            if (result := future.result()) is not None:
-                found.append(result)
-        except Exception as exc:  # noqa: BLE001 - re-raised once ports are closed
-            failure = failure or exc
-    if failure is not None:
-        for _, _, transport in found:
-            transport.close()
-        raise failure
-    return found
+    futures: list[Future[tuple[str, Identity, SerialTransport] | None]] = []
+    try:
+        with ThreadPoolExecutor(max_workers=len(ports)) as pool:
+            futures = [pool.submit(_probe_one, port) for port in ports]
+        results = [future.result() for future in futures]
+    except BaseException:
+        # Interrupted, or a probe failed: close every port that was opened,
+        # now or, for probes still running, when they finish.
+        for future in futures:
+            future.add_done_callback(_close_probed)
+        raise
+    return [result for result in results if result is not None]
+
+
+def _close_probed(future: Future[tuple[str, Identity, SerialTransport] | None]) -> None:
+    if (
+        not future.cancelled()
+        and future.exception() is None
+        and (result := future.result()) is not None
+    ):
+        result[2].close()
 
 
 def _probe_one(port: str) -> tuple[str, Identity, SerialTransport] | None:

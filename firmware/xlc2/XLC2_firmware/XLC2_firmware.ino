@@ -9,8 +9,9 @@
  *   <?> or <ID> - Report "name,hardware version,firmware version,unit ID". The
  *   unit ID is empty until one is set.
  *
- *   <U, id> - Store a unit ID in EEPROM: 1-16 characters from A-Z, a-z, 0-9,
- *   '_' and '-'. It survives power cycles and reflashing through the bootloader.
+ *   <U,id> - Store a unit ID in EEPROM: 1-16 characters from A-Z, a-z, 0-9,
+ *   '_' and '-', with no spaces. It survives power cycles and reflashing through the
+ *   bootloader.
  *
  *   <B, #> - Set brightness for all LEDs on the pixel strip, where # is a value from 0 to 255.
  *

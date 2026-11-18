@@ -93,7 +93,7 @@ def test_no_board_found_mentions_ports_in_use(attach, monkeypatch, capsys):
         ),
     )
     assert main(["xlc"]) == 1
-    assert "in use" in capsys.readouterr().err
+    assert "another program" in capsys.readouterr().err
 
 
 def test_set_id_stores_it_without_lighting(board, capsys):
@@ -108,6 +108,20 @@ def test_set_id_refuses_when_several_boards_are_attached(attach, capsys):
     fakes = attach({HOLTEK: XLCFirmware(), CH340: XLCFirmware()})
     assert main(["xlc", "--set-id", "XLC2-09"]) == 1
     assert not any(line.startswith("<U") for f in fakes.values() for line in f.written)
+
+
+@pytest.mark.parametrize("option", [["--level", "0.5"], ["--dwell", "1"]])
+def test_set_id_refuses_lighting_options(board, capsys, option):
+    _, firmware = board
+    assert main(["xlc", "--set-id", "XLC2-09", *option]) == 2
+    assert "--set-id" in capsys.readouterr().err
+    assert firmware.unit_id == "XLC2-01"
+
+
+def test_no_board_found_mentions_permissions(attach, capsys):
+    attach({})
+    assert main(["xlc"]) == 1
+    assert "permission" in capsys.readouterr().err
 
 
 def test_set_id_rejects_an_invalid_id(board, capsys):

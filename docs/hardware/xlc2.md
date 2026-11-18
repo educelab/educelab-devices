@@ -89,10 +89,15 @@ turns an XLC2's lights off. `discover()` never opens a port. `XLC2.probe()`, and
 
 - its VID:PID is a bridge seen on XLC2s: `04D9:B534` (Holtek HT42B534) or `1A86:7523`
   (WCH CH340, which `pgs-scan` searches for; **assumed**, no CH340 unit checked yet);
-- it doesn't match another driver's ports. The X-Controller (FTDI `0403:6001`) and
-  MISHA (CP2102N `10C4:EA60`) are on other bridges anyway;
-- no other program has it open. Every serial port is opened exclusively (an `flock`
-  on Linux and macOS; Windows ports are always exclusive), so a busy port is skipped.
+- it opens. Every serial port is opened exclusively, so a port another program holds
+  is skipped. On Windows that's any program. On Linux and macOS pyserial takes an
+  advisory `flock`, which only stops programs that also lock the port (this package,
+  or pyserial with `exclusive=True`); `screen`, `minicom` or a plain pyserial script
+  don't, so their boards can still be reset. Close them before probing.
+
+The allowlist must never include another driver's ports: the X-Controller is an FTDI
+`0403:6001` and MISHA a CP2102N `10C4:EA60`. A test checks that the bridges' vendor IDs
+don't overlap.
 
 Candidates are probed at once, so a probe takes about 4 s (2 s reset settle, up to 2 s
 for the handshake) however many there are. A port that doesn't answer with an XLC2
@@ -220,9 +225,9 @@ and an unknown command looks the same as a failure. Hazards of this firmware, fi
 
 - **Probing resets other boards on the same bridge**: `XLC2.probe()`,
   `XLC2(serial_number=...)` and `el-devices xlc` without `--port` open every port with
-  an XLC2's bridge that no other program holds. Any other CH340 or HT42B534 board on
-  the host is reset too. The X-Controller and MISHA panels aren't, being on other
-  bridges.
+  an XLC2's bridge that isn't locked (see [Finding boards](#finding-boards)). Any other
+  CH340 or HT42B534 board on the host is reset too. The X-Controller and MISHA panels
+  aren't, being on other bridges.
 - **Reflashing a board in use**: `pgs-scan` `dev` refuses 2.0.0 boards (see
   [Compatibility with `pgs-scan` `dev`](#compatibility-with-pgs-scan-dev)). Reflash a
   rig's board only when that rig moves to this package's drivers.

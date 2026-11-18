@@ -70,7 +70,8 @@ closed one. A closed device can be opened again.
   as `DeviceInfo`s, without opening them. Drivers that can't enumerate return `[]`.
   `el-devices discover` runs every installed backend's `discover()`. A device that can
   only be identified by talking to it (the XLC2) also has `probe()`, which opens
-  candidate ports and so resets the boards behind them; nothing calls it implicitly.
+  candidate ports and so resets the boards behind them. `discover()` never calls it, but
+  opening an XLC2 by `serial_number=` does.
 - **`info` identifies a device**: `backend`, `model`, and, where known, `address`,
   `serial_number`, `firmware_version` and `vendor`. Every camera reports `vendor` once
   open, if the hardware can say; most drivers fill in more once open. A camera's hardware

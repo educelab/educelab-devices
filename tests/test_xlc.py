@@ -1,4 +1,5 @@
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -13,7 +14,9 @@ from educelab.devices.errors import (
     NotConnected,
 )
 from educelab.devices.lights import ChannelKind, xlc
+from educelab.devices.lights.misha import NAMED_PANELS
 from educelab.devices.lights.xlc import XLC2
+from educelab.devices.stages.xcarve import XCONTROLLERS
 from fakes.serial_port import ScriptedSerial
 from fakes.xlc import XLC2_IDENTITY, XLCFirmware
 
@@ -123,8 +126,12 @@ def test_2_0_0_firmware_opens_without_a_serial_number():
     assert light.info.serial_number is None
 
 
-def test_serial_number_is_unknown_before_open():
+def test_serial_number_is_unknown_before_opening_by_port():
     assert make_xlc2(emulated(unit_id="XLC2-01")[0]).info.serial_number is None
+
+
+def test_requested_serial_number_is_reported_before_open():
+    assert XLC2(serial_number="XLC2-01").info.serial_number == "XLC2-01"
 
 
 @pytest.mark.parametrize(
@@ -418,12 +425,18 @@ def test_probe_never_opens_ports_off_the_allowlist(monkeypatch):
     assert [i.address for i in XLC2.probe()] == [HOLTEK.device]
 
 
-def test_probe_skips_ports_another_driver_claims(monkeypatch):
-    monkeypatch.setattr(
-        xlc, "OTHER_DEVICES", (_serial.PortMatch(vid=0x1A86, pid=0x7523),)
-    )
-    attach(monkeypatch, {CH340: untouchable(), HOLTEK: emulated()[0]})
-    assert [i.address for i in XLC2.probe()] == [HOLTEK.device]
+def _ids(value):
+    return {value} if isinstance(value, int) else set(value)
+
+
+@pytest.mark.parametrize(
+    "other", [XCONTROLLERS, NAMED_PANELS], ids=["X-Carve", "MISHA"]
+)
+def test_probed_bridges_never_include_another_drivers_ports(other):
+    # Probing resets the board behind a port, so the allowlist must stay clear
+    # of every other serial driver's ports (docs/hardware/xlc2.md).
+    for bridge in xlc.BRIDGES:
+        assert not (_ids(bridge.vid) & _ids(other.vid))
 
 
 def test_probe_skips_busy_and_silent_ports(monkeypatch, caplog):
@@ -449,6 +462,32 @@ def test_an_unexpected_probe_failure_leaves_no_port_open(monkeypatch):
         {CH340: ScriptedSerial(respond=broken), HOLTEK: emulated()[0]},
     )
     with pytest.raises(RuntimeError, match="driver bug"):
+        XLC2.probe()
+    assert not any(fake.is_open for fake in boards.values())
+
+
+def test_an_interrupted_probe_leaves_no_port_open(monkeypatch):
+    class Interrupted(ThreadPoolExecutor):
+        def __exit__(self, *exc):
+            super().__exit__(*exc)
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(xlc, "ThreadPoolExecutor", Interrupted)
+    boards = attach(monkeypatch, {CH340: emulated()[0], HOLTEK: emulated()[0]})
+    with pytest.raises(KeyboardInterrupt):
+        XLC2.probe()
+    assert not any(fake.is_open for fake in boards.values())
+
+
+def test_an_interrupt_in_one_probe_leaves_no_port_open(monkeypatch):
+    def interrupted(line):
+        raise KeyboardInterrupt
+
+    boards = attach(
+        monkeypatch,
+        {CH340: ScriptedSerial(respond=interrupted), HOLTEK: emulated()[0]},
+    )
+    with pytest.raises(KeyboardInterrupt):
         XLC2.probe()
     assert not any(fake.is_open for fake in boards.values())
 
@@ -498,6 +537,16 @@ def test_serial_number_shared_by_two_boards_is_refused(monkeypatch):
     with pytest.raises(DeviceError, match="2 XLC2s"):
         XLC2(serial_number="XLC2-01").open()
     assert not any(fake.is_open for fake in boards.values())
+
+
+def test_reopening_finds_the_board_by_its_new_unit_id(monkeypatch):
+    attach(monkeypatch, {HOLTEK: emulated(unit_id="XLC2-01")[0]})
+    light = XLC2(serial_number="XLC2-01")
+    light.open()
+    light.set_unit_id("XLC2-05")
+    light.close()
+    light.open()
+    assert light.info.serial_number == "XLC2-05"
 
 
 def test_reopening_by_serial_number_finds_a_replugged_board(monkeypatch):

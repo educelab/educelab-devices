@@ -1,6 +1,7 @@
 """``el-devices xlc``: check an XLC2 light controller by lighting each channel."""
 
 import argparse
+import sys
 import time
 
 
@@ -29,13 +30,11 @@ def register(subparsers: "argparse._SubParsersAction[argparse.ArgumentParser]") 
     parser.add_argument(
         "--level",
         type=_level,
-        default=0.25,
         help="level for each channel, above 0 and up to 1 (default: 0.25)",
     )
     parser.add_argument(
         "--dwell",
         type=float,
-        default=2.0,
         help="seconds to leave each channel lit (default: 2)",
     )
     parser.set_defaults(func=run)
@@ -66,13 +65,24 @@ def run(args: argparse.Namespace) -> int:
     from educelab.devices.errors import DeviceError, DeviceNotFound
     from educelab.devices.lights.xlc import XLC2
 
+    if args.set_id is not None and (args.level, args.dwell) != (None, None):
+        print(
+            "el-devices xlc: error: --set-id doesn't light the board, so it "
+            "can't be combined with --level or --dwell",
+            file=sys.stderr,
+        )
+        return 2
+    level = 0.25 if args.level is None else args.level
+    dwell = 2.0 if args.dwell is None else args.dwell
+
     port = args.port
     if port is None and args.serial_number is None:
         found = XLC2.probe()
         if not found:
             raise DeviceNotFound(
-                "no XLC2 answered. Ports in use by another program are skipped, "
-                "so close it, or give the port with --port"
+                "no XLC2 answered. Ports that can't be opened, because another "
+                "program has them or you lack permission, are skipped; give the "
+                "port with --port to see why"
             )
         if len(found) > 1:
             boards = ", ".join(
@@ -95,9 +105,9 @@ def run(args: argparse.Namespace) -> int:
             print(f"  unit ID set to {args.set_id}")
             return 0
         for channel in light.channels:
-            light.set_level(channel.id, args.level)
-            print(f"  {channel.id} at {args.level:.0%}")
-            time.sleep(args.dwell)
+            light.set_level(channel.id, level)
+            print(f"  {channel.id} at {level:.0%}")
+            time.sleep(dwell)
             light.set_level(channel.id, 0.0)
         light.all_off()
         print("  all off")

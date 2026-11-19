@@ -156,6 +156,23 @@ def test_set_level_sends_percent_and_waits_for_ok():
     fake.assert_done()
 
 
+def test_levels_that_round_to_zero_are_sent_as_one_percent():
+    fake = scripted(("450,100", ["OK"]), ("940,1", ["OK"]))
+    light = opened(fake)
+    light.set_level("450nm", 1.0)
+    light.set_level("940nm", 0.004)
+    fake.assert_done()
+
+
+def test_tiny_level_turns_the_lit_band_off():
+    fake, _ = emulated()
+    light = opened(fake)
+    light.set_level("450nm", 1.0)
+    light.set_level("940nm", 0.004)
+    assert light.level("450nm") == 0.0
+    assert light.level("940nm") == 0.01
+
+
 def test_level_reads_the_panel():
     fake, firmware = emulated()
     light = opened(fake)

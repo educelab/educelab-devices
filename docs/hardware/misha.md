@@ -46,7 +46,8 @@ Driver: `educelab.devices.lights.misha.MishaLight`. Manual check: `el-devices mi
 - **One band at a time**: all bands share the one brightness line, and each lit band
   draws about 1 A from the panel's 9 V, 4 A supply. `MishaLight` declares this as
   `concurrency = ChannelConcurrency.EXCLUSIVE`, which stays true for the planned IR1050
-  variant: it drives several LED groups from one channel.
+  variant: it drives several LED groups from one channel. Because a band set to 0%
+  doesn't turn the lit one off, the driver sends any level above 0 as at least 1%.
 
 ### How a panel shows up on the host
 

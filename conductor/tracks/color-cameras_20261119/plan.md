@@ -18,6 +18,13 @@
 
 Fakes first: every backend's fake gains a CM3-U3-31S4C with the formats, nodes, and defaults the 2026-11-19 probe found, so the rest can be built test-first. Then pixel formats (packed 12-bit, YCbCr, saturation), the Bayer pattern, and white balance, all in the shared GenICam core so every backend gets them at once. Docs follow, and the hardware runs are batched into the final phase.
 
+**Probe 3 (2026-11-19, static scene, Spinnaker): how close the camera's processed formats are to a host demosaic.** Exposure 17.9 ms, gain 18.3 dB, ratios red 1.07 and blue 3.83 (auto's choices, then fixed), 8 frames averaged per format. Camera values fitted per channel as `a × host + b`:
+- RGB8 against OpenCV's bilinear `COLOR_BayerBG2RGB` of the BayerRG8 frame: a = 1.001, b ≈ 0, r = 0.9997–0.9998, mean residual 1–2 counts (about the noise between the averaged sets). OpenCV names Bayer patterns by the second row, so the CM3's `BayerRG` is OpenCV's `BayerBG`; the other three codes fit worse (r 0.993–0.996, residual 4–5).
+- RGB8 keeps the black-level pedestal (minimum 22) and applies the same white balance as the raw frame; no color matrix shows (Saturation 100 is identity here; Gamma and Hue off).
+- Sharpening on and off differ by about the noise (r 0.9997, residual 1–2) in this dim, high-gain scene; not settled.
+- YCbCr8_CbYCr and YCbCr422_8_CbYCrY are BT.601 limited-range (Y 16–235) encodings of the same RGB: a = 1.00–1.003, b within ±0.7. Full-range conversion is off by ×1.165. OpenCV's `COLOR_YUV2RGB_UYVY` converts YCbCr422 directly.
+- Decision (maintainer): previews stay in the capture's pixel format and `PreviewFrame` doesn't change; the guide recommends that apps wanting color previews select RGB8 or YCbCr422 for previewing. Task 3.1 is dropped; `color_filter` stays in frame metadata only.
+
 ## Phase 1: Color CM3 Fakes
 
 ### Tasks
@@ -56,7 +63,7 @@ Fakes first: every backend's fake gains a CM3-U3-31S4C with the formats, nodes, 
 
 ### Tasks
 
-- [ ] Task 3.1: **Waiting on approval.** **Approval needed:** adding `color_filter` to `PreviewFrame` (`cameras/base.py`). Confirm the name and type (`str | None`) with the maintainer before changing it.
+- [-] Task 3.1 (dropped, see Probe 3): **Approval needed:** adding `color_filter` to `PreviewFrame` (`cameras/base.py`). Confirm the name and type (`str | None`) with the maintainer before changing it.
 - [~] Task 3.2 (metadata done; `PreviewFrame` waits on 3.1): Tests, then the core reads `PixelColorFilter` at open, falling back to the Bayer format name, or `None`. The value goes in `frame.metadata["color_filter"]` and in `PreviewFrame.color_filter`.
 - [~] Task 3.3 (metadata and formats done; preview waits on 3.1): Tests, then `SimulatedCamera(color=True)` reports `color_filter="BayerRG"` and offers `BayerRG8` and `BayerRG16` (mosaicked from its RGB image), still opening in `RGB8`. Mono simulated cameras and gphoto2 report `None`.
 - [~] Task 3.4 (frames done; preview frames wait on 3.1): Contract tests: a camera reports `color_filter` in every frame's metadata and every preview frame, and a Bayer format's name agrees with it.

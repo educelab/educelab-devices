@@ -305,13 +305,16 @@ Tracked in issue #39.
 
 ### Last run
 
-2026-11-19, branch `light-concurrency`.
+2026-11-19, macOS 27.2.1, Python 3.12, pyserial 3.5, branch `light-concurrency`. The
+HT42B534 board (VID:PID 04D9:B534) at `/dev/cu.usbmodem00001`, unit ID `XLC2-01`,
+firmware 2.1.0, hardware 1.0, the only USB-serial device attached.
 
 - **White and 940 nm lit together**: `test_channels_stay_lit_together` lights both and
   holds them for 3 s. At 0.25, and at white 0.1 with 940 nm 0.25, the light was too
   bright to tell for sure. With both at 0.1, both were on at the same time
-  (maintainer). This backs the `INDEPENDENT` declaration. The test's assert only checks
-  that the board acknowledged both commands, so the result rests on watching the rig.
+  (maintainer, watching the 940 nm array through a camera). This backs the
+  `INDEPENDENT` declaration. The test's assert only checks that the board acknowledged
+  both commands, so the result rests on watching the rig.
 
 ### Run of 2026-11-18
 

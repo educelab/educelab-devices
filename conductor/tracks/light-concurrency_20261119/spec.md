@@ -3,7 +3,7 @@
 **Track ID:** light-concurrency_20261119
 **Type:** Feature
 **Created:** 2026-11-19
-**Status:** Draft
+**Status:** Complete
 
 ## Summary
 
@@ -24,31 +24,31 @@ As a developer of a consumer such as `pgs-scan`, I want to know whether a light'
 ## Acceptance Criteria
 
 **Role**
-- [ ] `ChannelConcurrency(StrEnum)` with `INDEPENDENT = "independent"` and `EXCLUSIVE = "exclusive"`, exported from `educelab.devices.lights`.
-- [ ] `Light.concurrency` is an abstract property, so every `Light` must declare one.
-- [ ] On an `EXCLUSIVE` light, setting a level above 0 makes the base `Light` record the other channels as 0 in its remembered levels. Setting a channel to 0 leaves the others' remembered levels alone.
-- [ ] Exclusive lights keep switching channels without raising. Nothing new raises.
+- [x] `ChannelConcurrency(StrEnum)` with `INDEPENDENT = "independent"` and `EXCLUSIVE = "exclusive"`, exported from `educelab.devices.lights`.
+- [x] `Light.concurrency` is an abstract property, so every `Light` must declare one.
+- [x] On an `EXCLUSIVE` light, setting a level above 0 makes the base `Light` record the other channels as 0 in its remembered levels. Setting a channel to 0 leaves the others' remembered levels alone.
+- [x] Exclusive lights keep switching channels without raising. Nothing new raises.
 
 **Drivers**
-- [ ] `MishaLight` is `EXCLUSIVE`.
-- [ ] `XLC2` and `Foldio360Halo` are `INDEPENDENT`.
-- [ ] `SimulatedLight(concurrency=...)` defaults to `INDEPENDENT`. When it's `EXCLUSIVE`, it turns the other channels off the way MISHA does.
+- [x] `MishaLight` is `EXCLUSIVE`.
+- [x] `XLC2` and `Foldio360Halo` are `INDEPENDENT`.
+- [x] `SimulatedLight(concurrency=...)` defaults to `INDEPENDENT`. When it's `EXCLUSIVE`, it turns the other channels off the way MISHA does.
 
 **Contract**
-- [ ] `LightContract` checks behavior against the declared value:
+- [x] `LightContract` checks behavior against the declared value:
   - `EXCLUSIVE`: lighting B after A leaves A at 0, and setting an unlit channel to 0 leaves the lit one on.
   - `INDEPENDENT`: A and B stay lit together.
   - Lights with one channel skip both checks.
-- [ ] Existing contract tests hold for exclusive lights. For example, `test_all_off` mustn't assume every channel was lit at once.
-- [ ] `SimulatedLight` runs the contract in both modes.
+- [x] Existing contract tests hold for exclusive lights. For example, `test_all_off` mustn't assume every channel was lit at once.
+- [x] `SimulatedLight` runs the contract in both modes.
 
 **Docs**
-- [ ] `docs/guide.md`: `concurrency` in the Light row of the role table, and a note under "Light levels".
-- [ ] `MishaLight` docstring and `docs/hardware/misha.md` name the `EXCLUSIVE` declaration.
-- [ ] `docs/hardware/xlc2.md` records the `INDEPENDENT` declaration and the hardware check that backs it.
+- [x] `docs/guide.md`: `concurrency` in the Light row of the role table, and a note under "Light levels".
+- [x] `MishaLight` docstring and `docs/hardware/misha.md` name the `EXCLUSIVE` declaration.
+- [x] `docs/hardware/xlc2.md` records the `INDEPENDENT` declaration and the hardware check that backs it.
 
 **Hardware (batched, final phase)**
-- [ ] XLC2: light white and 940 nm together and check both stay on. Add this to `tests/test_xlc_hardware.py`, and record the result in `xlc2.md`.
+- [x] XLC2: light white and 940 nm together and check both stay on. Add this to `tests/test_xlc_hardware.py`, and record the result in `xlc2.md`.
 
 ## Dependencies
 

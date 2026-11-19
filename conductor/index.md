@@ -27,7 +27,6 @@ Project-level context outside this directory:
 - [Second Roles and Stage Helpers](./tracks/stages-second-roles_20261104/index.md) — pending
 - [XLC2 Unit ID and Probing](./tracks/xlc2-unit-id_20261117/index.md) — pending
 - [Camera Lens Information](./tracks/camera-lens-info_20261118/index.md) — pending
-- [Light Channel Concurrency](./tracks/light-concurrency_20261119/index.md) — in progress
 
 ## Completed Tracks
 
@@ -43,6 +42,7 @@ Project-level context outside this directory:
 - [gphoto2 Single-Setting Reads](./tracks/_archive/gphoto2-single-setting_20261102/index.md) — complete (archived)
 - [GenICam Deepening](./tracks/_archive/genicam-deepening_20261104/index.md) — complete (archived)
 - [GenTL Stream Stall](./tracks/_archive/gentl-stall_20261109/index.md) — complete (archived)
+- [Light Channel Concurrency](./tracks/light-concurrency_20261119/index.md) — complete
 
 ## Getting Started
 

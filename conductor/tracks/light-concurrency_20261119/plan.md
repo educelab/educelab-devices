@@ -3,7 +3,7 @@
 **Track ID:** light-concurrency_20261119
 **Spec:** [spec.md](./spec.md)
 **Created:** 2026-11-19
-**Status:** [~] In Progress
+**Status:** [x] Complete
 
 ## Overview
 
@@ -65,11 +65,11 @@ Add the role-level enum and abstract property first, with contract tests driving
 
 ## Final Verification
 
-- [ ] All acceptance criteria met
-- [ ] Tests passing on CI (Ruff, pytest matrix)
-- [ ] Documentation updated
-- [ ] Track sign-off by the maintainer
-- [ ] Ready for review
+- [x] All acceptance criteria met
+- [ ] Tests passing on CI (Ruff, pytest matrix) — runs on the PR
+- [x] Documentation updated
+- [x] Track sign-off by the maintainer (2026-11-19)
+- [x] Ready for review
 
 ---
 

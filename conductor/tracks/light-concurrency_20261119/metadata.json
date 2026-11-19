@@ -1,0 +1,16 @@
+{
+  "id": "light-concurrency_20261119",
+  "title": "Light Channel Concurrency",
+  "type": "feature",
+  "status": "in_progress",
+  "created": "2026-11-19T00:00:00Z",
+  "updated": "2026-11-19T00:00:00Z",
+  "phases": {
+    "total": 4,
+    "completed": 0
+  },
+  "tasks": {
+    "total": 10,
+    "completed": 0
+  }
+}

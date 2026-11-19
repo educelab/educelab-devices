@@ -20,5 +20,6 @@
 | [x] | [gentl-stall_20261109](./tracks/_archive/gentl-stall_20261109/index.md) | GenTL Stream Stall | 2026-11-09 | 2026-11-09 |
 | [~] | [xlc2-unit-id_20261117](./tracks/xlc2-unit-id_20261117/index.md) | XLC2 Unit ID and Probing | 2026-11-17 | 2026-11-18 |
 | [ ] | [camera-lens-info_20261118](./tracks/camera-lens-info_20261118/index.md) | Camera Lens Information | 2026-11-18 | 2026-11-18 |
+| [~] | [light-concurrency_20261119](./tracks/light-concurrency_20261119/index.md) | Light Channel Concurrency | 2026-11-19 | 2026-11-19 |
 
 <!-- Tracks registered by /conductor:new-track. Planned order is in product.md. -->

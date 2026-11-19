@@ -29,12 +29,12 @@ Add the role-level enum and abstract property first, with contract tests driving
 
 ### Tasks
 
-- [ ] Task 2.1: `MishaLight.concurrency` is `EXCLUSIVE`; its contract subclass now runs the exclusive checks against the firmware fake.
-- [ ] Task 2.2: `XLC2.concurrency` and `Foldio360Halo.concurrency` are `INDEPENDENT`.
+- [x] Task 2.1: `MishaLight.concurrency` is `EXCLUSIVE`; its contract subclass now runs the exclusive checks against the firmware fake.
+- [x] Task 2.2: `XLC2.concurrency` and `Foldio360Halo.concurrency` are `INDEPENDENT`.
 
 ### Verification
 
-- [ ] Full suite: `pytest`, `ruff check .`, `ruff format --check .`.
+- [x] Full suite: `pytest`, `ruff check .`, `ruff format --check .`. (Two PySpin fake-name tests fail locally against the installed SDK; they fail on `main` too and are unrelated.)
 
 ## Phase 3: Docs
 

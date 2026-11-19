@@ -30,7 +30,13 @@ from educelab.devices.errors import (
     PositionError,
     import_optional,
 )
-from educelab.devices.lights.base import RGB, Channel, ChannelKind, Light
+from educelab.devices.lights.base import (
+    RGB,
+    Channel,
+    ChannelConcurrency,
+    ChannelKind,
+    Light,
+)
 from educelab.devices.settings import Setting
 from educelab.devices.stages.base import Axis, AxisKind, Stage
 
@@ -1038,6 +1044,10 @@ class Foldio360Halo(Light):
     @property
     def channels(self) -> tuple[Channel, ...]:
         return _HALO_CHANNELS
+
+    @property
+    def concurrency(self) -> ChannelConcurrency:
+        return ChannelConcurrency.INDEPENDENT
 
     def __repr__(self) -> str:
         return f"<{self._turntable!r} halo>"

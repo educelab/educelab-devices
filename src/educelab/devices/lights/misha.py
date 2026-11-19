@@ -18,7 +18,7 @@ from educelab.devices._serial import (
 )
 from educelab.devices.device import DeviceInfo
 from educelab.devices.errors import DeviceError, DeviceNotFound
-from educelab.devices.lights.base import RGB, Channel, Light
+from educelab.devices.lights.base import RGB, Channel, ChannelConcurrency, Light
 
 __all__ = ["MishaLight"]
 
@@ -137,6 +137,10 @@ class MishaLight(Light):
     @property
     def channels(self) -> tuple[Channel, ...]:
         return CHANNELS
+
+    @property
+    def concurrency(self) -> ChannelConcurrency:
+        return ChannelConcurrency.EXCLUSIVE
 
     def __repr__(self) -> str:
         where = self._port or self._serial_number or "(not found yet)"

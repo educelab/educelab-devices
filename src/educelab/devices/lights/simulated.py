@@ -3,7 +3,13 @@
 import logging
 
 from educelab.devices.device import DeviceInfo
-from educelab.devices.lights.base import RGB, Channel, ChannelKind, Light
+from educelab.devices.lights.base import (
+    RGB,
+    Channel,
+    ChannelConcurrency,
+    ChannelKind,
+    Light,
+)
 
 __all__ = ["SimulatedLight"]
 
@@ -22,11 +28,18 @@ class SimulatedLight(Light):
     Args:
         channels: The channels to offer. Defaults to a white, a 365 nm, and
             an RGB channel.
+        concurrency: When ``EXCLUSIVE``, lighting a channel turns the others
+            off, as a MISHA panel does.
     """
 
-    def __init__(self, channels: tuple[Channel, ...] = DEFAULT_CHANNELS) -> None:
+    def __init__(
+        self,
+        channels: tuple[Channel, ...] = DEFAULT_CHANNELS,
+        concurrency: ChannelConcurrency = ChannelConcurrency.INDEPENDENT,
+    ) -> None:
         super().__init__()
         self._channels = tuple(channels)
+        self._concurrency = ChannelConcurrency(concurrency)
         self._levels: dict[str, float | RGB] = {}
         self._turn_off()
 
@@ -38,6 +51,10 @@ class SimulatedLight(Light):
     def channels(self) -> tuple[Channel, ...]:
         return self._channels
 
+    @property
+    def concurrency(self) -> ChannelConcurrency:
+        return self._concurrency
+
     def _open(self) -> None:
         self._turn_off()
 
@@ -46,10 +63,14 @@ class SimulatedLight(Light):
 
     def _set_level(self, channel: Channel, level: float) -> None:
         logger.debug("%s level %g", channel.id, level)
+        if level > 0:
+            self._turn_others_off(channel)
         self._levels[channel.id] = level
 
     def _set_color(self, channel: Channel, color: RGB) -> None:
         logger.debug("%s color %s", channel.id, color)
+        if any(color):
+            self._turn_others_off(channel)
         self._levels[channel.id] = color
 
     def _get_level(self, channel: Channel) -> float | None:
@@ -59,6 +80,10 @@ class SimulatedLight(Light):
     def _get_color(self, channel: Channel) -> RGB | None:
         value = self._levels[channel.id]
         return value if isinstance(value, tuple) else None
+
+    def _turn_others_off(self, channel: Channel) -> None:
+        if self._concurrency is ChannelConcurrency.EXCLUSIVE:
+            self._turn_off()
 
     def _turn_off(self) -> None:
         for channel in self._channels:

@@ -18,7 +18,7 @@ from educelab.devices._serial import (
 )
 from educelab.devices.device import DeviceInfo
 from educelab.devices.errors import DeviceError, DeviceNotFound
-from educelab.devices.lights.base import RGB, Channel, Light
+from educelab.devices.lights.base import RGB, Channel, ChannelConcurrency, Light
 
 __all__ = ["MishaLight"]
 
@@ -56,10 +56,12 @@ REFLASH_HINT = (
 class MishaLight(Light):
     """The MISHA LED panels: 16 monochromatic bands from 365 nm to 940 nm.
 
-    Only one band is lit at a time, so setting a level above zero on one
-    channel turns the others off; setting an unlit band to zero changes
-    nothing. Levels are read from the panel, and opening leaves it as it was.
-    Closing turns everything off. Needs firmware 2.0.0 or newer.
+    Only one band is lit at a time, so `concurrency` is ``EXCLUSIVE``:
+    setting a level above zero on one channel turns the others off, and
+    setting an unlit band to zero changes nothing. Levels are sent as whole
+    percent, and any level above zero as at least 1%. Levels are read from the
+    panel, and opening leaves it as it was. Closing turns everything off.
+    Needs firmware 2.0.0 or newer.
 
     Args:
         port: Serial port, e.g. ``"COM3"`` or ``"/dev/ttyUSB0"``.
@@ -138,6 +140,10 @@ class MishaLight(Light):
     def channels(self) -> tuple[Channel, ...]:
         return CHANNELS
 
+    @property
+    def concurrency(self) -> ChannelConcurrency:
+        return ChannelConcurrency.EXCLUSIVE
+
     def __repr__(self) -> str:
         where = self._port or self._serial_number or "(not found yet)"
         return f"<MishaLight {where}>"
@@ -192,8 +198,10 @@ class MishaLight(Light):
             self._require_transport().close()
 
     def _set_level(self, channel: Channel, level: float) -> None:
-        # At 0 the firmware turns this band off only if it's the lit one.
-        self._command(f"{channel.wavelength_nm:.0f},{round(level * 100)}")
+        # At 0 the firmware turns this band off only if it's the lit one, so a
+        # level above 0 is sent as at least 1% to light it and turn others off.
+        percent = max(1, round(level * 100)) if level > 0 else 0
+        self._command(f"{channel.wavelength_nm:.0f},{percent}")
 
     def _get_level(self, channel: Channel) -> float | None:
         wavelength, percent = self._read_state()

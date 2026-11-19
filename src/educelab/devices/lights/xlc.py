@@ -18,7 +18,7 @@ from educelab.devices._serial import (
 )
 from educelab.devices.device import DeviceInfo, synchronized
 from educelab.devices.errors import DeviceError, DeviceNotFound
-from educelab.devices.lights.base import RGB, Channel, Light
+from educelab.devices.lights.base import RGB, Channel, ChannelConcurrency, Light
 
 __all__ = ["XLC2"]
 
@@ -153,6 +153,10 @@ class XLC2(Light):
     @property
     def channels(self) -> tuple[Channel, ...]:
         return CHANNELS
+
+    @property
+    def concurrency(self) -> ChannelConcurrency:
+        return ChannelConcurrency.INDEPENDENT
 
     @synchronized
     def set_unit_id(self, unit_id: str) -> None:

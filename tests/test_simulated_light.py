@@ -1,13 +1,24 @@
 import pytest
 
 from contracts import LightContract
-from educelab.devices.lights import Channel, ChannelKind, SimulatedLight
+from educelab.devices.lights import (
+    Channel,
+    ChannelConcurrency,
+    ChannelKind,
+    SimulatedLight,
+)
 
 
 class TestSimulatedLight(LightContract):
     @pytest.fixture
     def make_device(self):
         return SimulatedLight
+
+
+class TestExclusiveSimulatedLight(LightContract):
+    @pytest.fixture
+    def make_device(self):
+        return lambda: SimulatedLight(concurrency=ChannelConcurrency.EXCLUSIVE)
 
 
 def test_levels_reflect_commands():
@@ -30,3 +41,16 @@ def test_lights_report_off_before_anything_is_set():
     with SimulatedLight() as light:
         assert light.level("uv") == 0.0
         assert light.color("rgb") == (0.0, 0.0, 0.0)
+
+
+def test_concurrency_defaults_to_independent():
+    assert SimulatedLight().concurrency is ChannelConcurrency.INDEPENDENT
+
+
+def test_exclusive_light_turns_other_channels_off():
+    with SimulatedLight(concurrency=ChannelConcurrency.EXCLUSIVE) as light:
+        light.set_color("rgb", (1.0, 0.0, 0.0))
+        light.set_level("white", 0.5)
+        assert light.color("rgb") == (0.0, 0.0, 0.0)
+        light.set_level("uv", 0.0)
+        assert light.level("white") == 0.5

@@ -8,7 +8,7 @@ from enum import StrEnum
 
 from educelab.devices.device import Device, synchronized
 
-__all__ = ["RGB", "Channel", "ChannelKind", "Light"]
+__all__ = ["RGB", "Channel", "ChannelConcurrency", "ChannelKind", "Light"]
 
 RGB = tuple[float, float, float]
 
@@ -16,6 +16,16 @@ RGB = tuple[float, float, float]
 class ChannelKind(StrEnum):
     MONO = "mono"
     RGB = "rgb"
+
+
+class ChannelConcurrency(StrEnum):
+    """Whether a light's channels can be lit at the same time.
+
+    On an ``EXCLUSIVE`` light, setting a channel above 0 turns the others off.
+    """
+
+    INDEPENDENT = "independent"
+    EXCLUSIVE = "exclusive"
 
 
 @dataclass(frozen=True)
@@ -38,8 +48,11 @@ class Light(Device):
     """A device that emits illumination through one or more channels.
 
     Levels are fractions from 0.0 (off) to 1.0 (full). Drivers declare
-    `channels` and implement `_set_level()` and `_set_color()`. Drivers whose
-    hardware reports its levels also override `_get_level()` and `_get_color()`.
+    `channels` and `concurrency`, and implement `_set_level()` and
+    `_set_color()`. Drivers whose hardware reports its levels also override
+    `_get_level()` and `_get_color()`. ``EXCLUSIVE`` must describe the
+    hardware: the base only records the other channels as off, it never
+    turns them off itself.
     """
 
     _remembered: dict[str, float | RGB] | None = None
@@ -48,6 +61,11 @@ class Light(Device):
     @abstractmethod
     def channels(self) -> tuple[Channel, ...]:
         """The light's channels, in the driver's natural order."""
+
+    @property
+    @abstractmethod
+    def concurrency(self) -> ChannelConcurrency:
+        """Whether the channels can be lit together or only one at a time."""
 
     @synchronized
     def set_level(self, channel_id: str, level: float) -> None:
@@ -140,6 +158,11 @@ class Light(Device):
     def _remember(self, channel: Channel, value: float | RGB) -> None:
         if self._remembered is None:
             self._remembered = {}
+        lit = any(value) if isinstance(value, tuple) else value > 0
+        if lit and self.concurrency is ChannelConcurrency.EXCLUSIVE:
+            for other in self.channels:
+                off = (0.0, 0.0, 0.0) if other.kind is ChannelKind.RGB else 0.0
+                self._remembered[other.id] = off
         self._remembered[channel.id] = value
 
     def _reset_state(self) -> None:

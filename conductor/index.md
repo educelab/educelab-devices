@@ -42,6 +42,7 @@ Project-level context outside this directory:
 - [gphoto2 Single-Setting Reads](./tracks/_archive/gphoto2-single-setting_20261102/index.md) — complete (archived)
 - [GenICam Deepening](./tracks/_archive/genicam-deepening_20261104/index.md) — complete (archived)
 - [GenTL Stream Stall](./tracks/_archive/gentl-stall_20261109/index.md) — complete (archived)
+- [Light Channel Concurrency](./tracks/light-concurrency_20261119/index.md) — complete
 
 ## Getting Started
 

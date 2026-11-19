@@ -216,7 +216,7 @@ code.
 | `FrameCamera` | adds `capture_frame(not_before=None, timeout=None) -> Frame`; `not_before` (an aware `datetime`) rejects frames with an earlier `timestamp`, for free-running cameras. Which moment a camera timestamps varies; its hardware doc says |
 | `FileCamera` | adds `capture_files() -> list[CameraFile]`; save with `CameraFile.save(dir, stem)`, which refuses to overwrite unless asked |
 | `FocusDrive` | `step(n)` (positive = toward far), `drive_to_limit("near" \| "far")`, `focus_steps`, `last_limit` |
-| `Light` | `channels`, `set_level(id, 0.0–1.0)`, `set_color(id, (r, g, b))`, `level(id)`, `color(id)`, `all_off()` |
+| `Light` | `channels`, `concurrency`, `set_level(id, 0.0–1.0)`, `set_color(id, (r, g, b))`, `level(id)`, `color(id)`, `all_off()` |
 | `Stage` | `axes`, `move_to({axis: pos})`, `move_by({axis: offset})`, `jog(axis, ±1)`, `stop()`, `position()`, `speed()`, `set_speed(value)`, `home()`, `is_homed`, `can_home`, `requires_homing` |
 | `Hub` | `ports`, `power_on(port)`, `power_off(port)`, `is_powered(port)`, `power_cycle(port)` |
 
@@ -463,6 +463,12 @@ anything else.
 Otherwise they report the last value set since `open()`, or `None` if nothing has been set.
 `open()` doesn't change the lights, so reconnecting mid-session leaves them as they were.
 
+`concurrency` says whether the channels can be lit together. On an `INDEPENDENT` light
+each channel keeps its level. On an `EXCLUSIVE` light (MISHA) only one channel is lit at a
+time: setting a channel above 0 turns the others off, and the getters report them as 0.
+Setting an unlit channel to 0 changes nothing. Nothing raises either way, so check
+`concurrency` before planning a capture that lights two channels at once.
+
 ### Stage speed, homing, and rotary axes
 
 `speed()` is a `Setting` named `"speed"`, in mm/s if the stage has any linear axis and deg/s
@@ -523,6 +529,10 @@ take the lock, check the device is open, and validate arguments against what you
 (`channels`, `axes`, `ports`, `Setting` ranges). They then call protected hooks that you
 implement (`_open`, `_close`, `_set_level`, `_move_to`, and so on). Device-specific rules
 (a wavelength table, an alarm state) go in your hooks.
+
+A light's `concurrency` describes what the hardware does; the base class never turns other
+channels off for you. Declare `EXCLUSIVE` only when lighting one channel already turns the
+others off, and the base then records them as 0.
 
 - If your driver records `stop()` requests (as a flag or event), clear them in
   `_motion_starting()`, which every move, homing, and jog calls first under the lock.

@@ -76,8 +76,8 @@ number. Windows binds Microsoft's in-box CDC driver, so pyserial reports the des
 - The XL4 array, one PWM output on pin 6.
 - Both start off at power-up.
 - **Lit together**: the strip and the array have separate outputs, so `XLC2` declares
-  `concurrency = ChannelConcurrency.INDEPENDENT` (**assumed** until the manual check
-  below confirms both stay lit together).
+  `concurrency = ChannelConcurrency.INDEPENDENT` (**verified**, both lit at once,
+  2026-11-19; see [Manual check](#manual-check)).
 - **Flashes on reset**: the strip flashes briefly at some point when the port opens
   (**verified**, observed by the maintainer, 2026-10-29). The likely cause is the Nano's
   bootloader blinking its LED on D13, which is also the SPI clock to the strip, so stray
@@ -302,12 +302,18 @@ Tracked in issue #39.
 - Exclusive open on Windows (and Linux, if a rig is available), and for MISHA and
   X-Carve ports.
 - The VID:PID of any unit with a CH340.
-- White and 940 nm lit together: `test_channels_stay_lit_together` in
-  `tests/test_xlc_hardware.py`, watching that both stay on, the 940 nm array through
-  a camera without an IR-cut filter (backs the `INDEPENDENT` declaration). The test's
-  assert only checks that the board acknowledged both commands.
 
 ### Last run
+
+2026-11-19, branch `light-concurrency`.
+
+- **White and 940 nm lit together**: `test_channels_stay_lit_together` lights both and
+  holds them for 3 s. At 0.25, and at white 0.1 with 940 nm 0.25, the light was too
+  bright to tell for sure. With both at 0.1, both were on at the same time
+  (maintainer). This backs the `INDEPENDENT` declaration. The test's assert only checks
+  that the board acknowledged both commands, so the result rests on watching the rig.
+
+### Run of 2026-11-18
 
 2026-11-18, macOS 27.2, Python 3.12, pyserial 3.5, the HT42B534 board at
 `/dev/cu.usbmodem00001` (serial `0000`), the only USB-serial device attached. Branch

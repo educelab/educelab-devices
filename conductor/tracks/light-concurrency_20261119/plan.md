@@ -57,11 +57,11 @@ Add the role-level enum and abstract property first, with contract tests driving
 
 ### Tasks
 
-- [ ] Task 4.1: XLC2: run `pytest -m hardware tests/test_xlc_hardware.py`, watch that white and 940 nm stay lit together, and record the result in `docs/hardware/xlc2.md`.
+- [x] Task 4.1: XLC2: run `pytest -m hardware tests/test_xlc_hardware.py`, watch that white and 940 nm stay lit together, and record the result in `docs/hardware/xlc2.md`.
 
 ### Verification
 
-- [ ] The result is recorded in the hardware doc's Manual check section.
+- [x] The result is recorded in the hardware doc's Manual check section. (Both lit at 0.1; 0.25 was too bright to judge.)
 
 ## Final Verification
 

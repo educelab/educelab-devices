@@ -165,6 +165,13 @@ def eight_bit(pixels: "npt.NDArray[Any]", full_scale: int) -> "npt.NDArray[np.ui
     return (pixels >> max(full_scale.bit_length() - 8, 0)).astype(np.uint8)
 
 
+def shown_pixels(pixels: "npt.NDArray[Any]", pixel_format: str) -> "npt.NDArray[Any]":
+    """What the window shows of a frame: YCbCr frames' Y as grayscale, since
+    the viewer doesn't convert color. Y is the second byte of each pixel in
+    both YCbCr layouts the driver offers."""
+    return pixels[..., 1] if pixel_format.startswith("YCbCr") else pixels
+
+
 def run(args: argparse.Namespace) -> int:
     cv2 = import_optional("cv2", extra="viewer")
     view = View()
@@ -200,7 +207,10 @@ def run(args: argparse.Namespace) -> int:
                 if drawn[:1] != (frame,):
                     shown = frame.geometry.region
                     view.shown = (shown.x, shown.y, shown.width, shown.height)
-                    pixels = eight_bit(frame.pixels, frame.full_scale)
+                    pixels = eight_bit(
+                        shown_pixels(frame.pixels, frame.pixel_format),
+                        frame.full_scale,
+                    )
                     labelled = _fit(cv2, pixels, args.window, limit)
                     view.size = (labelled.shape[1], labelled.shape[0])
                     height, width = frame.pixels.shape[:2]
@@ -504,7 +514,8 @@ def _capture(
         full = int(
             frame.metadata.get("full_scale", 2 ** (8 * frame.pixels.itemsize) - 1)
         )
-        image = _fit(cv2, eight_bit(frame.pixels, full), window, limit)
+        pixels = shown_pixels(frame.pixels, frame.pixel_format)
+        image = _fit(cv2, eight_bit(pixels, full), window, limit)
         height, width = frame.pixels.shape[:2]
         what = f"captured {width}x{height} {frame.pixel_format}"
     else:

@@ -56,9 +56,16 @@ _BULB_EXPOSURE_S = _REFERENCE_EXPOSURE_S
 _VENDOR = "EduceLab"
 # Per-channel scale for colour frames, so the channels differ.
 _RGB_TINT = np.array([1.0, 0.85, 0.7])
+# A colour camera's mosaic, and the raw formats that show it.
+_COLOR_FILTER = "BayerRG"
+_BAYER_FORMATS = ("BayerRG8", "BayerRG16")
 # GenICam's auto-mode switches and the setting each one locks while on.
 _AUTO_MODES = ("Off", "Continuous")
-_AUTO_LOCKS = {"ExposureAuto": EXPOSURE_TIME, "GainAuto": GAIN}
+_AUTO_LOCKS = {"ExposureAuto": (EXPOSURE_TIME,), "GainAuto": (GAIN,)}
+# A colour camera's white balance, as on GenICam colour cameras: a gain on red
+# and on blue, relative to green, and their automatic mode.
+_BALANCE_AUTO = "BalanceWhiteAuto"
+_BALANCE_RATIOS = ("balance_ratio_red", "balance_ratio_blue")
 # Auto modes aim at twice the reference exposure, so auto gain alone at the
 # default exposure always adds some gain. The aim wanders by _AUTO_HUNT.
 _AUTO_TARGET_S = 2 * _REFERENCE_EXPOSURE_S
@@ -98,8 +105,11 @@ class SimulatedCamera(FrameCamera):
         width: Frame width in pixels.
         height: Frame height in pixels.
         seed: Seed for the noise and the auto modes, for repeatable frames.
-        color: Act like a colour camera, which also offers ``RGB8`` and starts
-            in it, as GenICam colour cameras do.
+        color: Act like a colour camera with a ``BayerRG`` mosaic, which also
+            offers ``RGB8``, ``BayerRG8`` and ``BayerRG16``, and starts in
+            ``RGB8``. Its ``balance_ratio_red`` and ``balance_ratio_blue``
+            scale those channels, and with ``auto`` its ``BalanceWhiteAuto``
+            starts at ``Continuous``, evening out the image's tint.
         auto: Offer auto exposure and auto gain.
         sensor_size: The whole sensor as ``(width, height)``, for a camera
             whose frames are cropped from the middle of a larger sensor.
@@ -139,7 +149,9 @@ class SimulatedCamera(FrameCamera):
         # Separate, so turning auto on doesn't change the noise.
         self._auto_rng = np.random.default_rng([seed, 1])
         self._frame_count = 0
-        formats = ("Mono8", "Mono16", "RGB8") if color else ("Mono8", "Mono16")
+        formats: tuple[str, ...] = ("Mono8", "Mono16")
+        if color:
+            formats += ("RGB8", *_BAYER_FORMATS)
         settings = [
             Setting(EXPOSURE_TIME, 0.01, 1e-5, 10.0, unit="s", read_only=auto),
             Setting(GAIN, 0.0, 0.0, 24.0, unit="dB", read_only=auto),
@@ -149,6 +161,12 @@ class SimulatedCamera(FrameCamera):
             settings += [
                 Setting(n, "Continuous", choices=_AUTO_MODES) for n in _AUTO_LOCKS
             ]
+        if color:
+            settings += [
+                Setting(n, 1.0, 0.25, 4.0, read_only=auto) for n in _BALANCE_RATIOS
+            ]
+        if color and auto:
+            settings.append(Setting(_BALANCE_AUTO, "Continuous", choices=_AUTO_MODES))
         for name, size in (
             (WIDTH, width),
             (HEIGHT, height),
@@ -175,8 +193,8 @@ class SimulatedCamera(FrameCamera):
     def _set_setting(self, name: str, value: SettingValue) -> None:
         logger.debug("%s = %r", name, value)
         self._store[name] = dataclasses.replace(self._store[name], value=value)
-        if name in _AUTO_LOCKS:
-            locked = _AUTO_LOCKS[name]
+        locks = {**_AUTO_LOCKS, _BALANCE_AUTO: _BALANCE_RATIOS}
+        for locked in locks.get(name, ()):
             self._store[locked] = dataclasses.replace(
                 self._store[locked], read_only=value != "Off"
             )
@@ -207,7 +225,7 @@ class SimulatedCamera(FrameCamera):
         self._run_auto()
         time.sleep(seconds_until(not_before) + _number(self._store[EXPOSURE_TIME]))
         pixel_format = str(self._store[PIXEL_FORMAT].value)
-        dtype = np.uint16 if pixel_format == "Mono16" else np.uint8
+        dtype = _dtype(pixel_format)
         return PreviewFrame(
             _quantize(self._render(self._crop), dtype),
             pixel_format,
@@ -224,7 +242,7 @@ class SimulatedCamera(FrameCamera):
             raise DeviceTimeout(f"{self!r} has no frame within {timeout:g} s")
         time.sleep(wait + exposure)
         pixel_format = str(self._store[PIXEL_FORMAT].value)
-        dtype = np.uint16 if pixel_format == "Mono16" else np.uint8
+        dtype = _dtype(pixel_format)
         self._frame_count += 1
         metadata: dict[str, Any] = {
             EXPOSURE_TIME: exposure,
@@ -232,6 +250,12 @@ class SimulatedCamera(FrameCamera):
             "frame_number": self._frame_count,
             "bit_depth": 8 * np.dtype(dtype).itemsize,
             "full_scale": int(np.iinfo(dtype).max),
+            "color_filter": _COLOR_FILTER if self._color else None,
+            **{
+                n: self._store[n].value
+                for n in (_BALANCE_AUTO, *_BALANCE_RATIOS)
+                if n in self._store
+            },
         }
         return Frame(
             _quantize(self._render(), dtype),
@@ -242,7 +266,10 @@ class SimulatedCamera(FrameCamera):
 
     def _run_auto(self) -> None:
         """Pick this frame's exposure and gain for the auto modes that are on,
-        with exposure tried before gain."""
+        with exposure tried before gain, and ratios that even out the tint."""
+        if self._auto_on(_BALANCE_AUTO):
+            for name, channel in zip(_BALANCE_RATIOS, (0, 2), strict=True):
+                self._set_auto_value(name, _RGB_TINT[1] / _RGB_TINT[channel])
         exposure_auto = self._auto_on("ExposureAuto")
         gain_auto = self._auto_on("GainAuto")
         if not (exposure_auto or gain_auto):
@@ -276,9 +303,13 @@ class SimulatedCamera(FrameCamera):
             self._rng,
             crop,
         )
-        if self._store[PIXEL_FORMAT].value == "RGB8":
-            return image[..., np.newaxis] * _RGB_TINT
-        return image
+        pixel_format = self._store[PIXEL_FORMAT].value
+        if pixel_format not in ("RGB8", *_BAYER_FORMATS):
+            return image
+        red, blue = (_number(self._store[n]) for n in _BALANCE_RATIOS)
+        # A ratio above 1 can saturate a channel, as on a real sensor.
+        rgb = np.clip(image[..., np.newaxis] * _RGB_TINT * [red, 1.0, blue], 0.0, 1.0)
+        return rgb if pixel_format == "RGB8" else _mosaic(rgb)
 
 
 class SimulatedFileCamera(FileCamera):
@@ -545,6 +576,19 @@ def _expose(
     scale = (exposure / _REFERENCE_EXPOSURE_S) * 10 ** (gain_db / 20)
     image = pattern * scale * 0.5 + rng.normal(0.0, _NOISE_SIGMA, pattern.shape)
     return np.clip(image, 0.0, 1.0)
+
+
+def _dtype(pixel_format: str) -> type[np.uint8 | np.uint16]:
+    return np.uint16 if pixel_format.endswith("16") else np.uint8
+
+
+def _mosaic(rgb: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+    """An RGB image seen through a ``BayerRG`` filter: red at even rows and
+    columns, blue at odd ones, green elsewhere."""
+    mosaic = rgb[..., 1].copy()
+    mosaic[0::2, 0::2] = rgb[0::2, 0::2, 0]
+    mosaic[1::2, 1::2] = rgb[1::2, 1::2, 2]
+    return mosaic
 
 
 def _quantize(image: npt.NDArray[np.float64], dtype: type[T]) -> npt.NDArray[T]:

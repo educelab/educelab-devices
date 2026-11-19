@@ -15,7 +15,7 @@ from fakes.aravis import (
     FakeArvStream,
     FakeRepository,
 )
-from fakes.genicam import FakeCamera
+from fakes.genicam import FakeCamera, cm3_31s4c
 
 
 @pytest.fixture
@@ -124,11 +124,24 @@ def test_pixel_format_codes_match_aravis(real):
         "BayerRG16": "BAYER_RG_16",
         "BayerGB16": "BAYER_GB_16",
         "BayerBG16": "BAYER_BG_16",
+        "Mono12Packed": "MONO_12_PACKED",
+        "Mono12p": "MONO_12P",
+        **{
+            f"Bayer{o}12Packed": f"BAYER_{o}_12_PACKED"
+            for o in ("RG", "GB", "GR", "BG")
+        },
+        **{f"Bayer{o}12p": f"BAYER_{o}_12P" for o in ("RG", "GB", "GR", "BG")},
+        # The codes the CM3-U3-31S4C sends for them (spinnaker.md).
+        "YCbCr411_8_CbYYCrYY": "YUV_411_PACKED",
+        "YCbCr422_8_CbYCrY": "YUV_422_PACKED",
+        "YCbCr8_CbYCr": "YUV_444_PACKED",
     }
-    for code, fmt in _genicam._PFNC.items():
-        if fmt not in names:
-            continue  # a vendor's own code (e.g. IDS's), outside the PFNC
-        assert getattr(real, f"PIXEL_FORMAT_{names[fmt]}") == code, fmt
+    # Aravis lacks the PFNC's YCbCr codes, which the core also maps, and IDS's
+    # own code; each format Aravis has must map from Aravis's code.
+    for fmt, name in names.items():
+        if fmt in _genicam._PIXEL_FORMATS:
+            code = getattr(real, f"PIXEL_FORMAT_{name}")
+            assert _genicam._PFNC.get(code) == fmt, fmt
     for fmt, code in PFNC.items():
         if fmt in names:
             assert getattr(real, f"PIXEL_FORMAT_{names[fmt]}") == code, fmt
@@ -138,3 +151,12 @@ def test_buffer_statuses_match_aravis(real):
     for status in ("SUCCESS", "MISSING_PACKETS", "SIZE_MISMATCH", "TIMEOUT"):
         assert hasattr(real.BufferStatus, status)
     assert hasattr(real.DeviceError, "TIMEOUT")
+
+
+def test_a_node_unavailable_in_this_pixel_format_is_unavailable():
+    sim = cm3_31s4c()
+    sim.open()
+    device = FakeArvDevice(sim, lambda: False)
+    assert not device.is_feature_available("SharpnessEnabled")  # BayerRG8
+    sim.write("PixelFormat", "RGB8")
+    assert device.is_feature_available("SharpnessEnabled")

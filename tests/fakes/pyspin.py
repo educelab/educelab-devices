@@ -31,10 +31,12 @@ from educelab.devices.cameras._genicam import BufferStatus
 from fakes.genicam import (
     ENUMS,
     LAYOUTS,
+    PFNC,
     FakeCamera,
     FakeCameraError,
     FakeFrame,
     FrameSpec,
+    frame_bytes,
 )
 
 __all__ = [
@@ -59,6 +61,7 @@ _ACCESS = {"NA": NA, "WO": WO, "RO": RO, "RW": RW}
 SPINNAKER_ERR_SUCCESS = 0
 SPINNAKER_ERR_ERROR = -1001
 SPINNAKER_ERR_NOT_INITIALIZED = -1002
+SPINNAKER_ERR_NOT_IMPLEMENTED = -1003
 SPINNAKER_ERR_RESOURCE_IN_USE = -1004
 SPINNAKER_ERR_ACCESS_DENIED = -1005
 SPINNAKER_ERR_INVALID_HANDLE = -1006
@@ -68,6 +71,19 @@ SPINNAKER_ERR_TIMEOUT = -1011
 
 EVENT_TIMEOUT_INFINITE = 0xFFFFFFFFFFFFFFFF
 EVENT_TIMEOUT_NONE = 0
+
+# What GetPixelFormatName() calls formats whose GenICam names differ (verified
+# on the CM3-U3-31S4C with Spinnaker 4.4; spinnaker.md).
+_IMAGE_FORMAT_NAMES = {
+    "YCbCr411_8_CbYYCrYY": "YUV411_8",
+    "YCbCr422_8_CbYCrY": "YUV422Packed",
+    "YCbCr8_CbYCr": "YUV444Packed",
+}
+# Formats GetNDArray() refuses with "The current pixel format is not supported"
+# (verified as above): packed ones, and YCbCr with shared chroma.
+_NO_NDARRAY = frozenset(
+    f for f in LAYOUTS if "12" in f or f in ("YCbCr411_8_CbYYCrYY", "YCbCr422_8_CbYCrY")
+)
 
 # The pixel formats PySpin names; others get values past these.
 _PYSPIN_FORMATS = ("Mono8", "Mono16", "RGB8", "BayerRG8", "BayerRG16", "Mono12Packed")
@@ -557,7 +573,26 @@ class FakeImage:
         return self._frame
 
     def GetNDArray(self) -> np.ndarray[Any, Any]:
-        return self._held().pixels.view()
+        frame = self._held()
+        if frame.pixel_format in _NO_NDARRAY:
+            raise SpinnakerException(
+                "The current pixel format is not supported. Please convert the "
+                "image to a supported format.",
+                SPINNAKER_ERR_NOT_IMPLEMENTED,
+            )
+        return frame.pixels.view()
+
+    def GetData(self) -> np.ndarray[Any, Any]:
+        """The raw bytes as the camera sent them; 16-bit formats as uint16, as
+        PySpin gives them."""
+        frame = self._held()
+        packed = frame_bytes(frame.pixels, frame.pixel_format)
+        if len(packed) != frame.pixels.nbytes:
+            return np.frombuffer(packed, np.uint8)
+        return frame.pixels.ravel()
+
+    def GetTLPixelFormat(self) -> int:
+        return PFNC[self._held().pixel_format]
 
     def GetTimeStamp(self) -> int:
         return self._held().timestamp_ns
@@ -577,7 +612,8 @@ class FakeImage:
         return _enum_value("PixelFormat", self._frame.pixel_format)
 
     def GetPixelFormatName(self) -> str:
-        return self._frame.pixel_format
+        fmt = self._frame.pixel_format
+        return _IMAGE_FORMAT_NAMES.get(fmt, fmt)
 
     def GetWidth(self) -> int:
         return self._frame.pixels.shape[1]

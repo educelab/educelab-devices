@@ -8,6 +8,7 @@ import pytest
 
 from educelab.devices.cameras._genicam import BufferStatus
 from fakes import pyspin as fake
+from fakes.genicam import cm3_31s4c
 from fakes.pyspin import FakeImage, FakePySpin, FrameSpec, flir_camera
 
 
@@ -151,6 +152,50 @@ def test_released_images_are_overwritten_under_their_arrays(pyspin):
         image.GetNDArray()
 
 
+def grab_in(fmt):
+    """An image grabbed from a fake CM3-U3-31S4C in ``fmt``, and its PySpin."""
+    pyspin = FakePySpin([cm3_31s4c()])
+    cam = first(pyspin)
+    cam.Init()
+    pixel_format = pyspin.CEnumerationPtr(cam.PixelFormat)
+    pixel_format.SetIntValue(pixel_format.GetEntryByName(fmt).GetValue())
+    cam.BeginAcquisition()
+    return pyspin, cam.GetNextImage()
+
+
+@pytest.mark.parametrize(
+    "fmt", ["Mono12Packed", "Mono12p", "YCbCr411_8_CbYYCrYY", "YCbCr422_8_CbYCrY"]
+)
+def test_ndarrays_are_refused_for_packed_and_shared_chroma_formats(fmt):
+    # As Spinnaker 4.4 does on the CM3-U3-31S4C (spinnaker.md).
+    pyspin, image = grab_in(fmt)
+    with pytest.raises(pyspin.SpinnakerException) as info:
+        image.GetNDArray()
+    assert info.value.errorcode == pyspin.SPINNAKER_ERR_NOT_IMPLEMENTED
+    assert len(image.GetData()) == 16 * 12 * (3 if "422" not in fmt else 4) // 2
+
+
+@pytest.mark.parametrize(
+    ("fmt", "name"),
+    [
+        ("YCbCr411_8_CbYYCrYY", "YUV411_8"),
+        ("YCbCr422_8_CbYCrY", "YUV422Packed"),
+        ("YCbCr8_CbYCr", "YUV444Packed"),
+        ("Mono12p", "Mono12p"),
+    ],
+)
+def test_images_name_ycbcr_formats_the_legacy_way(fmt, name):
+    _, image = grab_in(fmt)
+    assert image.GetPixelFormatName() == name
+
+
+def test_images_give_the_code_the_camera_sent():
+    _, image = grab_in("YCbCr8_CbYCr")
+    assert image.GetTLPixelFormat() == 0x02180020
+    assert image.GetNDArray().shape == (12, 16, 3)
+    assert image.GetData().tobytes() == image.GetNDArray().tobytes()
+
+
 def test_image_status_follows_the_frame(pyspin):
     pyspin.system.cameras[0].queue_frames(
         FrameSpec(timestamp_ns=5, status=BufferStatus.INCOMPLETE),
@@ -237,8 +282,12 @@ def test_fake_module_names_exist_in_pyspin(real):
     assert [n for n in names if not hasattr(real, n)] == []
 
 
-def test_fake_node_names_exist_in_pyspin(real):
-    camera = flir_camera(color=True, throughput_mode=True)
+@pytest.mark.parametrize(
+    "camera",
+    [flir_camera(color=True, throughput_mode=True), cm3_31s4c()],
+    ids=["flir", "cm3_31s4c"],
+)
+def test_fake_node_names_exist_in_pyspin(real, camera):
     transport = FakePySpin([camera]).transport(camera)
     for nodes, owner in (
         (camera.nodes, real.CameraPtr),

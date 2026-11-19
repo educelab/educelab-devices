@@ -90,10 +90,13 @@ class GenICamHardwareTests:
         """Put every writable setting back after the test."""
         saved = {n: s.value for n, s in camera.settings().items() if not s.read_only}
         yield camera
-        # Auto modes first, so the values they lock become writable again.
-        for name in sorted(saved, key=lambda n: not n.endswith("Auto")):
-            value = saved[name]
-            if value is not None and not camera.setting(name).read_only:
+        # The pixel format first, since some settings exist only in some formats
+        # (white balance isn't in Mono on the CM3-U3-31S4C), then auto modes, so
+        # the values they lock become writable again.
+        order = sorted(saved, key=lambda n: (n != PIXEL_FORMAT, not n.endswith("Auto")))
+        for name in order:
+            value, now = saved[name], camera.settings().get(name)
+            if value is not None and now is not None and not now.read_only:
                 camera.set_setting(name, value)
 
     @staticmethod
@@ -550,6 +553,111 @@ class GenICamHardwareTests:
             )
             # A still, lit scene: only noise between the two frames.
             assert diff.mean() < max(3, 2 * noise)
+
+    def test_twelve_bit_frames_match_mono16(self, restore):
+        formats = restore.setting(PIXEL_FORMAT).choices or ()
+        packed = [f for f in formats if f in ("Mono12Packed", "Mono12p")]
+        if "Mono16" not in formats or not packed:
+            pytest.skip(f"needs Mono16 and a 12-bit packed format, not {formats}")
+        self.steady(restore)
+        restore.set_setting(PIXEL_FORMAT, "Mono16")
+        # The CM3s hold 12 bits at the top of Mono16 (spinnaker.md).
+        reference = restore.capture_frame(not_before=self.fresh(restore)).pixels >> 4
+        for name in packed:
+            restore.set_setting(PIXEL_FORMAT, name)
+            first = restore.capture_frame(not_before=self.fresh(restore)).pixels
+            again = restore.capture_frame(not_before=self.fresh(restore)).pixels
+            noise = np.abs(again.astype(np.int64) - first).mean()
+            diff = np.abs(first.astype(np.int64) - reference).mean()
+            alike = correlation(first, reference)
+            print(
+                f"\n{name}: max {first.max()}, differs from Mono16 >> 4 by "
+                f"{diff:.2f} counts (frame to frame {noise:.2f}), correlation "
+                f"{alike:.4f}"
+            )
+            # Unpacked in the wrong layout, neighbouring pixels scramble and this
+            # drops to about 0.55; right, it was 0.997 (2026-11-19).
+            assert alike > 0.98
+            # Correlation ignores scale, so the levels must agree too.
+            assert first.max() <= 4095
+            assert diff < max(8, 2 * noise)
+
+    def test_frames_name_the_same_mosaic_in_every_format(self, restore):
+        found = {}
+        for fmt in restore.setting(PIXEL_FORMAT).choices or ():
+            restore.set_setting(PIXEL_FORMAT, fmt)
+            frame = restore.capture_frame(not_before=self.fresh(restore))
+            found[fmt] = frame.metadata["color_filter"]
+        print(f"\ncolor_filter by format: {found}")
+        assert len(set(found.values())) == 1
+        mosaic = next(iter(found.values()))
+        assert mosaic == restore.color_filter
+        assert all(f.startswith(mosaic) for f in found if f.startswith("Bayer"))
+
+    def test_white_balance_ratios_move_their_channels(self, restore):
+        if "balance_ratio_red" not in restore.settings():
+            pytest.skip("this camera offers no white balance in its format")
+        formats = restore.setting(PIXEL_FORMAT).choices or ()
+        bayer = next((f for f in formats if f.endswith("8") and "Bayer" in f), None)
+        if bayer is None:
+            pytest.skip(f"no 8-bit Bayer format in {formats}")
+        self.steady(restore)
+        restore.set_setting(PIXEL_FORMAT, bayer)
+        restore.set_setting("BalanceWhiteAuto", "Off")
+        assert not restore.setting("balance_ratio_red").read_only
+        # BayerRG: red at even rows and columns, blue at odd ones.
+        sites = {"red": (0, 0), "green": (0, 1), "blue": (1, 1)}
+        assert restore.color_filter == "BayerRG", "sites assume BayerRG"
+
+        def sites_at(red: float, blue: float) -> dict[str, np.ndarray]:
+            restore.set_setting("balance_ratio_red", red)
+            restore.set_setting("balance_ratio_blue", blue)
+            frame = restore.capture_frame(not_before=self.fresh(restore))
+            assert frame.metadata["balance_ratio_red"] == pytest.approx(red, rel=0.01)
+            assert frame.metadata["balance_ratio_blue"] == pytest.approx(blue, rel=0.01)
+            full = frame.metadata["full_scale"]
+            return {
+                k: frame.pixels[r::2, c::2].astype(np.float64)
+                for k, (r, c) in sites.items()
+            } | {"clipped": frame.pixels >= full}
+
+        frames = [sites_at(r, r) for r in (1.0, 1.5, 2.0)] + [sites_at(0.5, 1.0)]
+        # Only pixels that never clip, so saturation doesn't flatten the means.
+        clipped = np.logical_or.reduce([f.pop("clipped") for f in frames])
+        kept = {k: ~clipped[r::2, c::2] for k, (r, c) in sites.items()}
+        means = [{k: float(f[k][kept[k]].mean()) for k in sites} for f in frames]
+        *steps, below = means
+        print(
+            f"\n{bayer} site means at ratios 1, 1.5, 2: {steps}; red 0.5: {below} "
+            f"({clipped.mean():.4f} of pixels left out as clipped)"
+        )
+        # The ratios scale the signal above a black-level pedestal (15 counts
+        # in 8 bits on the CM3-U3-31S4C), so equal steps in a ratio make equal
+        # steps in level, whatever the pedestal.
+        for channel in ("red", "blue"):
+            low, mid, high = (s[channel] for s in steps)
+            assert (high - mid) / (mid - low) == pytest.approx(1.0, abs=0.15)
+        assert steps[2]["green"] == pytest.approx(steps[0]["green"], rel=0.05)
+        # Below 1, the camera raises the other channels instead, keeping its
+        # smallest gain at 1 (spinnaker.md, White balance): red at 0.5 leaves
+        # red alone and doubles green above the pedestal, read off red's steps.
+        pedestal = 2 * steps[0]["red"] - steps[2]["red"]
+        print(f"pedestal {pedestal:.1f}")
+        assert below["red"] == pytest.approx(steps[0]["red"], rel=0.05)
+        raised = (below["green"] - pedestal) / (steps[0]["green"] - pedestal)
+        assert raised == pytest.approx(2.0, rel=0.1)
+
+    def test_white_balance_is_only_offered_where_the_format_has_it(self, restore):
+        offered = {}
+        for fmt in restore.setting(PIXEL_FORMAT).choices or ():
+            restore.set_setting(PIXEL_FORMAT, fmt)
+            names = ("BalanceWhiteAuto", "balance_ratio_red", "balance_ratio_blue")
+            here = [n in restore.settings() for n in names]
+            assert len(set(here)) == 1, f"{fmt}: {dict(zip(names, here, strict=True))}"
+            offered[fmt] = here[0]
+            metadata = restore.capture_frame(not_before=self.fresh(restore)).metadata
+            assert ("balance_ratio_red" in metadata) == here[0]
+        print(f"\nwhite balance offered: {offered}")
 
     def test_a_second_open_of_the_same_camera_is_busy(self, camera, serial):
         second = self.make(serial)

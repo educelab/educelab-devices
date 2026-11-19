@@ -336,7 +336,9 @@ class FakeArvDevice:
     def is_feature_available(self, name: str) -> bool:
         if name not in self.sim.nodes:
             raise GLibError(f"no feature {name}", GC_DOMAIN, GcError.NODE_NOT_FOUND)
-        return True
+        # Aravis follows pIsAvailable, which a node unavailable in some pixel
+        # formats (e.g. the CM3's SharpnessEnabled) points at.
+        return self.sim.nodes[name].current_access() != "NA"
 
     def get_feature_access_mode(self, name: str) -> GcAccessMode:
         # Like Aravis, this ignores locks: a node whose access changes with other

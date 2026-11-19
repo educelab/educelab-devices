@@ -7,7 +7,7 @@ import pytest
 
 from educelab.devices.app import preview
 from educelab.devices.app.cli import build_parser, main
-from educelab.devices.app.preview import View, eight_bit
+from educelab.devices.app.preview import View, eight_bit, shown_pixels
 from educelab.devices.cameras import CameraFile
 from educelab.devices.cameras.simulated import SimulatedCamera, SimulatedFileCamera
 from educelab.devices.errors import DeviceError
@@ -417,3 +417,11 @@ def test_the_simulated_camera_shows_a_chart_whose_focus_keys_move(monkeypatch):
     step = preview.FOCUS_KEY_STEPS
     assert focus.moves == [step, step, -step]
     assert not focus.is_open
+
+
+def test_ycbcr_frames_show_their_luma():
+    full = np.arange(2 * 4 * 3, dtype=np.uint8).reshape(2, 4, 3)
+    np.testing.assert_array_equal(shown_pixels(full, "YCbCr8_CbYCr"), full[..., 1])
+    shared = full[..., :2]
+    assert shown_pixels(shared, "YCbCr422_8_CbYCrY").shape == (2, 4)
+    assert shown_pixels(full, "RGB8") is full

@@ -284,14 +284,31 @@ ARRIVAL_SAMPLES = 20
 # pgs-scan dev. The capture's timeout bounds the retries. See spinnaker.md.
 RETRIES_BEFORE_REMEASURE = 5
 
-# Pixel formats whose arrays the driver knows how to shape. Others (e.g.
-# packed 12-bit) would come back as raw bytes.
-_PIXEL_FORMATS = frozenset(
-    {"Mono8", "Mono16", "RGB8", "Mono10g40IDS"}
-    | {f"Bayer{order}{bits}" for order in ("RG", "GB", "GR", "BG") for bits in (8, 16)}
+_BAYER_ORDERS = ("RG", "GB", "GR", "BG")
+# 12-bit formats packing two pixels in three bytes: GigE Vision's "Packed",
+# high bytes first, and the PFNC's "p", LSB first (spinnaker.md, Pixel formats).
+_PACKED_12 = frozenset(
+    {"Mono12Packed", "Mono12p"}
+    | {
+        f"Bayer{order}12{packing}"
+        for order in _BAYER_ORDERS
+        for packing in ("Packed", "p")
+    }
 )
+# Pixel formats whose arrays the driver knows how to shape. Others (e.g.
+# YCbCr411, 6 bytes per 4 pixels) would come back as raw bytes.
+_PIXEL_FORMATS = frozenset(
+    {"Mono8", "Mono16", "RGB8", "Mono10g40IDS", "YCbCr8_CbYCr", "YCbCr422_8_CbYCrY"}
+    | {f"Bayer{order}{bits}" for order in _BAYER_ORDERS for bits in (8, 16)}
+    | _PACKED_12
+)
+# PixelColorFilter's mosaics; a Bayer format's name starts with its own.
+_COLOR_FILTERS = frozenset(f"Bayer{order}" for order in _BAYER_ORDERS)
+# Channels in each pixel, where there's more than one.
+_CHANNELS = {"RGB8": 3, "YCbCr8_CbYCr": 3, "YCbCr422_8_CbYCrY": 2}
 # PFNC codes of those formats, for libraries that report a buffer's format as a
-# number (Aravis, GenTL). Values from the PFNC, as in Aravis's arvenums.h.
+# number (Aravis, GenTL). Values from the PFNC, as in Aravis's arvenums.h and
+# harvesters' _pfnc.py.
 _PFNC = {
     0x01080001: "Mono8",
     0x01100007: "Mono16",
@@ -304,6 +321,22 @@ _PFNC = {
     0x0110002F: "BayerRG16",
     0x01100030: "BayerGB16",
     0x01100031: "BayerBG16",
+    0x010C0006: "Mono12Packed",
+    0x010C0047: "Mono12p",
+    0x010C002A: "BayerGR12Packed",
+    0x010C002B: "BayerRG12Packed",
+    0x010C002C: "BayerGB12Packed",
+    0x010C002D: "BayerBG12Packed",
+    0x010C0053: "BayerBG12p",
+    0x010C0055: "BayerGB12p",
+    0x010C0057: "BayerGR12p",
+    0x010C0059: "BayerRG12p",
+    0x0218003A: "YCbCr8_CbYCr",
+    0x02100043: "YCbCr422_8_CbYCrY",
+    # The same bytes under the PFNC's YUV8_UYV and YUV422_8_UYVY, which the
+    # CM3-U3-31S4C sends for its YCbCr formats (verified; spinnaker.md).
+    0x02180020: "YCbCr8_CbYCr",
+    0x0210001F: "YCbCr422_8_CbYCrY",
     # IDS's own code, outside the PFNC (verified on the U3-36PxXCP-M).
     0x4000000F: "Mono10g40IDS",
 }
@@ -320,10 +353,17 @@ _SELF_SLOWING_VENDORS = frozenset({_IDS})
 # "Once" isn't offered: it reverts to "Off" by itself, so it never reads back.
 _AUTO_MODES = ("Off", "Continuous")
 _RATE_AUTO = "AcquisitionFrameRateAuto"
-# Bits each model actually has in a 16-bit format, held at the top. Measured
-# Where a model saturates in a format, below the format's top. The CM3 saturates
-# at 12-bit 4094 (65504); its sharpening lifts a few to 65520 (spinnaker.md).
-_SATURATION = {("Chameleon3 CM3-U3-50S5M", "Mono16"): 65504}
+# White balance: its automatic mode, and each ratio's setting by the
+# BalanceRatioSelector entry it reads (spinnaker.md, White balance).
+_BALANCE_AUTO = "BalanceWhiteAuto"
+_BALANCE_RATIOS = {"balance_ratio_red": "Red", "balance_ratio_blue": "Blue"}
+# Where a model saturates in a format, below the format's top. The CM3s hold
+# 12 bits at the top of Mono16 and saturate at 4094 (65504); the 50S5M's
+# sharpening lifts a few to 65520 (spinnaker.md).
+_SATURATION = {
+    ("Chameleon3 CM3-U3-50S5M", "Mono16"): 65504,
+    ("Chameleon3 CM3-U3-31S4C", "Mono16"): 65504,
+}
 # A geometry change re-rounds the exposure a little; less than this is a cut.
 _EXPOSURE_KEPT = 0.99
 _US_PER_S = 1e6
@@ -469,6 +509,10 @@ class GenICamCamera(FrameCamera):
         self._timestamp_node: str | None = None
         self._exposure_node: str | None = None
         self._self_slowing = False
+        self._color_filter: str | None = None
+        # White balance for frame metadata, kept while auto is Off: then only
+        # the driver's own writes move the ratios, and each read costs ~1 ms.
+        self._fixed_balance: dict[str, SettingValue] | None = None
         self._descriptors: dict[str, _Descriptor] = {}
         self._timestamp_offset: float | None = None
         self._timestamp_source: str | None = None
@@ -513,6 +557,17 @@ class GenICamCamera(FrameCamera):
         ``"TimestampLatchValue"``. ``None`` before open, or if the camera has neither.
         """
         return self._timestamp_node
+
+    @property
+    def color_filter(self) -> str | None:
+        """The sensor's Bayer mosaic, e.g. ``"BayerRG"``, or ``None`` on a mono
+        sensor or one that can't say. Also in each frame's metadata.
+
+        From ``PixelColorFilter``, which some cameras report in every pixel
+        format (the CM3-U3-31S4C does), or else the order in the name of a
+        Bayer format the camera offers.
+        """
+        return self._color_filter
 
     @property
     def timestamp_offset(self) -> float | None:
@@ -646,6 +701,7 @@ class GenICamCamera(FrameCamera):
         exposure = self._drain_exposure()
         conn, self._conn = self._conn, None
         self._descriptors = {}
+        self._fixed_balance = None
         if conn is not None:
             try:
                 conn.close(exposure)
@@ -690,10 +746,21 @@ class GenICamCamera(FrameCamera):
             (n for n in _EXPOSURE_NODES if self._connection.has(n)), None
         )
         self._self_slowing = self._vendor in _SELF_SLOWING_VENDORS
+        self._color_filter = self._read_color_filter()
         self._setup_geometry()
         self._descriptors = self._describe_settings()
         # Another program may have left the camera slowed down.
         self._raise_frame_rate()
+
+    def _read_color_filter(self) -> str | None:
+        conn, node = self._connection, "PixelColorFilter"
+        if conn.is_readable(node):
+            found = self._read_enum(node)
+            return found if found in _COLOR_FILTERS else None
+        if not conn.is_readable("PixelFormat"):
+            return None
+        entries = self._enum_choices("PixelFormat", _PIXEL_FORMATS)
+        return next((f[:7] for f in entries if f[:7] in _COLOR_FILTERS), None)
 
     def _warn_of_a_slow_link(self) -> None:
         # The CM3 that stalled had come up at USB 2 before (gentl-stall track).
@@ -852,6 +919,7 @@ class GenICamCamera(FrameCamera):
 
     def _set_setting(self, name: str, value: SettingValue) -> None:
         logger.debug("%r: %s = %r", self, name, value)
+        self._fixed_balance = None
         self._descriptors[name].write(self, value)
 
     def _describe_settings(self) -> dict[str, "_Descriptor"]:
@@ -874,8 +942,14 @@ class GenICamCamera(FrameCamera):
             _Enum("ExposureAuto", "ExposureAuto", _AUTO_MODES),
             gain,
             _Enum("GainAuto", "GainAuto", _AUTO_MODES),
-            # On-camera sharpening, which the CM3 opens with on in Mono16.
+            # On-camera sharpening, which the CM3s open with on in the formats
+            # they process.
             _Bool("SharpnessEnabled", "SharpnessEnabled"),
+            _Enum(_BALANCE_AUTO, _BALANCE_AUTO, _AUTO_MODES, in_frames=True),
+            *(
+                _Selected(name, "BalanceRatio", "BalanceRatioSelector", entry)
+                for name, entry in _BALANCE_RATIOS.items()
+            ),
             _Enum(PIXEL_FORMAT, "PixelFormat", _PIXEL_FORMATS, paused=True),
             # Read-only even where the camera could crop: only preview sets an ROI.
             _FrameSize(WIDTH, ("Width",), "px", integer=True),
@@ -895,6 +969,21 @@ class GenICamCamera(FrameCamera):
             _LinkSpeed(),
         ]
         return {d.name: d for d in found if d is not None}
+
+    def _recorded_settings(self) -> dict[str, SettingValue]:
+        """The settings each frame's metadata records beside exposure and gain
+        (white balance), where the camera has them in its current pixel format.
+        """
+        auto = self._descriptors.get(_BALANCE_AUTO)
+        mode = None if auto is None else auto.recorded(self)
+        if mode == "Off" and self._fixed_balance is not None:
+            return dict(self._fixed_balance)
+        found = {} if mode is None else {_BALANCE_AUTO: mode}
+        for d in self._descriptors.values():
+            if d.name != _BALANCE_AUTO and (value := d.recorded(self)) is not None:
+                found[d.name] = value
+        self._fixed_balance = dict(found) if mode == "Off" else None
+        return found
 
     def _exposure(self) -> float | None:
         """The exposure time in seconds, or None if the camera has no such node."""
@@ -1413,6 +1502,8 @@ class GenICamCamera(FrameCamera):
                     "timestamp_source": taken.timestamp_source,
                     "bit_depth": bit_depth(taken.pixel_format),
                     "full_scale": full_scale(taken.pixel_format, self._model),
+                    "color_filter": self._color_filter,
+                    **self._recorded_settings(),
                 }
                 return Frame(
                     taken.pixels,
@@ -1668,6 +1759,10 @@ class _Descriptor:
         """Just the value, for frame metadata (exposure and gain only)."""
         return None
 
+    def recorded(self, camera: GenICamCamera) -> SettingValue | None:
+        """The value, if frame metadata records it under the setting's name."""
+        return None
+
 
 @dataclass(frozen=True)
 class _Float(_Descriptor):
@@ -1782,6 +1877,13 @@ class _Enum(_Descriptor):
     supported: Iterable[str]
     # Written with acquisition paused, since the camera only takes it stopped.
     paused: bool = False
+    # Recorded in each frame's metadata.
+    in_frames: bool = False
+
+    def recorded(self, camera: GenICamCamera) -> SettingValue | None:
+        if not (self.in_frames and camera._connection.is_readable(self.node)):
+            return None
+        return camera._read_enum(self.node)
 
     def read(self, camera: GenICamCamera) -> Setting | None:
         conn = camera._connection
@@ -1824,6 +1926,83 @@ class _Bool(_Descriptor):
             lambda: conn.set_bool(self.node, bool(value)),
             kind=CommandRejected,
         )
+
+
+@dataclass(frozen=True)
+class _Selected(_Descriptor):
+    """A float node behind a selector, e.g. ``BalanceRatio`` for one
+    ``BalanceRatioSelector`` entry, offered unitless and recorded in frames.
+
+    Each read or write sets the selector and puts it back, even if the
+    access fails, so callers never see it moved.
+    """
+
+    name: str
+    node: str
+    selector: str
+    entry: str
+
+    def read(self, camera: GenICamCamera) -> Setting | None:
+        conn = camera._connection
+        if not conn.is_writable(self.selector):
+            return None
+        if self.entry not in camera._enum_choices(self.selector, (self.entry,)):
+            return None
+
+        def read() -> Setting | None:
+            if not conn.is_readable(self.node):
+                return None
+            value, (low, high) = camera._call(
+                f"read {self.node}",
+                lambda: (conn.get_float(self.node), conn.float_range(self.node)),
+            )
+            return Setting(
+                self.name,
+                value,
+                minimum=low,
+                maximum=high,
+                read_only=not conn.is_writable(self.node),
+            )
+
+        return self._selected(camera, read)
+
+    def write(self, camera: GenICamCamera, value: SettingValue) -> None:
+        conn = camera._connection
+
+        def write() -> None:
+            low, high = camera._call(
+                f"read the limits of {self.name}", lambda: conn.float_range(self.node)
+            )
+            native = min(max(float(value), low), high)
+            camera._call(
+                f"set {self.name}",
+                lambda: conn.set_float(self.node, native),
+                kind=CommandRejected,
+            )
+
+        self._selected(camera, write)
+
+    def recorded(self, camera: GenICamCamera) -> SettingValue | None:
+        conn = camera._connection
+        if not conn.is_writable(self.selector):
+            return None
+
+        def read() -> float | None:
+            if not conn.is_readable(self.node):
+                return None
+            return camera._read_float(self.node)
+
+        return self._selected(camera, read)
+
+    def _selected(self, camera: GenICamCamera, fn: Callable[[], T]) -> T:
+        found = camera._read_enum(self.selector)
+        if found != self.entry:
+            camera._set_enum(self.selector, self.entry)
+        try:
+            return fn()
+        finally:
+            if found != self.entry:
+                camera._set_enum(self.selector, found)
 
 
 @dataclass(frozen=True)
@@ -2036,12 +2215,14 @@ def pfnc_name(code: int) -> str:
 def bit_depth(pixel_format: str) -> int:
     """Bits per pixel value in a format the core can shape.
 
-    Deeper formats come as ``uint16``. A 10-bit format has its bits in the
-    low end, running from 0 to 1023; a 16-bit one may carry fewer, as the
-    camera's `full_scale` says.
+    Deeper formats come as ``uint16``. A 10- or 12-bit format has its bits in
+    the low end, running from 0 to 1023 or 4095; a 16-bit one may carry fewer,
+    as the camera's `full_scale` says. YCbCr formats count bits per channel.
     """
     if pixel_format == "Mono10g40IDS":
         return 10
+    if pixel_format in _PACKED_12:
+        return 12
     return 16 if pixel_format.endswith("16") else 8
 
 
@@ -2055,13 +2236,20 @@ def full_scale(pixel_format: str, model: str = "") -> int:
 def shaped_pixels(
     data: Any, pixel_format: str, width: int, height: int
 ) -> npt.NDArray[Any]:
-    """A copy of a frame's bytes as an array shaped by its pixel format."""
+    """A copy of a frame's bytes as an array shaped by its pixel format.
+
+    Packed formats are unpacked to ``uint16``. Color formats keep the camera's
+    channel order, so ``YCbCr422_8_CbYCrY`` is ``(height, width, 2)``, with
+    Cb and Cr taking turns in the first channel.
+    """
     if pixel_format == "Mono10g40IDS":
         return _unpack_10g40(data, width, height)
+    if pixel_format in _PACKED_12:
+        return _unpack_12(data, width, height, lsb_first=pixel_format.endswith("p"))
     dtype = np.uint16 if pixel_format.endswith("16") else np.uint8
     shape: tuple[int, ...] = (height, width)
-    if pixel_format == "RGB8":
-        shape += (3,)
+    if pixel_format in _CHANNELS:
+        shape += (_CHANNELS[pixel_format],)
     count = math.prod(shape)
     return np.frombuffer(data, dtype=dtype, count=count).reshape(shape).copy()
 
@@ -2076,6 +2264,24 @@ def _unpack_10g40(data: Any, width: int, height: int) -> npt.NDArray[np.uint16]:
     low = groups[:, 4:5]
     pixels |= ((low >> np.array([0, 2, 4, 6], dtype=np.uint8)) & 3).astype(np.uint16)
     return pixels.reshape(height, width).astype(np.uint16, copy=False)
+
+
+def _unpack_12(
+    data: Any, width: int, height: int, *, lsb_first: bool
+) -> npt.NDArray[np.uint16]:
+    """Unpack two 12-bit pixels from each three bytes (both layouts verified
+    on the CM3-U3-31S4C; spinnaker.md, Pixel formats)."""
+    count = width * height
+    groups = np.frombuffer(data, dtype=np.uint8, count=count * 3 // 2)
+    b0, b1, b2 = groups.reshape(-1, 3).astype(np.uint16).T
+    if lsb_first:
+        # PFNC "p": pixel 0 is byte 0 and byte 1's low nibble, on top.
+        first, second = b0 | (b1 & 0xF) << 8, b1 >> 4 | b2 << 4
+    else:
+        # GigE Vision "Packed": each pixel's high byte, and byte 1 holds both
+        # low nibbles, pixel 0's in its low half.
+        first, second = b0 << 4 | (b1 & 0xF), b2 << 4 | b1 >> 4
+    return np.column_stack([first, second]).reshape(height, width)
 
 
 def _binary_steps(low: float, high: float, bits: int) -> list[float]:

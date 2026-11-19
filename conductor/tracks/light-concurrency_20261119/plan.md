@@ -40,14 +40,16 @@ Add the role-level enum and abstract property first, with contract tests driving
 
 ### Tasks
 
-- [ ] Task 3.1: `docs/guide.md`: `concurrency` in the Light row of the role table, and a note under "Light levels".
-- [ ] Task 3.2: `MishaLight` docstring and `docs/hardware/misha.md` name the `EXCLUSIVE` declaration.
-- [ ] Task 3.3: `docs/hardware/xlc2.md` records the `INDEPENDENT` declaration, with the hardware check marked as owed.
-- [ ] Task 3.4: Add a hardware test to `tests/test_xlc_hardware.py` that lights white and 940 nm together and checks both are acknowledged and stay on.
+- [x] Task 3.1: `docs/guide.md`: `concurrency` in the Light row of the role table, and a note under "Light levels".
+- [x] Task 3.2: `MishaLight` docstring and `docs/hardware/misha.md` name the `EXCLUSIVE` declaration.
+- [x] Task 3.3: `docs/hardware/xlc2.md` records the `INDEPENDENT` declaration, with the hardware check marked as owed.
+- [x] Task 3.4: Add a hardware test to `tests/test_xlc_hardware.py` that lights white and 940 nm together and checks both are acknowledged and stay on.
 
 ### Verification
 
-- [ ] The docs build, and they agree with the code.
+- [x] The docs agree with the code. (There is no docs build yet; `mkdocs.yml` arrives with the docs-site track.)
+
+**Release notes:** `Light.concurrency` is a new abstract property, so `Light` subclasses outside this repo must declare it. The repo has no changelog, so this goes in the PR description and the GitHub release.
 
 ## Phase 4: Hardware Check (batched)
 

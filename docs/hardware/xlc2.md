@@ -75,6 +75,9 @@ number. Windows binds Microsoft's in-box CDC driver, so pyserial reports the des
   (`r = g = b`).
 - The XL4 array, one PWM output on pin 6.
 - Both start off at power-up.
+- **Lit together**: the strip and the array have separate outputs, so `XLC2` declares
+  `concurrency = ChannelConcurrency.INDEPENDENT` (**assumed** until the manual check
+  below confirms both stay lit together).
 - **Flashes on reset**: the strip flashes briefly at some point when the port opens
   (**verified**, observed by the maintainer, 2026-10-29). The likely cause is the Nano's
   bootloader blinking its LED on D13, which is also the SPI clock to the strip, so stray
@@ -299,6 +302,9 @@ Tracked in issue #39.
 - Exclusive open on Windows (and Linux, if a rig is available), and for MISHA and
   X-Carve ports.
 - The VID:PID of any unit with a CH340.
+- White and 940 nm lit together: `test_channels_stay_lit_together` in
+  `tests/test_xlc_hardware.py`, watching that both stay on (backs the `INDEPENDENT`
+  declaration).
 
 ### Last run
 

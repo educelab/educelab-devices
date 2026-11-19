@@ -15,13 +15,15 @@ Add the role-level enum and abstract property first, with contract tests driving
 
 ### Tasks
 
-- [ ] Task 1.1: Contract tests in `tests/contracts/lights.py` that check behavior against `device.concurrency` (exclusive: B turns A off, and 0 on an unlit channel leaves the lit one on; independent: A and B stay lit; one-channel lights skip). Make the existing tests, such as `test_all_off`, hold for exclusive lights.
-- [ ] Task 1.2: `ChannelConcurrency` and abstract `Light.concurrency` in `lights/base.py`, exported from `lights/__init__.py`. When an exclusive light gets a level above 0, the base zeroes the other channels' remembered levels.
-- [ ] Task 1.3: Tests, then `SimulatedLight(concurrency=...)`, defaulting to `INDEPENDENT`, with MISHA-style switching when exclusive. Run the contract against both modes.
+- [x] Task 1.1: Contract tests in `tests/contracts/lights.py` that check behavior against `device.concurrency` (exclusive: B turns A off, and 0 on an unlit channel leaves the lit one on; independent: A and B stay lit; one-channel lights skip). Make the existing tests, such as `test_all_off`, hold for exclusive lights.
+- [x] Task 1.2: `ChannelConcurrency` and abstract `Light.concurrency` in `lights/base.py`, exported from `lights/__init__.py`. When an exclusive light gets a level above 0, the base zeroes the other channels' remembered levels.
+- [x] Task 1.3: Tests, then `SimulatedLight(concurrency=...)`, defaulting to `INDEPENDENT`, with MISHA-style switching when exclusive. Run the contract against both modes.
 
 ### Verification
 
-- [ ] `pytest tests/test_lights.py tests/test_simulated_light.py`, `ruff check .`, `ruff format --check .`.
+- [x] `pytest tests/test_lights.py tests/test_simulated_light.py`, `ruff check .`, `ruff format --check .`.
+
+**Note:** Phase 1 makes `concurrency` abstract, so the drivers can't be built until Phase 2 declares it. The full suite passes from Phase 2 on; Phase 1 was verified with the scoped command above. `tests/test_multi_role.py`'s stub light declares `INDEPENDENT` here too.
 
 ## Phase 2: Drivers
 

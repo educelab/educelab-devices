@@ -3,13 +3,16 @@ import pytest
 
 from educelab.devices import DeviceInfo
 from educelab.devices.errors import NotConnected
-from educelab.devices.lights import RGB, Channel, ChannelKind, Light
+from educelab.devices.lights import RGB, Channel, ChannelConcurrency, ChannelKind, Light
 
 
 class StubLight(Light):
-    def __init__(self) -> None:
+    def __init__(
+        self, concurrency: ChannelConcurrency = ChannelConcurrency.INDEPENDENT
+    ) -> None:
         super().__init__()
         self.writes: list[tuple[str, object]] = []
+        self._concurrency = concurrency
 
     @property
     def info(self) -> DeviceInfo:
@@ -20,7 +23,12 @@ class StubLight(Light):
         return (
             Channel("uv", wavelength_nm=365),
             Channel("ring", ChannelKind.RGB),
+            Channel("white"),
         )
+
+    @property
+    def concurrency(self) -> ChannelConcurrency:
+        return self._concurrency
 
     def _open(self) -> None:
         pass
@@ -87,7 +95,7 @@ def test_set_color_validates_components(light, color):
 
 def test_all_off_defaults_to_zeroing_every_channel(light):
     light.all_off()
-    assert light.writes == [("uv", 0.0), ("ring", (0.0, 0.0, 0.0))]
+    assert light.writes == [("uv", 0.0), ("ring", (0.0, 0.0, 0.0)), ("white", 0.0)]
 
 
 def test_light_methods_need_open_device():
@@ -149,3 +157,52 @@ def test_levels_are_forgotten_on_close():
 def test_numpy_levels_are_accepted(light):
     light.set_level("uv", np.float32(0.5))
     assert light.level("uv") == 0.5
+
+
+@pytest.fixture
+def exclusive_light():
+    with StubLight(ChannelConcurrency.EXCLUSIVE) as device:
+        yield device
+
+
+def test_exclusive_light_forgets_other_levels_when_one_is_lit(exclusive_light):
+    exclusive_light.set_level("uv", 0.5)
+    exclusive_light.set_color("ring", (0.0, 1.0, 0.0))
+    assert exclusive_light.level("uv") == 0.0
+    assert exclusive_light.level("white") == 0.0
+    assert exclusive_light.color("ring") == (0.0, 1.0, 0.0)
+    exclusive_light.set_level("white", 0.25)
+    assert exclusive_light.color("ring") == (0.0, 0.0, 0.0)
+    assert exclusive_light.level("white") == 0.25
+
+
+def test_exclusive_light_keeps_other_levels_when_one_is_zeroed(exclusive_light):
+    exclusive_light.set_level("uv", 0.5)
+    exclusive_light.set_level("white", 0.0)
+    exclusive_light.set_color("ring", (0.0, 0.0, 0.0))
+    assert exclusive_light.level("uv") == 0.5
+
+
+def test_exclusive_light_writes_only_the_channel_set(exclusive_light):
+    exclusive_light.set_level("uv", 0.5)
+    exclusive_light.set_level("white", 0.5)
+    assert exclusive_light.writes == [("uv", 0.5), ("white", 0.5)]
+
+
+def test_independent_light_remembers_every_level(light):
+    light.set_level("uv", 0.5)
+    light.set_level("white", 0.25)
+    assert light.level("uv") == 0.5
+    assert light.level("white") == 0.25
+
+
+def test_failed_write_on_exclusive_light_keeps_other_levels(exclusive_light):
+    exclusive_light.set_level("uv", 0.5)
+
+    def broken(channel: Channel, level: float) -> None:
+        raise OSError("port gone")
+
+    exclusive_light._set_level = broken  # type: ignore[method-assign]
+    with pytest.raises(OSError):
+        exclusive_light.set_level("white", 0.5)
+    assert exclusive_light.level("uv") == 0.5

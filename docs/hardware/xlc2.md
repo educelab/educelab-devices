@@ -303,8 +303,9 @@ Tracked in issue #39.
   X-Carve ports.
 - The VID:PID of any unit with a CH340.
 - White and 940 nm lit together: `test_channels_stay_lit_together` in
-  `tests/test_xlc_hardware.py`, watching that both stay on (backs the `INDEPENDENT`
-  declaration).
+  `tests/test_xlc_hardware.py`, watching that both stay on, the 940 nm array through
+  a camera without an IR-cut filter (backs the `INDEPENDENT` declaration). The test's
+  assert only checks that the board acknowledged both commands.
 
 ### Last run
 

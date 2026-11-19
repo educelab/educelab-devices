@@ -58,8 +58,9 @@ class MishaLight(Light):
 
     Only one band is lit at a time, so `concurrency` is ``EXCLUSIVE``:
     setting a level above zero on one channel turns the others off, and
-    setting an unlit band to zero changes nothing. Levels are read from the panel, and opening leaves it as it was.
-    Closing turns everything off. Needs firmware 2.0.0 or newer.
+    setting an unlit band to zero changes nothing. Levels are read from the
+    panel, and opening leaves it as it was. Closing turns everything off.
+    Needs firmware 2.0.0 or newer.
 
     Args:
         port: Serial port, e.g. ``"COM3"`` or ``"/dev/ttyUSB0"``.

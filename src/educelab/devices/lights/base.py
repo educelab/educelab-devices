@@ -48,8 +48,11 @@ class Light(Device):
     """A device that emits illumination through one or more channels.
 
     Levels are fractions from 0.0 (off) to 1.0 (full). Drivers declare
-    `channels` and `concurrency`, and implement `_set_level()` and `_set_color()`. Drivers whose
-    hardware reports its levels also override `_get_level()` and `_get_color()`.
+    `channels` and `concurrency`, and implement `_set_level()` and
+    `_set_color()`. Drivers whose hardware reports its levels also override
+    `_get_level()` and `_get_color()`. ``EXCLUSIVE`` must describe the
+    hardware: the base only records the other channels as off, it never
+    turns them off itself.
     """
 
     _remembered: dict[str, float | RGB] | None = None

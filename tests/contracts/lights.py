@@ -66,7 +66,7 @@ class LightContract(DeviceContract):
     def test_concurrency_is_declared(self, device):
         assert isinstance(device.concurrency, ChannelConcurrency)
 
-    def test_exclusive_light_turns_the_lit_channel_off(self, device):
+    def test_exclusive_light_turns_the_previous_channel_off(self, device):
         a, b = _two_channels(device, ChannelConcurrency.EXCLUSIVE)
         device.set_level(a.id, 1.0)
         device.set_level(b.id, 1.0)

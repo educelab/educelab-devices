@@ -78,7 +78,8 @@ def test_bad_commands_are_rejected(light, fields, reason):
 
 
 def test_channels_stay_lit_together(light):
-    # Watch the rig: the strip and the array should both stay lit for the hold.
+    # The assert only sees acknowledged commands. Watch both stay lit, the 940 nm
+    # array through a camera without an IR-cut filter (it's invisible to the eye).
     light.set_level("white", LEVEL)
     light.set_level("940nm", LEVEL)
     time.sleep(WATCH_S)

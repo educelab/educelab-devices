@@ -526,9 +526,13 @@ check an install.
 
 Subclass the role ABCs your hardware offers. The public methods are already written: they
 take the lock, check the device is open, and validate arguments against what you declare
-(`channels`, `concurrency`, `axes`, `ports`, `Setting` ranges). They then call protected hooks that you
+(`channels`, `axes`, `ports`, `Setting` ranges). They then call protected hooks that you
 implement (`_open`, `_close`, `_set_level`, `_move_to`, and so on). Device-specific rules
 (a wavelength table, an alarm state) go in your hooks.
+
+A light's `concurrency` describes what the hardware does; the base class never turns other
+channels off for you. Declare `EXCLUSIVE` only when lighting one channel already turns the
+others off, and the base then records them as 0.
 
 - If your driver records `stop()` requests (as a flag or event), clear them in
   `_motion_starting()`, which every move, homing, and jog calls first under the lock.

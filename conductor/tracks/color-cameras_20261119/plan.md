@@ -23,6 +23,16 @@ Fakes first: every backend's fake gains a CM3-U3-31S4C with the formats, nodes, 
 - RGB8 keeps the black-level pedestal (minimum 22) and applies the same white balance as the raw frame; no color matrix shows (Saturation 100 is identity here; Gamma and Hue off).
 - Sharpening on and off differ by about the noise (r 0.9997, residual 1–2) in this dim, high-gain scene; not settled.
 - YCbCr8_CbYCr and YCbCr422_8_CbYCrY are BT.601 limited-range (Y 16–235) encodings of the same RGB: a = 1.00–1.003, b within ±0.7. Full-range conversion is off by ×1.165. OpenCV's `COLOR_YUV2RGB_UYVY` converts YCbCr422 directly.
+- That match holds only with the camera's processing at identity, as this camera was: SaturationEnabled on at 100 (or off), GammaEnabled off (or on at Gamma 1.0), HueEnabled off (or Hue 0), LUTEnable off, defect correction off. There is no color matrix node. Taking each away from identity in turn (probe 4, same scene and fixed settings), RGB8 against the host demosaic:
+  - Saturation 200 doubles chroma (camera/host 1.94); Saturation 0 gives grey (0.004).
+  - Gamma 0.5: mean difference 39.8 counts, offset −38. Gamma is writable only while GammaEnabled is on.
+  - Hue 30: chroma rotates (mean difference 2.1 against 1.5 at identity). Hue is writable only while HueEnabled is on.
+  - Sharpness manual 4095 doubles the per-channel residual (2.6 against 1.2); manual 0 and SharpnessEnabled off are within noise of auto (which read 880–1109), so auto sharpening is mild.
+  - BayerRG8 moved by no more than the noise (1.75–1.79 counts) under every setting: processing never reaches Bayer output.
+  - Quirk: SaturationEnabled off and back on left Saturation at 85.94 (raw 880 of 1024), not the 100 it had. Restored by writing Saturation.
+  - The LUT (`LUTSelector` Luminance, Red, Green, Blue; 9-bit in and out) wasn't tried: it needs table writes.
+  - Everything restored after: SharpnessAuto Continuous, Saturation 100, gamma and hue off.
+- So a camera left by another program (e.g. SpinView) with saturation, gamma, hue or a LUT set gives processed colors in RGB8 and YCbCr that no longer match a demosaic of its raw frames, and the driver neither shows nor resets them (follow-up issue on processing controls).
 - Decision (maintainer): previews stay in the capture's pixel format and `PreviewFrame` doesn't change; the guide recommends that apps wanting color previews select RGB8 or YCbCr422 for previewing. Task 3.1 is dropped; `color_filter` stays in frame metadata only.
 
 ## Phase 1: Color CM3 Fakes

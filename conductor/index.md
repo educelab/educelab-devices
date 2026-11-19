@@ -27,6 +27,7 @@ Project-level context outside this directory:
 - [Second Roles and Stage Helpers](./tracks/stages-second-roles_20261104/index.md) — pending
 - [XLC2 Unit ID and Probing](./tracks/xlc2-unit-id_20261117/index.md) — pending
 - [Camera Lens Information](./tracks/camera-lens-info_20261118/index.md) — pending
+- [Color GenICam Cameras](./tracks/color-cameras_20261119/index.md) — in progress
 
 ## Completed Tracks
 

@@ -44,6 +44,7 @@ Planned tracks, in order. All are registered in [tracks.md](./tracks.md).
 | 15 | Second roles and stage helpers | One open rule for the halo and the focus drive; typed Foldio transport; Axis offset and clamp helpers |
 | 16 | XLC2 unit ID and probing | EEPROM unit ID in the 2.1.0 handshake; `discover()` by bridge VID:PID; `XLC2.probe()`; exclusive serial open. From issue #37, for `pgs-scan` per-rig device lists. Before track 14 |
 | 17 | Camera lens information | Focal length and lens info on the `Camera` base, `None` when the camera can't report it. Stub from issue #40; design questions settled at start |
+| 18 | Color GenICam cameras | Every format a color camera offers (Bayer, RGB8, 12-bit packed, YCbCr 4:4:4 and 4:2:2), `color_filter` in frame metadata, white balance settings; CM3-U3-31S4C first |
 
 ## Out of scope
 

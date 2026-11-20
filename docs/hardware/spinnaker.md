@@ -354,9 +354,14 @@ whole image's at that maximum.
   about 0.55. Saturated pixels read 4094. The 12-bit packed Bayer formats
   (`Bayer{RG,GB,GR,BG}12Packed` and `...12p`) go through the same unpackers; no camera
   checked offers them.
-- **`Mono16` holds 12 bits at the top:** the low 4 bits are always 0 and saturated pixels
-  read 65504, as on the 50S5M. `BayerRG16` reaches 65535 with odd values, so it keeps
-  `full_scale` 65535.
+- **`Mono16` is the 12-bit image times 16:** the low 4 bits are always 0 and saturated
+  pixels read 65504 (4094 × 16), as on the 50S5M. Shifted right by 4 it matches
+  `Mono12p` and `Mono12Packed` of the same scene to within frame-to-frame noise (above),
+  so it carries nothing more, yet costs more: 31.0 frames/s at 195.3 MB/s against 36.6 at
+  172.9. Prefer a 12-bit format unless something downstream needs 16-bit words. Whether
+  the camera's values are identical pixel for pixel, rather than equal within noise,
+  isn't shown. `BayerRG16` reaches 65535 with odd values, so it isn't just 12 bits
+  shifted; it keeps `full_scale` 65535.
 - **YCbCr frames keep the camera's bytes:** `YCbCr8_CbYCr` is Cb, Y, Cr per pixel (like
   GStreamer's `IYU2`), and `YCbCr422_8_CbYCrY` is Cb Y Cr Y over each pixel pair (FFmpeg's
   `uyvy422`, OpenCV's `UYVY`): channel 1 is Y, and channel 0 alternates Cb and Cr. Both are

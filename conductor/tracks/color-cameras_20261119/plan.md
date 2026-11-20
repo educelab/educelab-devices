@@ -74,9 +74,9 @@ Fakes first: every backend's fake gains a CM3-U3-31S4C with the formats, nodes, 
 ### Tasks
 
 - [-] Task 3.1 (dropped, see Probe 3): **Approval needed:** adding `color_filter` to `PreviewFrame` (`cameras/base.py`). Confirm the name and type (`str | None`) with the maintainer before changing it.
-- [~] Task 3.2 (metadata done; `PreviewFrame` waits on 3.1): Tests, then the core reads `PixelColorFilter` at open, falling back to the Bayer format name, or `None`. The value goes in `frame.metadata["color_filter"]` and in `PreviewFrame.color_filter`.
-- [~] Task 3.3 (metadata and formats done; preview waits on 3.1): Tests, then `SimulatedCamera(color=True)` reports `color_filter="BayerRG"` and offers `BayerRG8` and `BayerRG16` (mosaicked from its RGB image), still opening in `RGB8`. Mono simulated cameras and gphoto2 report `None`.
-- [~] Task 3.4 (frames done; preview frames wait on 3.1): Contract tests: a camera reports `color_filter` in every frame's metadata and every preview frame, and a Bayer format's name agrees with it.
+- [x] Task 3.2 (frame metadata only; the `PreviewFrame` half went with 3.1): Tests, then the core reads `PixelColorFilter` at open, falling back to the Bayer format name, or `None`. The value goes in `frame.metadata["color_filter"]` and in `PreviewFrame.color_filter`.
+- [x] Task 3.3 (frame metadata only; the preview half went with 3.1): Tests, then `SimulatedCamera(color=True)` reports `color_filter="BayerRG"` and offers `BayerRG8` and `BayerRG16` (mosaicked from its RGB image), still opening in `RGB8`. Mono simulated cameras and gphoto2 report `None`.
+- [x] Task 3.4 (frames only; the preview half went with 3.1): Contract tests: a camera reports `color_filter` in every frame's metadata and every preview frame, and a Bayer format's name agrees with it.
 
 ### Notes
 
@@ -88,7 +88,7 @@ Fakes first: every backend's fake gains a CM3-U3-31S4C with the formats, nodes, 
 
 ### Verification
 
-- [~] Full suite, for what's done.
+- [x] Full suite.
 
 ## Phase 4: White Balance
 
@@ -145,13 +145,13 @@ Owed on the CM3-U3-31S4C (serial 19299005), with a lit scene, run from `venv/`:
 - [x] Task 6.1: Every format through `el-devices spinnaker` and `el-devices genicam --backend aravis|gentl`. Record shape, dtype, the maximum read at saturation, and frame rate and MB/s.
 - [x] Task 6.2: Check the 12-bit unpacking against `Mono16` frames of the same scene, as `Mono10g40IDS` was checked: the values should agree after shifting.
 - [x] Task 6.3: White balance: set ratios with auto `Off` and check each channel moves as expected in `BayerRG8`, `RGB8`, and `YCbCr422`. Check the metadata, and that the settings disappear in `Mono8`.
-- [~] Task 6.4 (captures done): `color_filter` in captures and previews, including a cropped preview.
+- [x] Task 6.4 (captures; previews dropped with 3.1): `color_filter` in captures and previews, including a cropped preview.
 - [x] Task 6.5: `pytest -m hardware` for the Spinnaker, Aravis, and GenTL suites. Watch `link_recoveries`, and file an issue if it keeps rising.
-- [ ] Task 6.6: Record everything in `spinnaker.md` and `usb3-vision.md` (Manual check and Hardware runs sections). Leave the camera in `BayerRG8` with auto modes `Continuous`.
+- [x] Task 6.6: Record everything in `spinnaker.md` and `usb3-vision.md` (Manual check and Hardware runs sections). Leave the camera in `BayerRG8` with auto modes `Continuous`.
 
 ### Verification
 
-- [ ] Results are recorded in the hardware docs.
+- [x] Results are recorded in the hardware docs.
 
 ### Results (2026-11-19, rig Mac, room scene; static for the runs below)
 
@@ -165,13 +165,13 @@ The maintainer warned the scene moved during the first runs; only the runs after
 - **`link_recoveries`** (scene-independent) rises by one per open and close through Spinnaker or Spinnaker's GenTL producer, rarely through Aravis, and never while streaming (300 captures over three format changes: none). It read 138 at the end of the runs.
 - **Cost of recording white balance** (scene-independent): reading the ratios takes about 1.2 ms each; recording took 4.9 ms per capture on Spinnaker and GenTL and 6.8 ms on Aravis. Cached while auto is `Off`: 0.8 and 1.2 ms. Under `Continuous` it stays at 5–7 ms.
 
-Still owed: 6.4 in previews (after Task 3.1), and 6.6 (writing this into the hardware docs, in Phase 5).
+Written into `spinnaker.md` and `usb3-vision.md` in Phase 5.
 
 ## Final Verification
 
-- [ ] All acceptance criteria met
-- [ ] Tests passing on CI (Ruff, pytest matrix)
-- [ ] Documentation updated
+- [x] All acceptance criteria met (two revised; see spec)
+- [ ] Tests passing on CI (Ruff, pytest matrix). Locally: Ruff clean; pytest 3359 passed, with the 3 real-PySpin name checks that fail on `main` too; mypy's 4 errors are `main`'s.
+- [x] Documentation updated
 - [ ] Ready for review
 
 ---

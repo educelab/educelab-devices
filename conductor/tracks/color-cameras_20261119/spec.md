@@ -28,33 +28,33 @@ As a lab developer building an acquisition app (e.g. `pgs-scan` on a color rig),
 ## Acceptance Criteria
 
 **Formats**
-- [ ] Every format the CM3-U3-31S4C offers, except `YCbCr411_8_CbYYCrYY`, is in `pixel_format`'s choices and captures through Spinnaker, Aravis, and GenTL. The camera keeps any supported format it opened in.
-- [ ] `Mono12Packed` and `Mono12p` unpack to `uint16`, with the 12 bits in the low end and `bit_depth` 12. The 12-bit packed Bayer formats (`Bayer{RG,GB,GR,BG}12Packed` and `...12p`) unpack the same way. Each packing layout is checked against the real camera.
-- [ ] YCbCr frames keep the camera's layout, as in common libraries:
+- [x] Every format the CM3-U3-31S4C offers, except `YCbCr411_8_CbYYCrYY`, is in `pixel_format`'s choices and captures through Spinnaker, Aravis, and GenTL. The camera keeps any supported format it opened in.
+- [x] `Mono12Packed` and `Mono12p` unpack to `uint16`, with the 12 bits in the low end and `bit_depth` 12. The 12-bit packed Bayer formats (`Bayer{RG,GB,GR,BG}12Packed` and `...12p`) unpack the same way. Each packing layout is checked against the real camera. (The Mono layouts were; the CM3-U3-31S4C offers no 12-bit Bayer format, so those share the checked unpackers unverified on hardware.)
+- [x] YCbCr frames keep the camera's layout, as in common libraries:
   - `YCbCr8_CbYCr` is `(H, W, 3)` in Cb, Y, Cr order, like GStreamer's `IYU2`.
   - `YCbCr422_8_CbYCrY` is `(H, W, 2)`, like FFmpeg's `uyvy422` and OpenCV's `UYVY`.
-- [ ] The PFNC codes of every new format are mapped, for Aravis and GenTL.
+- [x] The PFNC codes of every new format are mapped, for Aravis and GenTL.
 
 **Bayer pattern**
-- [ ] `frame.metadata["color_filter"]` and `PreviewFrame.color_filter` give the sensor's mosaic, e.g. `"BayerRG"`, from `PixelColorFilter`, falling back to the Bayer format's name. It is `None` on a mono sensor or one that can't say.
+- [x] `frame.metadata["color_filter"]` (revised: not `PreviewFrame.color_filter`; previews stay in the capture's format, and `docs/preview.md` recommends `RGB8` or YCbCr for color previews, per the maintainer, 2026-11-19) gives the sensor's mosaic, e.g. `"BayerRG"`, from `PixelColorFilter`, falling back to the Bayer format's name. It is `None` on a mono sensor or one that can't say.
 
 **White balance**
-- [ ] On cameras that have the nodes, `BalanceWhiteAuto` (`Off` or `Continuous`; `Once` is left out) and `balance_ratio_red` and `balance_ratio_blue` (through `BalanceRatioSelector`) are settings. The ratios are read-only unless auto is `Off`. Reading or writing a ratio leaves the selector as it found it. Cameras without the nodes, or in a format without them, don't list the settings.
-- [ ] Frame metadata records the white balance mode and ratios when the camera has them.
+- [x] On cameras that have the nodes, `BalanceWhiteAuto` (`Off` or `Continuous`; `Once` is left out) and `balance_ratio_red` and `balance_ratio_blue` (through `BalanceRatioSelector`) are settings. The ratios are read-only unless auto is `Off`. Reading or writing a ratio leaves the selector as it found it. Cameras without the nodes, or in a format without them, don't list the settings.
+- [x] Frame metadata records the white balance mode and ratios when the camera has them.
 
 **Saturation**
-- [ ] `full_scale` for the CM3-U3-31S4C's `Mono16` is 65504. `BayerRG16` stays at 65535 unless the hardware run says otherwise.
+- [x] `full_scale` for the CM3-U3-31S4C's `Mono16` is 65504. `BayerRG16` stays at 65535 unless the hardware run says otherwise.
 
 **Simulation and contracts**
-- [ ] `SimulatedCamera(color=True)` keeps opening in `RGB8`, also offers `BayerRG8` and `BayerRG16`, reports `color_filter`, and offers white balance. It passes the same contract tests as the driver fakes, which gain a fake CM3-U3-31S4C on each backend.
+- [x] `SimulatedCamera(color=True)` keeps opening in `RGB8`, also offers `BayerRG8` and `BayerRG16`, reports `color_filter`, and offers white balance. It passes the same contract tests as the driver fakes, which gain a fake CM3-U3-31S4C on each backend.
 
 **Docs**
-- [ ] `docs/hardware/spinnaker.md` gets a CM3-U3-31S4C section with the probe and hardware run results. Its settings table gains white balance, the `SharpnessEnabled` row and the "RGB8 if offered" claims are corrected, and the new formats are listed.
-- [ ] `docs/guide.md` covers `color_filter`, the new formats' layouts, white balance, and the corrected simulated-camera note.
-- [ ] `docs/hardware/usb3-vision.md` notes the per-format throughput maximum and RGB8's 3 bytes per pixel.
+- [x] `docs/hardware/spinnaker.md` gets a CM3-U3-31S4C section with the probe and hardware run results. Its settings table gains white balance, the `SharpnessEnabled` row and the "RGB8 if offered" claims are corrected, and the new formats are listed.
+- [x] `docs/guide.md` covers `color_filter`, the new formats' layouts, white balance, and the corrected simulated-camera note.
+- [x] `docs/hardware/usb3-vision.md` notes the per-format throughput maximum and RGB8's 3 bytes per pixel.
 
 **Hardware**
-- [ ] On the CM3-U3-31S4C, the hardware tests and `el-devices spinnaker` and `el-devices genicam --backend aravis|gentl` pass in every format, and white balance is checked against a lit scene.
+- [x] On the CM3-U3-31S4C, the hardware tests and `el-devices spinnaker` and `el-devices genicam --backend aravis|gentl` pass in every format, and white balance is checked against a lit scene.
 
 ## Dependencies
 

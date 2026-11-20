@@ -10,8 +10,8 @@
 
 ## Progress
 
-- Phases: 0/6 complete
-- Tasks: 0/26 complete
+- Phases: 6/6 complete
+- Tasks: 28/29 complete (1 dropped)
 
 ## Quick Links
 

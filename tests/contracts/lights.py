@@ -2,7 +2,7 @@ import pytest
 
 from contracts.device import DeviceContract
 from educelab.devices.errors import NotConnected
-from educelab.devices.lights import ChannelKind
+from educelab.devices.lights import ChannelConcurrency, ChannelKind
 
 
 class LightContract(DeviceContract):
@@ -63,7 +63,45 @@ class LightContract(DeviceContract):
             else:
                 assert device.level(channel.id) == 0.0
 
+    def test_concurrency_is_declared(self, device):
+        assert isinstance(device.concurrency, ChannelConcurrency)
+
+    def test_exclusive_light_turns_the_previous_channel_off(self, device):
+        a, b = _two_channels(device, ChannelConcurrency.EXCLUSIVE)
+        device.set_level(a.id, 1.0)
+        device.set_level(b.id, 1.0)
+        assert not _is_lit(device, a)
+        assert _is_lit(device, b)
+
+    def test_exclusive_light_keeps_lit_channel_when_another_is_zeroed(self, device):
+        a, b = _two_channels(device, ChannelConcurrency.EXCLUSIVE)
+        device.set_level(a.id, 1.0)
+        device.set_level(b.id, 0.0)
+        assert _is_lit(device, a)
+        assert not _is_lit(device, b)
+
+    def test_independent_light_keeps_channels_lit_together(self, device):
+        a, b = _two_channels(device, ChannelConcurrency.INDEPENDENT)
+        device.set_level(a.id, 1.0)
+        device.set_level(b.id, 1.0)
+        assert _is_lit(device, a)
+        assert _is_lit(device, b)
+
     def test_closed_light_raises_not_connected(self, make_device):
         light = make_device()
         with pytest.raises(NotConnected):
             light.all_off()
+
+
+def _two_channels(device, concurrency):
+    if device.concurrency is not concurrency:
+        pytest.skip(f"light is {device.concurrency}")
+    if len(device.channels) < 2:
+        pytest.skip("light has one channel")
+    return device.channels[0], device.channels[1]
+
+
+def _is_lit(device, channel) -> bool:
+    if channel.kind is ChannelKind.RGB:
+        return any(device.color(channel.id))
+    return bool(device.level(channel.id))

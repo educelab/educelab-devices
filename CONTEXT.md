@@ -55,7 +55,11 @@ A role that emits illumination through one or more channels.
 _Avoid_: Light controller, LED board
 
 **Channel**:
-One independently addressable emitter of a light, identified by a string ID and described by its kind (monochromatic or RGB) and, optionally, its wavelength. A channel's level is a fraction from 0 (off) to 1 (full).
+One independently addressable emitter of a light, identified by a string ID and described by its kind (monochromatic or RGB) and, optionally, its wavelength. A channel's level is a fraction from 0 (off) to 1 (full). One channel may drive several physical LED groups.
+_Avoid_: Band (except for a MISHA panel's spectral bands)
+
+**Exclusive light**:
+A light that can light only one channel at a time; lighting one turns off the others. Every other light is independent.
 
 **Stage**:
 A role that positions something along one or more axes.

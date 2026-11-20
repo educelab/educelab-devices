@@ -9,6 +9,7 @@ Channels are lit at 25%; the 940 nm array is invisible to the eye.
 """
 
 import os
+import time
 
 import pytest
 
@@ -19,6 +20,7 @@ from educelab.devices.lights.xlc import XLC2
 pytestmark = pytest.mark.hardware
 
 LEVEL = 0.25
+WATCH_S = 3.0
 
 
 @pytest.fixture(scope="module")
@@ -73,6 +75,15 @@ def test_each_channel_is_acknowledged(light, channel):
 def test_bad_commands_are_rejected(light, fields, reason):
     with pytest.raises(CommandRejected, match=reason):
         light._command(*fields)
+
+
+def test_channels_stay_lit_together(light):
+    # The assert only sees acknowledged commands. Watch both stay lit, the 940 nm
+    # array through a camera without an IR-cut filter (it's invisible to the eye).
+    light.set_level("white", LEVEL)
+    light.set_level("940nm", LEVEL)
+    time.sleep(WATCH_S)
+    assert (light.level("white"), light.level("940nm")) == (LEVEL, LEVEL)
 
 
 def test_all_off_is_acknowledged(light):

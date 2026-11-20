@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 
 from educelab.devices import DeviceInfo
-from educelab.devices.lights import RGB, Channel, Light
+from educelab.devices.lights import RGB, Channel, ChannelConcurrency, Light
 from educelab.devices.settings import Setting
 from educelab.devices.stages import Axis, AxisKind, Stage
 
@@ -11,6 +11,7 @@ from educelab.devices.stages import Axis, AxisKind, Stage
 class Turntable(Stage, Light):
     can_home = True
     requires_homing = True
+    concurrency = ChannelConcurrency.INDEPENDENT
 
     def __init__(self) -> None:
         super().__init__()

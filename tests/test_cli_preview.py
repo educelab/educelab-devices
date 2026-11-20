@@ -1,3 +1,4 @@
+import dataclasses
 import sys
 import time
 from collections import deque
@@ -32,6 +33,7 @@ class FakeOpenCV:
         self.script = deque(script)
         self.shown = []
         self.decoded = []
+        self.texts = []
         self.mouse = None
 
     def namedWindow(self, title, flags):
@@ -57,8 +59,8 @@ class FakeOpenCV:
             return None
         return np.zeros((300, 450, 3), np.uint8)
 
-    def putText(self, *args):
-        pass
+    def putText(self, image, text, *args):
+        self.texts.append(text)
 
     def rectangle(self, *args):
         pass
@@ -417,6 +419,26 @@ def test_the_simulated_camera_shows_a_chart_whose_focus_keys_move(monkeypatch):
     step = preview.FOCUS_KEY_STEPS
     assert focus.moves == [step, step, -step]
     assert not focus.is_open
+
+
+def test_the_overlay_says_a_ycbcr_frame_shows_only_y(opencv):
+    camera = SimulatedCamera()
+    frame = camera.preview_frame
+    camera.preview_frame = lambda *a, **k: dataclasses.replace(
+        frame(*a, **k),
+        pixels=np.zeros((*frame(*a, **k).pixels.shape, 2), np.uint8),
+        pixel_format="YCbCr422_8_CbYCrY",
+    )
+    fake = opencv(None, None, "q", camera=camera)
+    assert main(["preview", "simulated", "--window", "200"]) == 0
+    assert any("YCbCr422_8_CbYCrY (Y only)" in text for text in fake.texts)
+
+
+def test_the_overlay_names_other_formats_plainly(opencv):
+    fake = opencv(None, "q", camera=SimulatedCamera())
+    assert main(["preview", "simulated", "--window", "200"]) == 0
+    assert any(" Mono8, " in text for text in fake.texts)
+    assert not any("only" in text for text in fake.texts)
 
 
 def test_ycbcr_frames_show_their_luma():

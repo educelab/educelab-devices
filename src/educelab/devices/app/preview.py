@@ -173,6 +173,14 @@ def shown_pixels(pixels: "npt.NDArray[Any]", pixel_format: str) -> "npt.NDArray[
     return pixels[..., 1] if pixel_format.startswith("YCbCr") else pixels
 
 
+def shown_format(pixel_format: str) -> str:
+    """The pixel format's name for the overlay, saying when the window shows
+    only part of it."""
+    return (
+        f"{pixel_format} (Y only)" if pixel_format.startswith("YCbCr") else pixel_format
+    )
+
+
 def run(args: argparse.Namespace) -> int:
     cv2 = import_optional("cv2", extra="viewer")
     view = View()
@@ -221,7 +229,7 @@ def run(args: argparse.Namespace) -> int:
                         f"{camera!r}",
                         f"region x {shown.x:.3f} y {shown.y:.3f} "
                         f"w {shown.width:.3f} h {shown.height:.3f}",
-                        f"{width}x{height} {frame.pixel_format}, "
+                        f"{width}x{height} {shown_format(frame.pixel_format)}, "
                         f"{_percent(frame.geometry.scale)}"
                         f"{feed.rate:.1f} frames/s, last change {feed.took:.2f} s",
                     )
@@ -544,7 +552,7 @@ def _capture(
         pixels = shown_pixels(frame.pixels, frame.pixel_format)
         image = _fit(cv2, eight_bit(pixels, full), window, limit)
         height, width = frame.pixels.shape[:2]
-        what = f"captured {width}x{height} {frame.pixel_format}"
+        what = f"captured {width}x{height} {shown_format(frame.pixel_format)}"
     else:
         assert isinstance(camera, FileCamera)
         files = camera.capture_files()

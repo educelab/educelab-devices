@@ -184,7 +184,7 @@ frame = camera.capture_frame()
 - **Compare them in `el-devices preview`:** `f` and `F` step through the camera's
   pixel formats while it previews, and the overlay names the one showing. A change
   during preview keeps the region and takes 0.15–0.21 s to the first new frame on the
-  CM3-U3-31S4C. The viewer shows YCbCr as its Y channel and Bayer as mono.
+  CM3-U3-31S4C. The viewer shows what the camera sends: `RGB8` in color, Bayer as its raw mosaic in grey, and YCbCr as its Y channel only, which the overlay marks "(Y only)".
 - **To see exactly what the sensor delivers,** keep the Bayer format and demosaic it
   yourself: `cv2.COLOR_BayerBG2RGB` for the camera's `BayerRG` (OpenCV names a pattern
   by its second row).

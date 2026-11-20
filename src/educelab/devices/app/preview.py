@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from educelab.devices.app import _macos
 from educelab.devices.app._preview import positive_int
-from educelab.devices.errors import FocusLimitReached, import_optional
+from educelab.devices.errors import DeviceError, FocusLimitReached, import_optional
 
 if TYPE_CHECKING:
     import numpy as np
@@ -46,6 +46,7 @@ controls, with the window focused:
   drag, or w a s d     move the region
   r                    back to the whole sensor
   c                    stop, capture, and resume the preview
+  f and F              next and previous pixel format
   [ and ]              simulated: move the focus nearer or farther
   q or Esc             quit
 
@@ -165,6 +166,21 @@ def eight_bit(pixels: "npt.NDArray[Any]", full_scale: int) -> "npt.NDArray[np.ui
     return (pixels >> max(full_scale.bit_length() - 8, 0)).astype(np.uint8)
 
 
+def shown_pixels(pixels: "npt.NDArray[Any]", pixel_format: str) -> "npt.NDArray[Any]":
+    """What the window shows of a frame: YCbCr frames' Y as grayscale, since
+    the viewer doesn't convert color. Y is the second byte of each pixel in
+    both YCbCr layouts the driver offers."""
+    return pixels[..., 1] if pixel_format.startswith("YCbCr") else pixels
+
+
+def shown_format(pixel_format: str) -> str:
+    """The pixel format's name for the overlay, saying when the window shows
+    only part of it."""
+    return (
+        f"{pixel_format} (Y only)" if pixel_format.startswith("YCbCr") else pixel_format
+    )
+
+
 def run(args: argparse.Namespace) -> int:
     cv2 = import_optional("cv2", extra="viewer")
     view = View()
@@ -200,7 +216,10 @@ def run(args: argparse.Namespace) -> int:
                 if drawn[:1] != (frame,):
                     shown = frame.geometry.region
                     view.shown = (shown.x, shown.y, shown.width, shown.height)
-                    pixels = eight_bit(frame.pixels, frame.full_scale)
+                    pixels = eight_bit(
+                        shown_pixels(frame.pixels, frame.pixel_format),
+                        frame.full_scale,
+                    )
                     labelled = _fit(cv2, pixels, args.window, limit)
                     view.size = (labelled.shape[1], labelled.shape[0])
                     height, width = frame.pixels.shape[:2]
@@ -210,7 +229,7 @@ def run(args: argparse.Namespace) -> int:
                         f"{camera!r}",
                         f"region x {shown.x:.3f} y {shown.y:.3f} "
                         f"w {shown.width:.3f} h {shown.height:.3f}",
-                        f"{width}x{height} {frame.pixel_format}, "
+                        f"{width}x{height} {shown_format(frame.pixel_format)}, "
                         f"{_percent(frame.geometry.scale)}"
                         f"{feed.rate:.1f} frames/s, last change {feed.took:.2f} s",
                     )
@@ -243,6 +262,12 @@ def run(args: argparse.Namespace) -> int:
                     _capture(cv2, camera, args.window, limit)
                     camera.start_preview(view.request(), min_size=args.window)
                     feed.resume()
+                elif key in (ord("f"), ord("F")):
+                    feed.pause()
+                    try:
+                        _next_format(camera, 1 if key == ord("f") else -1)
+                    finally:
+                        feed.resume()
                 elif key in (ord("["), ord("]")) and focus is not None:
                     step = FOCUS_KEY_STEPS if key == ord("]") else -FOCUS_KEY_STEPS
                     try:
@@ -256,6 +281,26 @@ def run(args: argparse.Namespace) -> int:
         focus.close()
     cv2.destroyAllWindows()
     return 0
+
+
+def _next_format(camera: "Camera", step: int) -> None:
+    """Switch to the pixel format ``step`` places on in the camera's choices,
+    saying what happened. A refused change leaves the preview as it was."""
+    from educelab.devices.cameras import PIXEL_FORMAT
+
+    setting = camera.settings().get(PIXEL_FORMAT)
+    choices = list(setting.choices or ()) if setting is not None else []
+    if setting is None or setting.read_only or len(choices) < 2:
+        print(f"{camera!r} offers no other pixel format")
+        return
+    at = choices.index(setting.value) if setting.value in choices else -step
+    chosen = choices[(at + step) % len(choices)]
+    try:
+        camera.set_setting(PIXEL_FORMAT, chosen)
+    except DeviceError as exc:
+        print(f"pixel format {chosen} refused: {exc}")
+        return
+    print(f"pixel format {chosen}")
 
 
 class _Feed:
@@ -504,9 +549,10 @@ def _capture(
         full = int(
             frame.metadata.get("full_scale", 2 ** (8 * frame.pixels.itemsize) - 1)
         )
-        image = _fit(cv2, eight_bit(frame.pixels, full), window, limit)
+        pixels = shown_pixels(frame.pixels, frame.pixel_format)
+        image = _fit(cv2, eight_bit(pixels, full), window, limit)
         height, width = frame.pixels.shape[:2]
-        what = f"captured {width}x{height} {frame.pixel_format}"
+        what = f"captured {width}x{height} {shown_format(frame.pixel_format)}"
     else:
         assert isinstance(camera, FileCamera)
         files = camera.capture_files()

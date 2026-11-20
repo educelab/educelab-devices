@@ -16,12 +16,15 @@ from typing import Any, Self, TypeVar
 import numpy.typing as npt
 
 from educelab.devices.cameras._genicam import (
+    _PACKED_12,
     RETRIES_BEFORE_REMEASURE,
     THROUGHPUT_LIMIT,
     TIMESTAMP_SAMPLES,
     TRIGGER,
     BufferStatus,
     GenICamCamera,
+    pfnc_name,
+    shaped_pixels,
 )
 from educelab.devices.device import DeviceInfo
 from educelab.devices.errors import (
@@ -45,6 +48,10 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
+
+# Formats whose images GetNDArray() refuses as "not supported" (verified with
+# Spinnaker 4.4 on the CM3-U3-31S4C), so they're shaped from the raw bytes.
+_RAW_FORMATS = _PACKED_12 | {"YCbCr422_8_CbYCrY"}
 
 BACKEND = "spinnaker"
 
@@ -618,10 +625,18 @@ class _PySpinBuffer:
         return None
 
     def pixel_format(self) -> str:
-        return str(self._read(lambda i: i.GetPixelFormatName()))
+        # The code the camera sent: GetPixelFormatName() gives older names for
+        # some formats, e.g. "YUV422Packed" (spinnaker.md, Pixel formats).
+        return pfnc_name(int(self._read(lambda i: i.GetTLPixelFormat())))
 
     def pixels(self) -> npt.NDArray[Any]:
-        return self._read(lambda i: i.GetNDArray().copy())
+        fmt = self.pixel_format()
+        if fmt not in _RAW_FORMATS:
+            return self._read(lambda i: i.GetNDArray().copy())
+        data, width, height = self._read(
+            lambda i: (i.GetData(), i.GetWidth(), i.GetHeight())
+        )
+        return shaped_pixels(data, fmt, width, height)
 
     def release(self) -> None:
         self._read(lambda i: i.Release())

@@ -8,6 +8,7 @@ import pytest
 from educelab.devices.app.cli import main
 from educelab.devices.cameras import spinnaker
 from educelab.devices.cameras._genicam import BufferStatus
+from fakes.genicam import cm3_31s4c
 from fakes.pyspin import FakePySpin, FrameSpec, flir_camera
 
 MONO = "20000001"
@@ -282,3 +283,29 @@ def test_saved_color_frames_are_rgb(pyspin, tmp_path):
     main(["spinnaker", *args, "--save-missing-trailer", str(tmp_path)])
     pixels = read_png(tmp_path / f"{COLOR}-missing-trailer-0000.png")
     assert pixels.shape[2] == 3
+
+
+@pytest.mark.parametrize(
+    ("fmt", "shape", "bits"),
+    [
+        ("Mono12p", (12, 16), 12),
+        ("Mono12Packed", (12, 16), 12),
+        # YCbCr frames are saved raw, a row of each pixel's bytes, as Bayer is.
+        ("YCbCr422_8_CbYCrY", (12, 32), 8),
+        ("YCbCr8_CbYCr", (12, 48), 8),
+    ],
+)
+def test_saved_12_bit_and_ycbcr_frames(monkeypatch, tmp_path, fmt, shape, bits):
+    sim = cm3_31s4c()
+    sim.queue_frames(FrameSpec(status=BufferStatus.MISSING_TRAILER))
+    monkeypatch.setattr(spinnaker, "load_pyspin", lambda: FakePySpin([sim]))
+    args = ["--serial", sim.serial, "--frames", "1", "--pixel-format", fmt]
+    main(["spinnaker", *args, "--save-missing-trailer", str(tmp_path)])
+    path = tmp_path / f"{sim.serial}-missing-trailer-0000.png"
+    pixels = read_png(path)
+    assert pixels.shape == shape
+    data = path.read_bytes()
+    assert (b"sBIT" in data) == (bits == 12)
+    if bits == 12:
+        # Shifted up to fill 16 bits: the low 4 bits are empty.
+        assert pixels.any() and not (pixels & 0xF).any()

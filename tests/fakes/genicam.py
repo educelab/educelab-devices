@@ -38,7 +38,9 @@ __all__ = [
     "FakeFrame",
     "FrameSpec",
     "Node",
+    "cm3_31s4c",
     "frame_bytes",
+    "frame_shape",
     "payload_size",
 ]
 
@@ -56,50 +58,142 @@ ENUMS = {
     "TriggerSource": ("Software", "Line0", "Line1", "Line2", "Line3"),
     "DeviceLinkThroughputLimitMode": ("Off", "On"),
     "AcquisitionFrameRateAuto": ("Off", "Continuous"),
+    "BalanceWhiteAuto": ("Off", "Once", "Continuous"),
+    "BalanceRatioSelector": ("Red", "Blue"),
+    "PixelColorFilter": ("None", "BayerRG", "BayerGB", "BayerGR", "BayerBG"),
+    "U3VCurrentSpeed": ("LowSpeed", "FullSpeed", "HighSpeed", "SuperSpeed"),
 }
 
-# (dtype, channels) of each pixel format's array.
+_BAYER = ("RG", "GB", "GR", "BG")
+_PACKED_12 = (
+    "Mono12Packed",
+    "Mono12p",
+    *(f"Bayer{order}12{packing}" for order in _BAYER for packing in ("Packed", "p")),
+)
+
+# (dtype, channels) of each pixel format's array, as the core shapes it.
 LAYOUTS: dict[str, tuple[type[np.unsignedinteger[Any]], int]] = {
     "Mono8": (np.uint8, 1),
     "Mono16": (np.uint16, 1),
     "RGB8": (np.uint8, 3),
-    "BayerRG8": (np.uint8, 1),
-    "BayerRG16": (np.uint16, 1),
-    "Mono12Packed": (np.uint8, 1),
-    # Unpacked here; library fakes pack it as the camera sends it.
+    **{f"Bayer{order}8": (np.uint8, 1) for order in _BAYER},
+    **{f"Bayer{order}16": (np.uint16, 1) for order in _BAYER},
+    # Packed formats are unpacked here; frame_bytes() packs them as the camera
+    # sends them.
+    **dict.fromkeys(_PACKED_12, (np.uint16, 1)),
     "Mono10g40IDS": (np.uint16, 1),
+    "YCbCr8_CbYCr": (np.uint8, 3),
+    "YCbCr422_8_CbYCrY": (np.uint8, 2),
+    # No per-pixel shape (6 bytes per 4 pixels): rows of raw bytes, 1.5 per pixel.
+    "YCbCr411_8_CbYYCrYY": (np.uint8, 1),
 }
 
 
-# PFNC codes of the formats above, for library fakes that report numbers.
+# PFNC codes of the formats above, for library fakes that report numbers. The
+# YCbCr formats carry the codes the CM3-U3-31S4C sends, the PFNC's YUV8_UYV
+# and friends, rather than the YCbCr ones (spinnaker.md).
 PFNC = {
     "Mono8": 0x01080001,
     "Mono16": 0x01100007,
     "RGB8": 0x02180014,
+    "BayerGR8": 0x01080008,
     "BayerRG8": 0x01080009,
+    "BayerGB8": 0x0108000A,
+    "BayerBG8": 0x0108000B,
+    "BayerGR16": 0x0110002E,
     "BayerRG16": 0x0110002F,
+    "BayerGB16": 0x01100030,
+    "BayerBG16": 0x01100031,
     "Mono12Packed": 0x010C0006,
+    "Mono12p": 0x010C0047,
+    "BayerGR12Packed": 0x010C002A,
+    "BayerRG12Packed": 0x010C002B,
+    "BayerGB12Packed": 0x010C002C,
+    "BayerBG12Packed": 0x010C002D,
+    "BayerBG12p": 0x010C0053,
+    "BayerGB12p": 0x010C0055,
+    "BayerGR12p": 0x010C0057,
+    "BayerRG12p": 0x010C0059,
+    "YCbCr411_8_CbYYCrYY": 0x020C001E,
+    "YCbCr422_8_CbYCrY": 0x0210001F,
+    "YCbCr8_CbYCr": 0x02180020,
     "Mono10g40IDS": 0x4000000F,
 }
 
+# The CM3-U3-31S4C's PixelFormat entries, in its order (spinnaker.md).
+CM3_31S4C_FORMATS = (
+    "Mono8",
+    "Mono12Packed",
+    "Mono12p",
+    "Mono16",
+    "BayerRG8",
+    "BayerRG16",
+    "YCbCr411_8_CbYYCrYY",
+    "YCbCr422_8_CbYCrY",
+    "YCbCr8_CbYCr",
+    "RGB8",
+)
+
+
+def frame_shape(pixel_format: str, width: int, height: int) -> tuple[int, ...]:
+    """The shape of a frame's array in `FakeFrame.pixels`."""
+    if pixel_format == "YCbCr411_8_CbYYCrYY":
+        return (height, width * 3 // 2)
+    channels = LAYOUTS[pixel_format][1]
+    return (height, width) if channels == 1 else (height, width, channels)
+
 
 def frame_bytes(pixels: npt.NDArray[Any], pixel_format: str) -> bytes:
-    """A frame's pixels as the camera sends them: packed for Mono10g40IDS."""
-    if pixel_format != "Mono10g40IDS":
-        return pixels.tobytes()
-    groups = pixels.ravel().reshape(-1, 4).astype(np.uint16)
-    upper = (groups >> 2).astype(np.uint8)
-    low = np.zeros(len(groups), dtype=np.uint8)
-    for i in range(4):
-        low |= ((groups[:, i] & 3) << (2 * i)).astype(np.uint8)
-    return np.column_stack([upper, low]).tobytes()
+    """A frame's pixels as the camera sends them, packed where the format is."""
+    if pixel_format == "Mono10g40IDS":
+        groups = pixels.ravel().reshape(-1, 4).astype(np.uint16)
+        upper = (groups >> 2).astype(np.uint8)
+        low = np.zeros(len(groups), dtype=np.uint8)
+        for i in range(4):
+            low |= ((groups[:, i] & 3) << (2 * i)).astype(np.uint8)
+        return np.column_stack([upper, low]).tobytes()
+    if pixel_format in _PACKED_12:
+        pairs = pixels.ravel().reshape(-1, 2).astype(np.uint16)
+        p0, p1 = pairs[:, 0], pairs[:, 1]
+        if pixel_format.endswith("Packed"):
+            # GigE Vision's: the high bytes around a byte of both low nibbles.
+            packed = [p0 >> 4, ((p1 & 0xF) << 4) | (p0 & 0xF), p1 >> 4]
+        else:
+            # The PFNC's "p" packing: LSB first.
+            packed = [p0 & 0xFF, (p0 >> 8) | ((p1 & 0xF) << 4), p1 >> 4]
+        return np.column_stack(packed).astype(np.uint8).tobytes()
+    return pixels.tobytes()
 
 
 def payload_size(sim: "FakeCamera") -> int:
     """Bytes in one frame in the camera's current pixel format."""
     fmt = sim.get("PixelFormat")
-    per_pixel = {"Mono16": 2, "BayerRG16": 2, "RGB8": 3, "Mono10g40IDS": 1.25}
-    return int(sim.width * sim.height * per_pixel.get(fmt, 1))
+    shape = frame_shape(fmt, sim.width, sim.height)
+    return len(frame_bytes(np.zeros(shape, dtype=LAYOUTS[fmt][0]), fmt))
+
+
+def cm3_31s4c(
+    serial: str = "19299005", *, width: int = 16, height: int = 12, **options: Any
+) -> "FakeCamera":
+    """A Chameleon3 CM3-U3-31S4C as the 2026-11-19 probes found it: open in
+    ``BayerRG8``, white balance on ``Continuous``, sharpening only in processed
+    formats (spinnaker.md). Small by default, so frames stay cheap."""
+    options.setdefault("formats", CM3_31S4C_FORMATS)
+    options.setdefault("vendor", "Point Grey Research")
+    options.setdefault("firmware", "1.12.3.00")
+    options.setdefault("usb_speed", "SuperSpeed")
+    options.setdefault("without", ("DeviceLinkSpeed",))
+    options.setdefault("color_filter", "BayerRG")
+    options.setdefault("white_balance", True)
+    options.setdefault(
+        "sharpness", [f for f in CM3_31S4C_FORMATS if not f.startswith("Bayer")]
+    )
+    camera = FakeCamera(
+        serial, "Chameleon3 CM3-U3-31S4C", width=width, height=height, **options
+    )
+    if "BayerRG8" in camera.entries("PixelFormat"):
+        camera.set("PixelFormat", "BayerRG8")
+    return camera
 
 
 class FakeCameraError(Exception):
@@ -124,6 +218,9 @@ class Node:
     access: Access | Callable[[], Access] = "RW"
     action: Callable[[], None] | None = None
     compute: Callable[[], Any] | None = None
+    # A selector node whose entry picks which of ``value``'s entries (a dict)
+    # this node reads and writes, as BalanceRatioSelector does BalanceRatio.
+    selector: str | None = None
 
     def current_access(self) -> Access:
         return self.access() if callable(self.access) else self.access
@@ -224,8 +321,16 @@ class FakeCamera:
         rate_auto: Add the CM3's ``AcquisitionFrameRateAuto``, on, and an
             ``AcquisitionFrameRate`` that is writable while it's off. Implies
             ``rate_caps_exposure``: the frame period is then the set rate's.
-        sharpness: Add the CM3's ``SharpnessEnabled``, on, available only in
-            16-bit pixel formats.
+        sharpness: Add the CM3's ``SharpnessEnabled``, on. True makes it
+            available only in 16-bit pixel formats, as on the CM3-U3-50S5M; a
+            collection names the formats it's available in.
+        color_filter: Add ``PixelColorFilter``, read-only, with this entry in
+            every pixel format.
+        white_balance: Add ``BalanceWhiteAuto`` (on ``Continuous``) and
+            ``BalanceRatio`` behind ``BalanceRatioSelector`` (``Red`` and
+            ``Blue``), as on the CM3-U3-31S4C: the ratios run from 0.25 to 4,
+            are writable only while auto is ``Off``, and every node is
+            unavailable in Mono formats.
     """
 
     # Made-up figures, roughly a USB3 camera; nothing tests them against hardware.
@@ -270,7 +375,9 @@ class FakeCamera:
         limit_shrinks: bool = False,
         rate_caps_exposure: bool = False,
         rate_auto: bool = False,
-        sharpness: bool = False,
+        sharpness: bool | Iterable[str] = False,
+        color_filter: str | None = None,
+        white_balance: bool = False,
     ) -> None:
         self.arrival_latency = arrival_latency
         self.ids_nodes = ids_nodes
@@ -322,6 +429,7 @@ class FakeCamera:
             formats = ["Mono8", "Mono16", "Mono12Packed"]
             if color:
                 formats = ["RGB8", "BayerRG8", "BayerRG16", *formats]
+                formats.append("YCbCr411_8_CbYYCrYY")
         formats = tuple(formats)
         auto_mode = "Continuous" if auto else "Off"
         sensor_width, sensor_height = sensor_size or (width, height)
@@ -496,16 +604,44 @@ class FakeCamera:
             rate = self.MAX_FRAME_RATE
             nodes.append(Node("AcquisitionFrameRate", "float", rate, 0.1, rate))
         if sharpness:
+            sharpened = None if sharpness is True else frozenset(sharpness)
+
+            def sharpness_access() -> Access:
+                fmt = self.get("PixelFormat")
+                on = fmt.endswith("16") if sharpened is None else fmt in sharpened
+                return "RW" if on else "NA"
+
             nodes.append(
-                Node(
-                    "SharpnessEnabled",
-                    "bool",
-                    True,
-                    access=lambda: (
-                        "RW" if self.get("PixelFormat").endswith("16") else "NA"
-                    ),
-                )
+                Node("SharpnessEnabled", "bool", True, access=sharpness_access)
             )
+        if color_filter is not None:
+            nodes.append(enum("PixelColorFilter", color_filter, access="RO"))
+        if white_balance:
+
+            def unless_mono(
+                access: Access | Callable[[], Access],
+            ) -> Callable[[], Access]:
+                def found() -> Access:
+                    if self.get("PixelFormat").startswith("Mono"):
+                        return "NA"
+                    return access() if callable(access) else access
+
+                return found
+
+            nodes += [
+                enum("BalanceWhiteAuto", "Continuous", access=unless_mono("RW")),
+                enum("BalanceRatioSelector", "Red", access=unless_mono("RW")),
+                Node(
+                    "BalanceRatio",
+                    "float",
+                    # Made-up figures; the probe read Red 2.199.
+                    {"Red": 2.0, "Blue": 1.5},
+                    0.25,
+                    4.0,
+                    access=unless_mono(when_off("BalanceWhiteAuto")),
+                    selector="BalanceRatioSelector",
+                ),
+            ]
         if rate_auto:
             rate = self.MAX_FRAME_RATE
             nodes.append(enum("AcquisitionFrameRateAuto", "Continuous"))
@@ -541,10 +677,18 @@ class FakeCamera:
 
     def get(self, name: str) -> Any:
         node = self._node(name)
-        return node.compute() if node.compute else node.value
+        if node.compute:
+            return node.compute()
+        if node.selector is not None:
+            return node.value[self.get(node.selector)]
+        return node.value
 
     def set(self, name: str, value: Any) -> None:
-        self._node(name).value = value
+        node = self._node(name)
+        if node.selector is not None:
+            node.value[self.get(node.selector)] = value
+        else:
+            node.value = value
 
     def range(self, name: str) -> tuple[Any, ...]:
         node = self._node(name)
@@ -631,7 +775,7 @@ class FakeCamera:
         if name == "Gain" and self.ids_nodes:
             step = 2.0 ** (math.floor(math.log2(value)) - 4)
             value = math.floor(value / step) * step
-        node.value = value
+        self.set(name, value)
         self.writes.append((name, value))
         if name == self.exposure_node and self.ids_nodes:
             self._fit_frame_rate(value)
@@ -706,10 +850,8 @@ class FakeCamera:
             timestamp = fresh + round(exposure_us * 1000)
         self.frames_grabbed += 1
         pixel_format = self.get("PixelFormat")
-        dtype, channels = LAYOUTS[pixel_format]
-        shape: tuple[int, ...] = (self.height, self.width)
-        if channels > 1:
-            shape += (channels,)
+        dtype = LAYOUTS[pixel_format][0]
+        shape = frame_shape(pixel_format, self.width, self.height)
         arrival_ns = None
         if self.arrival_latency is not None:
             arrival_ns = round(

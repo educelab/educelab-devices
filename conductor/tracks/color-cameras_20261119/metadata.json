@@ -1,0 +1,19 @@
+{
+  "id": "color-cameras_20261119",
+  "title": "Color GenICam Cameras",
+  "type": "feature",
+  "status": "in_progress",
+  "created": "2026-11-19T00:00:00Z",
+  "updated": "2026-11-19T00:00:00Z",
+  "phases": {
+    "total": 6,
+    "completed": 6
+  },
+  "tasks": {
+    "total": 29,
+    "completed": 28,
+    "dropped": 1
+  },
+  "current_phase": 6,
+  "current_task": null
+}

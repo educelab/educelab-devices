@@ -687,14 +687,16 @@ def test_sensor_size_can_differ_from_the_frame_size():
 
 def test_pixel_formats_are_the_ones_the_driver_can_shape(backend):
     with GenICamCamera(MONO, backend) as mono:
-        assert mono.setting(PIXEL_FORMAT).choices == ("Mono8", "Mono16")
+        assert mono.setting(PIXEL_FORMAT).choices == ("Mono8", "Mono16", "Mono12Packed")
     with GenICamCamera(COLOR, backend) as color:
+        # Not YCbCr411, which has no per-pixel shape.
         assert color.setting(PIXEL_FORMAT).choices == (
             "RGB8",
             "BayerRG8",
             "BayerRG16",
             "Mono8",
             "Mono16",
+            "Mono12Packed",
         )
 
 
@@ -705,7 +707,7 @@ def test_set_pixel_format(camera, fake):
 
 
 def test_open_replaces_a_pixel_format_the_driver_cannot_shape():
-    with GenICamCamera(MONO, only(formats=["Mono12Packed", "Mono8"])) as camera:
+    with GenICamCamera(MONO, only(formats=["YCbCr411_8_CbYYCrYY", "Mono8"])) as camera:
         assert camera.setting(PIXEL_FORMAT).choices == ("Mono8",)
         assert camera.setting(PIXEL_FORMAT).value == "Mono8"
 
@@ -1043,6 +1045,67 @@ def test_mono10g40ids_unpacks_four_pixels_from_five_bytes():
     np.testing.assert_array_equal(pixels, values)
 
 
+# Two pixels, 0xABC and 0x123, in each 12-bit packing (spinnaker.md, Pixel formats).
+GIGE_12 = bytes([0xAB, 0x3C, 0x12])  # high bytes 0 and 2, low nibbles in byte 1
+PFNC_12 = bytes([0xBC, 0x3A, 0x12])  # LSB first
+
+
+@pytest.mark.parametrize(
+    ("pixel_format", "packed"),
+    [
+        ("Mono12Packed", GIGE_12),
+        ("Mono12p", PFNC_12),
+        *((f"Bayer{o}12Packed", GIGE_12) for o in ("RG", "GB", "GR", "BG")),
+        *((f"Bayer{o}12p", PFNC_12) for o in ("RG", "GB", "GR", "BG")),
+    ],
+)
+def test_12_bit_formats_unpack_to_the_low_bits_of_uint16(pixel_format, packed):
+    pixels = _genicam.shaped_pixels(packed * 4, pixel_format, width=4, height=2)
+    assert pixels.dtype == np.uint16
+    np.testing.assert_array_equal(pixels, [[0xABC, 0x123] * 2] * 2)
+    assert _genicam.bit_depth(pixel_format) == 12
+    assert _genicam.full_scale(pixel_format) == 4095
+
+
+def test_ycbcr_keeps_the_cameras_byte_order():
+    data = bytes(range(24))
+    # Cb, Y, Cr per pixel, like GStreamer's IYU2.
+    full = _genicam.shaped_pixels(data, "YCbCr8_CbYCr", width=4, height=2)
+    assert full.shape == (2, 4, 3) and full.dtype == np.uint8
+    np.testing.assert_array_equal(full[0, 1], [3, 4, 5])
+    # Cb Y Cr Y over pixel pairs, like FFmpeg's uyvy422 and OpenCV's UYVY.
+    shared = _genicam.shaped_pixels(data[:16], "YCbCr422_8_CbYCrY", width=4, height=2)
+    assert shared.shape == (2, 4, 2)
+    np.testing.assert_array_equal(shared[0], [[0, 1], [2, 3], [4, 5], [6, 7]])
+    assert _genicam.bit_depth("YCbCr422_8_CbYCrY") == 8
+
+
+@pytest.mark.parametrize(
+    ("code", "name"),
+    [
+        (0x010C0006, "Mono12Packed"),
+        (0x010C0047, "Mono12p"),
+        (0x010C002B, "BayerRG12Packed"),
+        (0x010C0059, "BayerRG12p"),
+        (0x010C0053, "BayerBG12p"),
+        # The CM3-U3-31S4C sends the PFNC's YUV codes for its YCbCr formats
+        # (spinnaker.md); the same bytes under the YCbCr codes map the same way.
+        (0x0210001F, "YCbCr422_8_CbYCrY"),
+        (0x02100043, "YCbCr422_8_CbYCrY"),
+        (0x02180020, "YCbCr8_CbYCr"),
+        (0x0218003A, "YCbCr8_CbYCr"),
+    ],
+)
+def test_pfnc_codes_of_the_color_formats(code, name):
+    assert _genicam.pfnc_name(code) == name
+
+
+def test_ycbcr411_has_no_shape_so_is_not_offered():
+    assert "YCbCr411_8_CbYYCrYY" not in _genicam._PIXEL_FORMATS
+    with pytest.raises(DeviceError, match="unsupported pixel format"):
+        _genicam.pfnc_name(0x020C001E)
+
+
 @pytest.mark.parametrize(
     ("pixel_format", "depth"),
     [
@@ -1051,6 +1114,8 @@ def test_mono10g40ids_unpacks_four_pixels_from_five_bytes():
         ("RGB8", 8),
         ("BayerRG16", 16),
         ("Mono10g40IDS", 10),
+        ("Mono12p", 12),
+        ("YCbCr8_CbYCr", 8),
     ],
 )
 def test_bit_depth_of_each_format(pixel_format, depth):
@@ -1261,6 +1326,7 @@ def test_min_size_decimates_no_further_than_it_keeps(roi_camera, roi_fake):
         # The CM3 saturates at 12-bit 4094, at the top of Mono16 (spinnaker.md).
         ("Chameleon3 CM3-U3-50S5M", "Mono16", 65504),
         ("Chameleon3 CM3-U3-50S5M", "Mono8", 255),
+        ("Chameleon3 CM3-U3-31S4C", "Mono16", 65504),
         ("U3-36P0XCP-M", "Mono16", 65535),
         ("U3-36P0XCP-M", "Mono10g40IDS", 1023),
     ],

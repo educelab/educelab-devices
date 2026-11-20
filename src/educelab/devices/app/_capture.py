@@ -58,7 +58,10 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
         help="gain in dB, with auto gain off, rounded to the nearest the camera "
         "keeps (default: leave it)",
     )
-    parser.add_argument("--pixel-format", help="e.g. Mono8, Mono16, or RGB8")
+    parser.add_argument(
+        "--pixel-format",
+        help="e.g. Mono8, Mono12p, Mono16, BayerRG8, RGB8, or YCbCr422_8_CbYCrY",
+    )
     parser.add_argument(
         "--throughput-limit",
         type=_positive,
@@ -504,14 +507,19 @@ def _streaming_rate(
 
 
 def _write_png(path: Path, frame: "Frame") -> None:
-    """Save a frame as an 8- or 16-bit grayscale or RGB PNG; Bayer frames stay raw.
+    """Save a frame as an 8- or 16-bit grayscale or RGB PNG. Bayer and YCbCr
+    frames stay raw: YCbCr as grayscale rows of each pixel's bytes, in the
+    camera's order.
 
-    A 10-bit frame is shifted up to fill a 16-bit PNG, as the PNG spec asks, with
-    its real depth in an ``sBIT`` chunk; shift right by 6 to get 0–1023 back.
+    A 10- or 12-bit frame is shifted up to fill a 16-bit PNG, as the PNG spec
+    asks, with its real depth in an ``sBIT`` chunk; shift right by 6 (or 4) to
+    get the camera's values back.
     """
     import numpy as np
 
     pixels = frame.pixels
+    if frame.pixel_format.startswith("YCbCr"):
+        pixels = pixels.reshape(pixels.shape[0], -1)
     if pixels.ndim == 2:
         pixels = pixels[:, :, np.newaxis]
     height, width, channels = pixels.shape

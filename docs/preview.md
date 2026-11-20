@@ -149,7 +149,45 @@ they come at the camera's bit depth and pixel format.
   `full_scale.bit_length() - 8` keeps the top 8 bits of either alignment; `eight_bit()`
   in the viewer does that.
 - **gphoto2 bodies send `RGB8`** from a JPEG, already display-ready.
-- **Bayer formats arrive raw.** Demosaic them yourself, or show them as mono.
+- **Bayer formats arrive raw**, as the mosaic the sensor saw. A reduced or cropped
+  preview may not keep the mosaic `color_filter` names: the driver doesn't align its
+  crops and strides to the 2 × 2 pattern. Show it as mono, or demosaic a whole-image
+  preview yourself.
+
+### Color cameras: preview in `RGB8` or YCbCr
+
+For a color preview, have the camera demosaic: select `RGB8` or `YCbCr422_8_CbYCrY` for
+previewing, and the raw format for capturing.
+
+```python
+camera.set_setting("pixel_format", "YCbCr422_8_CbYCrY")  # or "RGB8"
+camera.start_preview(region, min_size=view_size)
+...  # show cv2.cvtColor(frame.pixels, cv2.COLOR_YUV2RGB_UYVY)
+camera.stop_preview()
+camera.set_setting("pixel_format", "BayerRG8")
+camera.set_setting("throughput_limit", cap)  # a format change resets it
+frame = camera.capture_frame()
+```
+
+- **It's the same image.** On the CM3-U3-31S4C, `RGB8` matches OpenCV's bilinear
+  demosaic of the `BayerRG8` frame to within the noise, with the same white balance,
+  and the YCbCr formats are `RGB8` encoded with Y from 16 to 235.
+- **Only while the camera's processing is off.** The camera can also saturate,
+  gamma-correct, hue-shift and sharpen `RGB8` and YCbCr, never Bayer. The driver opens
+  a camera as it finds it, so check those settings (in SpinView) if colors look wrong.
+  Sharpening is on by default, and mild.
+- **YCbCr422 is the faster one:** about 31 frames/s of the whole 2048 × 1536 image
+  against 21 for `RGB8` and 55.6 for `BayerRG8`. `RGB8` is 3 bytes a pixel, three times
+  the link a Bayer format needs ([Sharing a USB link](hardware/usb3-vision.md#sharing-a-usb-link)).
+- **Switching costs about 0.2 s each way:** 0.13 s for the format change and the rest
+  for the first new frame. Budget for it in a capture's round trip (section 6).
+- **Compare them in `el-devices preview`:** `f` and `F` step through the camera's
+  pixel formats while it previews, and the overlay names the one showing. A change
+  during preview keeps the region and takes 0.15–0.21 s to the first new frame on the
+  CM3-U3-31S4C. The viewer shows what the camera sends: `RGB8` in color, Bayer as its raw mosaic in grey, and YCbCr as its Y channel only, which the overlay marks "(Y only)".
+- **To see exactly what the sensor delivers,** keep the Bayer format and demosaic it
+  yourself: `cv2.COLOR_BayerBG2RGB` for the camera's `BayerRG` (OpenCV names a pattern
+  by its second row).
 
 ---
 
@@ -168,8 +206,9 @@ feed.resume()
 - **A capture is the whole sensor**, whatever region was previewed. Show the captured
   image while the preview restarts.
 - **Budget for the round trip:** nothing on a GenICam camera previewing the whole
-  sensor, a restart each way (0.1–0.4 s) if a region or `max_size` was in use, and
-  about 1.6 s on the Z7 II.
+  sensor, a restart each way (0.1–0.4 s) if a region or `max_size` was in use, about
+  0.2 s each way to switch a color camera's pixel format (section 5), and about 1.6 s
+  on the Z7 II.
 - **Pause the worker first.** Otherwise it calls `preview_frame()` on a camera that is
   no longer previewing. The `Feed` above leaves pausing out; `_Feed` in the viewer has
   it.

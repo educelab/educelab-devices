@@ -1,3 +1,4 @@
+import dataclasses
 import sys
 import time
 from collections import deque
@@ -7,10 +8,10 @@ import pytest
 
 from educelab.devices.app import preview
 from educelab.devices.app.cli import build_parser, main
-from educelab.devices.app.preview import View, eight_bit
-from educelab.devices.cameras import CameraFile
+from educelab.devices.app.preview import View, eight_bit, shown_pixels
+from educelab.devices.cameras import PIXEL_FORMAT, CameraFile
 from educelab.devices.cameras.simulated import SimulatedCamera, SimulatedFileCamera
-from educelab.devices.errors import DeviceError
+from educelab.devices.errors import CommandRejected, DeviceError
 
 
 class FakeOpenCV:
@@ -32,6 +33,7 @@ class FakeOpenCV:
         self.script = deque(script)
         self.shown = []
         self.decoded = []
+        self.texts = []
         self.mouse = None
 
     def namedWindow(self, title, flags):
@@ -57,8 +59,8 @@ class FakeOpenCV:
             return None
         return np.zeros((300, 450, 3), np.uint8)
 
-    def putText(self, *args):
-        pass
+    def putText(self, image, text, *args):
+        self.texts.append(text)
 
     def rectangle(self, *args):
         pass
@@ -417,3 +419,66 @@ def test_the_simulated_camera_shows_a_chart_whose_focus_keys_move(monkeypatch):
     step = preview.FOCUS_KEY_STEPS
     assert focus.moves == [step, step, -step]
     assert not focus.is_open
+
+
+def test_the_overlay_says_a_ycbcr_frame_shows_only_y(opencv):
+    camera = SimulatedCamera()
+    frame = camera.preview_frame
+    camera.preview_frame = lambda *a, **k: dataclasses.replace(
+        frame(*a, **k),
+        pixels=np.zeros((*frame(*a, **k).pixels.shape, 2), np.uint8),
+        pixel_format="YCbCr422_8_CbYCrY",
+    )
+    fake = opencv(None, None, "q", camera=camera)
+    assert main(["preview", "simulated", "--window", "200"]) == 0
+    assert any("YCbCr422_8_CbYCrY (Y only)" in text for text in fake.texts)
+
+
+def test_the_overlay_names_other_formats_plainly(opencv):
+    fake = opencv(None, "q", camera=SimulatedCamera())
+    assert main(["preview", "simulated", "--window", "200"]) == 0
+    assert any(" Mono8, " in text for text in fake.texts)
+    assert not any("only" in text for text in fake.texts)
+
+
+def test_ycbcr_frames_show_their_luma():
+    full = np.arange(2 * 4 * 3, dtype=np.uint8).reshape(2, 4, 3)
+    np.testing.assert_array_equal(shown_pixels(full, "YCbCr8_CbYCr"), full[..., 1])
+    shared = full[..., :2]
+    assert shown_pixels(shared, "YCbCr422_8_CbYCrY").shape == (2, 4)
+    assert shown_pixels(full, "RGB8") is full
+
+
+def test_f_steps_through_the_pixel_formats(opencv, capsys):
+    with SimulatedCamera(color=True) as probe:
+        formats = probe.setting(PIXEL_FORMAT).choices
+    camera = SimulatedCamera(color=True)
+    seen = []
+    write = camera.set_setting
+    camera.set_setting = lambda name, value: (seen.append(value), write(name, value))
+    opencv("f", None, "f", None, "F", None, "F", None, "F", "q", camera=camera)
+    assert main(["preview", "simulated", "--window", "200"]) == 0
+    start = formats.index("RGB8")
+    steps = [1, 2, 1, 0, -1]
+    assert seen == [formats[(start + s) % len(formats)] for s in steps]
+    out = capsys.readouterr().out
+    assert f"pixel format {formats[start + 1]}" in out
+
+
+def test_f_says_when_a_camera_has_no_other_format(opencv, capsys):
+    camera = file_camera()
+    opencv("f", "q", camera=camera)
+    assert main(["preview", "simulated", "--window", "200"]) == 0
+    assert "no other pixel format" in capsys.readouterr().out
+
+
+def test_a_refused_format_is_reported_and_the_preview_goes_on(opencv, capsys):
+    camera = SimulatedCamera(color=True)
+
+    def refuse(name, value):
+        raise CommandRejected(f"{name} {value} refused")
+
+    camera.set_setting = refuse
+    opencv("f", None, "q", camera=camera)
+    assert main(["preview", "simulated", "--window", "200"]) == 0
+    assert "refused" in capsys.readouterr().out

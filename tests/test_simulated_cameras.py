@@ -36,6 +36,12 @@ class TestSimulatedColorCamera(FrameCameraContract):
         return functools.partial(SimulatedCamera, color=True)
 
 
+class TestSimulatedAutoColorCamera(FrameCameraContract):
+    @pytest.fixture
+    def make_device(self):
+        return functools.partial(SimulatedCamera, color=True, auto=True)
+
+
 class TestSimulatedAutoCamera(FrameCameraContract):
     @pytest.fixture
     def make_device(self):
@@ -115,6 +121,66 @@ def test_color_camera_starts_in_rgb8_with_distinct_channels():
         camera.stop_preview()
         camera.set_setting(PIXEL_FORMAT, "Mono8")
         assert camera.capture_frame().pixels.shape == (24, 32)
+
+
+@pytest.mark.parametrize(
+    ("fmt", "dtype"), [("BayerRG8", np.uint8), ("BayerRG16", np.uint16)]
+)
+def test_color_camera_offers_a_bayer_mosaic_of_its_image(fmt, dtype):
+    with SimulatedCamera(width=32, height=24, color=True) as camera:
+        assert camera.setting(PIXEL_FORMAT).value == "RGB8"
+        camera.set_setting(PIXEL_FORMAT, fmt)
+        frame = camera.capture_frame()
+        assert frame.pixels.shape == (24, 32)
+        assert frame.pixels.dtype == dtype
+        assert frame.metadata["color_filter"] == "BayerRG"
+        # Red at even rows and columns, blue at odd ones, green between.
+        red = frame.pixels[0::2, 0::2].mean()
+        green = frame.pixels[0::2, 1::2].mean()
+        blue = frame.pixels[1::2, 1::2].mean()
+        assert red > green > blue
+
+
+def test_color_camera_ratios_tint_its_frames():
+    with SimulatedCamera(width=32, height=24, color=True) as camera:
+        before = camera.capture_frame()
+        assert before.metadata["balance_ratio_red"] == 1.0
+        camera.set_setting("balance_ratio_blue", 2.0)
+        assert camera.setting("balance_ratio_blue").value == 2.0
+        after = camera.capture_frame()
+        assert after.metadata["balance_ratio_blue"] == 2.0
+        blue = [f.pixels[..., 2].mean() for f in (before, after)]
+        assert blue[1] == pytest.approx(2 * blue[0], rel=0.05)
+        assert "BalanceWhiteAuto" not in camera.settings()
+
+
+def test_auto_white_balance_evens_out_the_tint():
+    with SimulatedCamera(width=32, height=24, color=True, auto=True) as camera:
+        assert camera.setting("BalanceWhiteAuto").value == "Continuous"
+        assert camera.setting("balance_ratio_red").read_only
+        frame = camera.capture_frame()
+        assert frame.metadata["BalanceWhiteAuto"] == "Continuous"
+        red, green, blue = frame.pixels.reshape(-1, 3).mean(axis=0)
+        assert red == pytest.approx(green, rel=0.05)
+        assert blue == pytest.approx(green, rel=0.05)
+        camera.set_setting("BalanceWhiteAuto", "Off")
+        # Off keeps the last ratios, as on the CM3-U3-31S4C.
+        assert not camera.setting("balance_ratio_red").read_only
+        assert camera.setting("balance_ratio_blue").value > 1.0
+
+
+def test_a_mono_camera_has_no_white_balance():
+    with SimulatedCamera(auto=True) as camera:
+        assert "BalanceWhiteAuto" not in camera.settings()
+        assert "balance_ratio_red" not in camera.capture_frame().metadata
+
+
+def test_a_mono_camera_has_no_mosaic():
+    with SimulatedCamera() as camera:
+        assert camera.capture_frame().metadata["color_filter"] is None
+        assert not any(
+            f.startswith("Bayer") for f in camera.setting(PIXEL_FORMAT).choices
+        )
 
 
 def test_frame_and_sensor_size_are_reported():
@@ -337,3 +403,11 @@ def test_an_unknown_pattern_is_refused():
 def test_sharp_at_must_lie_within_the_travel():
     with pytest.raises(ValueError, match="sharp_at"):
         SimulatedFocusDrive(travel_steps=100, start=50, sharp_at=101)
+
+
+def test_a_ratio_past_full_scale_saturates():
+    with SimulatedCamera(width=32, height=24, color=True) as camera:
+        camera.set_setting(EXPOSURE_TIME, 0.03)
+        camera.set_setting("balance_ratio_red", 4.0)
+        red = camera.capture_frame().pixels[..., 0]
+        assert red.max() == 255

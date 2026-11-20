@@ -259,6 +259,46 @@ class FrameCameraContract(CameraContract):
             pytest.skip("camera has no pixel_format setting")
         assert device.capture_frame().pixel_format == settings[PIXEL_FORMAT].value
 
+    def test_only_bayer_frames_name_a_mosaic(self, device):
+        settings = device.settings()
+        formats = [None]
+        if PIXEL_FORMAT in settings and settings[PIXEL_FORMAT].choices:
+            formats = list(settings[PIXEL_FORMAT].choices)
+        for pixel_format in formats:
+            if pixel_format is not None:
+                device.set_setting(PIXEL_FORMAT, pixel_format)
+            frame = device.capture_frame()
+            mosaic = frame.metadata["color_filter"]
+            # A hint for demosaicing: set only when the pixels are a mosaic.
+            if frame.pixel_format.startswith("Bayer"):
+                assert mosaic is not None
+                assert frame.pixel_format.startswith(mosaic)
+            else:
+                assert mosaic is None
+
+    def test_white_balance_ratios_are_set_with_auto_off(self, device):
+        settings = device.settings()
+        ratios = [
+            n for n in ("balance_ratio_red", "balance_ratio_blue") if n in settings
+        ]
+        if not ratios:
+            pytest.skip("camera offers no white balance")
+        auto = settings.get("BalanceWhiteAuto")
+        if auto is not None:
+            device.set_setting("BalanceWhiteAuto", "Continuous")
+            assert all(device.setting(n).read_only for n in ratios)
+            device.set_setting("BalanceWhiteAuto", "Off")
+        for name in ratios:
+            ratio = device.setting(name)
+            assert not ratio.read_only
+            assert ratio.minimum is not None and ratio.maximum is not None
+            value = (ratio.minimum + ratio.maximum) / 2
+            device.set_setting(name, value)
+            assert device.setting(name).value == pytest.approx(value)
+            assert device.capture_frame().metadata[name] == pytest.approx(value)
+        if auto is not None:
+            device.set_setting("BalanceWhiteAuto", auto.value)
+
     def test_preview_keeps_the_capture_pixel_format(self, device):
         settings = device.settings()
         formats = [None]

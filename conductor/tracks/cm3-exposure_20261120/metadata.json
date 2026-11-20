@@ -1,0 +1,16 @@
+{
+  "id": "cm3-exposure_20261120",
+  "title": "Exposure Integrity Across Capture Modes",
+  "type": "bug",
+  "status": "pending",
+  "created": "2026-11-20T00:00:00Z",
+  "updated": "2026-11-20T00:00:00Z",
+  "phases": {
+    "total": 5,
+    "completed": 0
+  },
+  "tasks": {
+    "total": 16,
+    "completed": 0
+  }
+}

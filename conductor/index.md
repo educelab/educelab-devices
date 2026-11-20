@@ -28,6 +28,7 @@ Project-level context outside this directory:
 - [XLC2 Unit ID and Probing](./tracks/xlc2-unit-id_20261117/index.md) — pending
 - [Camera Lens Information](./tracks/camera-lens-info_20261118/index.md) — pending
 - [Color GenICam Cameras](./tracks/color-cameras_20261119/index.md) — in progress
+- [Exposure Integrity Across Capture Modes](./tracks/cm3-exposure_20261120/index.md) — pending
 
 ## Completed Tracks
 

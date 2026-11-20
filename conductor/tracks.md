@@ -22,5 +22,6 @@
 | [ ] | [camera-lens-info_20261118](./tracks/camera-lens-info_20261118/index.md) | Camera Lens Information | 2026-11-18 | 2026-11-18 |
 | [x] | [light-concurrency_20261119](./tracks/light-concurrency_20261119/index.md) | Light Channel Concurrency | 2026-11-19 | 2026-11-19 |
 | [~] | [color-cameras_20261119](./tracks/color-cameras_20261119/index.md) | Color GenICam Cameras | 2026-11-19 | 2026-11-19 |
+| [ ] | [cm3-exposure_20261120](./tracks/cm3-exposure_20261120/index.md) | Exposure Integrity Across Capture Modes | 2026-11-20 | 2026-11-20 |
 
 <!-- Tracks registered by /conductor:new-track. Planned order is in product.md. -->

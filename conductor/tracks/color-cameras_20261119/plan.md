@@ -116,20 +116,25 @@ Fakes first: every backend's fake gains a CM3-U3-31S4C with the formats, nodes, 
 
 ### Tasks
 
-- [ ] Task 5.1: `docs/hardware/spinnaker.md`:
+- [x] Task 5.1: `docs/hardware/spinnaker.md`:
   - A CM3-U3-31S4C section with the probe results.
   - White balance rows in the settings table.
   - The corrected `SharpnessEnabled` row.
   - The new formats.
   - Fixes to the "RGB8 if offered" claims and the "Not exposed" list.
   - The `link_recoveries` observation.
-- [ ] Task 5.2: `docs/hardware/usb3-vision.md`: the throughput maximum per format, RGB8's 3 bytes per pixel, and the color camera on each backend.
-- [ ] Task 5.3: `docs/guide.md`: `color_filter`, the new formats' layouts (with the OpenCV and Pillow notes), white balance, and the simulated color camera.
-- [ ] Task 5.4: File the follow-up GitHub issues: on-camera processing controls (Hue, Saturation, Gamma, `SharpnessAuto`, black level), and `YCbCr411_8_CbYYCrYY` with its two layout options. Link them from the spec.
+- [x] Task 5.2: `docs/hardware/usb3-vision.md`: the throughput maximum per format, RGB8's 3 bytes per pixel, and the color camera on each backend.
+- [x] Task 5.3: `docs/guide.md`: `color_filter`, the new formats' layouts (with the OpenCV and Pillow notes), white balance, and the simulated color camera.
+- [x] Task 5.4: File the follow-up GitHub issues: on-camera processing controls (Hue, Saturation, Gamma, `SharpnessAuto`, black level), and `YCbCr411_8_CbYYCrYY` with its two layout options. Link them from the spec.
+
+### Notes
+
+- Besides the three planned docs, `docs/preview.md` gained "Color cameras: preview in `RGB8` or YCbCr" (the maintainer's preview decision) and the format switch in a capture's round trip.
+- Issues filed 2026-11-19: [#42](https://github.com/educelab/educelab-devices/issues/42) on-camera processing controls (with probe 4's measurements), [#43](https://github.com/educelab/educelab-devices/issues/43) YCbCr411, [#44](https://github.com/educelab/educelab-devices/issues/44) `link_recoveries` rising per open and close.
 
 ### Verification
 
-- [ ] The docs build (`mkdocs build --strict`) and agree with the code.
+- [x] The docs agree with the code, and every relative link and anchor in `docs/` resolves (checked by script). There's no `mkdocs.yml` in the repo, so `mkdocs build --strict` can't run.
 
 ## Phase 6: Hardware Runs (batched)
 

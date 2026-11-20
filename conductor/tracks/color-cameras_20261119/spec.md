@@ -65,10 +65,10 @@ As a lab developer building an acquisition app (e.g. `pgs-scan` on a color rig),
 ## Out of Scope
 
 - Debayering or converting YCbCr on the host. Frames come back in the camera's layout, and the caller converts using `color_filter`, as with gphoto2's NEFs.
-- On-camera processing controls: Hue, Saturation, Gamma, `SharpnessAuto`, and black level. A follow-up GitHub issue records them.
-- `YCbCr411_8_CbYYCrYY`. It packs 4 pixels into 6 bytes, so it has no per-pixel shape, and OpenCV can't convert it. A follow-up GitHub issue records the layout options: `(H, W × 3/2)` like FFmpeg's `uyyvyy411`, or `(H, W/4, 6)` groups.
+- On-camera processing controls: Hue, Saturation, Gamma, `SharpnessAuto`, and black level. A follow-up GitHub issue records them: [#42](https://github.com/educelab/educelab-devices/issues/42).
+- `YCbCr411_8_CbYYCrYY`. It packs 4 pixels into 6 bytes, so it has no per-pixel shape, and OpenCV can't convert it. A follow-up GitHub issue records the layout options: `(H, W × 3/2)` like FFmpeg's `uyyvyy411`, or `(H, W/4, 6)` groups ([#43](https://github.com/educelab/educelab-devices/issues/43)).
 - `BalanceWhiteAuto=Once` and auto white balance regions.
-- Investigating `link_recoveries`. Record it in the hardware doc, and file an issue if the hardware runs repeat it.
+- Investigating `link_recoveries`. Record it in the hardware doc, and file an issue if the hardware runs repeat it. They did: [#44](https://github.com/educelab/educelab-devices/issues/44).
 - gphoto2 cameras' white balance.
 
 ## Technical Notes

@@ -235,11 +235,23 @@ hardware doc maps the name to the native node and gives the conversion.
 
 Numeric arguments can be Python numbers or numpy scalars (e.g. values from `np.linspace`).
 
-Frames with more than 8 bits per value come as `uint16`. `frame.metadata["bit_depth"]`
-is the format's depth, and `frame.metadata["full_scale"]` the value a saturated pixel
-reads: any pixel at or above it is clipped. They differ where the camera saturates
-below the format's top: a 10-bit format runs from 0 to 1023, but the CM3's `Mono16`
-holds 12 bits at the top and saturates at 65504.
+Frames with more than 8 bits per value come as `uint16`, packed formats unpacked, with
+the bits in the low end. `frame.metadata["bit_depth"]` is the format's depth, and
+`frame.metadata["full_scale"]` the value a saturated pixel reads: any pixel at or above
+it is clipped. They differ where the camera saturates below the format's top: a 10- or
+12-bit format runs from 0 to 1023 or 4095, but the CM3's `Mono16` holds 12 bits at the
+top and saturates at 65504.
+
+Frames come in the camera's layout; the library never converts color:
+
+- Mono and Bayer formats are `(height, width)`. A Bayer frame is the raw mosaic, and
+  `frame.metadata["color_filter"]` names it (`"BayerRG"` and so on), or is `None` on a
+  mono sensor. Demosaic it yourself; with OpenCV, mind that its pattern names are
+  shifted, so `"BayerRG"` is `cv2.COLOR_BayerBG2RGB`.
+- `RGB8` is `(height, width, 3)` in R, G, B order.
+- `YCbCr8_CbYCr` is `(height, width, 3)` in Cb, Y, Cr order, and `YCbCr422_8_CbYCrY` is
+  `(height, width, 2)`: Y in channel 1, and Cb and Cr taking turns in channel 0, like
+  OpenCV's `UYVY` (`cv2.COLOR_YUV2RGB_UYVY` converts it). Both use Y from 16 to 235.
 
 On Windows before Python 3.13, `datetime.now()` and `time.time()` tick every 15.6 ms,
 so a `not_before` taken from them can be up to 15.6 ms early, letting through a frame
@@ -330,11 +342,24 @@ canonical settings they offer `TRIGGER` (`"Off"` or `"Software"`, where each cap
 fires a software trigger), `THROUGHPUT_LIMIT` in MB/s (`None` while the camera's limit is
 off), the camera's auto modes by their native names (`ExposureAuto`, `GainAuto`), the
 camera's on-board sharpening as `SharpnessEnabled` (`True` or `False`, while the camera
-offers it: the CM3 does in `Mono16` only, and opens with it on), and
+offers it, which can depend on the pixel format), white balance on color cameras as
+`BalanceWhiteAuto` (`Off` or `Continuous`) with `balance_ratio_red` and
+`balance_ratio_blue` (gains relative to green, writable while `BalanceWhiteAuto` is
+`Off`), and
 the read-only `current_throughput`, `resulting_frame_rate` and `link_speed`, each only
 where the camera has the feature. `link_speed` is in MB/s: the camera's
 `DeviceLinkSpeed`, or the nominal rate of its USB speed (625 for USB 3, 60 for USB 2)
-on cameras that only name it.
+on cameras that only name it. Settings that a camera offers only in some pixel formats
+(white balance isn't in Mono formats) appear and disappear with `pixel_format`. Frames
+record the white balance in their metadata, under the same names, and the sensor's
+mosaic as `color_filter`, also readable before a capture as `camera.color_filter`.
+
+Cameras open as they're found: the driver changes only what it must to stream (the
+trigger and the region of interest, and a pixel format it can't shape), and leaves
+everything else, including a color camera's on-camera processing, as the last program
+set it. The `RGB8` and YCbCr formats are processed on the camera (sharpening, and
+saturation, gamma or hue where they're on); only Bayer formats are what the sensor saw.
+See [spinnaker.md](hardware/spinnaker.md#color).
 
 `diagnostics()` returns counters for diagnosing a stream that stops sending, where the
 camera and backend have them: the camera's `transmit_failures` and `link_recoveries`,
@@ -498,7 +523,11 @@ drives hit limits. They pass the same contract tests (`tests/contracts/`) as the
 drivers, so code that works against a simulation should work against the hardware.
 `SimulatedFileCamera(bulb=True, auto_iso=True)` starts with `exposure_time` and `iso`
 reading as `None`, like a DSLR at Bulb and Auto ISO. `SimulatedCamera(color=True)` acts
-like a colour camera: it also offers `RGB8` and starts in it, as GenICam colour cameras do.
+like a colour camera with a `BayerRG` mosaic: it also offers `RGB8`, `BayerRG8` and
+`BayerRG16`, starts in `RGB8`, and offers `balance_ratio_red` and `balance_ratio_blue`,
+which tint its frames. With `auto=True` it also offers `BalanceWhiteAuto`, starting at
+`Continuous`, which evens its tint out. (A real colour camera may open in a Bayer format:
+the CM3-U3-31S4C does.)
 `SimulatedCamera(auto=True)` offers `ExposureAuto` and `GainAuto` (`Off` or `Continuous`)
 under their GenICam names, starting at `Continuous`. While one is on, `exposure_time` or
 `gain` is read-only and changes a little from frame to frame, as the frame metadata shows.

@@ -10,15 +10,18 @@ behaviour applies to them too until their own hardware runs say otherwise. The s
 cameras also run through `AravisCamera` and `GenTLCamera`, without PySpin; those runs are
 in [usb3-vision.md](usb3-vision.md#hardware-runs).
 
-> Checked on one rig of five Chameleon3 CM3-U3-50S5M cameras, 2026-10-16 to 2026-10-20
-> (see Manual check). Facts marked **assumed** or **unknown** are still open; the rig
+> Checked on one rig of five Chameleon3 CM3-U3-50S5M cameras, 2026-10-16 to 2026-10-20,
+> and on one color Chameleon3 CM3-U3-31S4C, 2026-11-19 (see Manual check). Facts marked **assumed** or **unknown** are still open; the rig
 > check steps settle most of them.
 
 ## Identity
 
 - **Models:** the rig checked has five Chameleon3 CM3-U3-50S5M (mono, USB3), firmware
   1.12.3.00, serials 20305113, 20298452, 20305122, 20305114, 20298479 (verified
-  2026-10-16). Other `pgs-scan` rigs may have Blackfly S bodies (assumed).
+  2026-10-16). One Chameleon3 CM3-U3-31S4C (color, Sony IMX265, 2048 × 1536, `BayerRG`
+  mosaic), firmware 1.12.3.00, serial 19299005; Aravis lists it by its USB serial
+  `01267ABD`, as it does the 50S5M (verified 2026-11-19). Other `pgs-scan` rigs may have
+  Blackfly S bodies (assumed).
 - **On the host:** cameras are enumerated by the SDK, not by a serial port or path. Each
   camera reports `DeviceSerialNumber`, `DeviceModelName`, and `DeviceVendorName` on its
   transport-layer node map (`cam.TLDevice`), which can be read **without** initializing
@@ -317,6 +320,132 @@ holds the rate with them
   (minimum-exposure runs set 0.126 ms, 0.119 ms, and 0.0595 ms). `el-devices spinnaker
   --exposure min` sets each camera's minimum for the chosen pixel format.
 
+### Pixel formats
+
+The formats the driver shapes, as the CM3-U3-31S4C offers them (verified 2026-11-19 on
+all three backends, which agreed to the digit; 60 frames at 2 ms exposure). The
+throughput maximum is `throughput_limit`'s, which the format sets; the frame rate is the
+whole image's at that maximum.
+
+| Format | Frame array | `bit_depth`, `full_scale` | Max MB/s | frames/s |
+|---|---|---|---|---|
+| `Mono8` | `(H, W)` `uint8` | 8, 255 | 117.216 | 36.6 |
+| `Mono12Packed`, `Mono12p` | `(H, W)` `uint16`, unpacked | 12, 4095 | 175.232 | 36.6 |
+| `Mono16` | `(H, W)` `uint16` | 16, 65504 | 195.424 | 31.0 |
+| `BayerRG8` | `(H, W)` `uint8` | 8, 255 | 177.408 | 55.6 |
+| `BayerRG16` | `(H, W)` `uint16` | 16, 65535 | 195.424 | 31.0 |
+| `YCbCr422_8_CbYCrY` | `(H, W, 2)` `uint8` | 8, 255 | 195.424 | 31.0 |
+| `YCbCr8_CbYCr` | `(H, W, 3)` `uint8` | 8, 255 | 198.24 | 21.0 |
+| `RGB8` | `(H, W, 3)` `uint8` | 8, 255 | 198.24 | 21.0 |
+
+- **Open keeps the camera's format** if the driver shapes it (the 31S4C opens in
+  `BayerRG8`). Only a format it can't shape is replaced: `RGB8` if offered, else the
+  first the driver shapes.
+- **The processed mono formats stop at 36.6 frames/s,** below what their link maximum
+  would carry; `BayerRG8` runs at 55.6.
+- **12-bit packed** formats unpack to `uint16` with the bits in the low end. Two pixels
+  share three bytes, laid out two ways:
+  - `Mono12Packed` (GigE Vision's): each pixel's high 8 bits in bytes 0 and 2, both low
+    nibbles in byte 1, pixel 0's in its low half.
+  - `Mono12p` (the PFNC's): LSB first, pixel 0 in byte 0 and byte 1's low nibble.
+
+  Both checked against `Mono16 >> 4` of the same static scene: correlation 0.997–0.999 on
+  every backend, differing by about the frame-to-frame noise; the other layout correlates
+  about 0.55. Saturated pixels read 4094. The 12-bit packed Bayer formats
+  (`Bayer{RG,GB,GR,BG}12Packed` and `...12p`) go through the same unpackers; no camera
+  checked offers them.
+- **`Mono16` holds 12 bits at the top:** the low 4 bits are always 0 and saturated pixels
+  read 65504, as on the 50S5M. `BayerRG16` reaches 65535 with odd values, so it keeps
+  `full_scale` 65535.
+- **YCbCr frames keep the camera's bytes:** `YCbCr8_CbYCr` is Cb, Y, Cr per pixel (like
+  GStreamer's `IYU2`), and `YCbCr422_8_CbYCrY` is Cb Y Cr Y over each pixel pair (FFmpeg's
+  `uyvy422`, OpenCV's `UYVY`): channel 1 is Y, and channel 0 alternates Cb and Cr. Both are
+  BT.601 with Y from 16 to 235 (limited range): converted that way they match `RGB8` (slope
+  1.00, offset under 1 count); full-range equations are 1.165 times off. OpenCV's
+  `COLOR_YUV2RGB_UYVY` converts `YCbCr422_8_CbYCrY` correctly.
+- **`YCbCr411_8_CbYYCrYY`** (6 bytes per 4 pixels) isn't offered: it has no per-pixel
+  shape ([#43](https://github.com/educelab/educelab-devices/issues/43)).
+- **Buffers carry older codes for YCbCr:** PySpin's `GetPixelFormatName()` gives
+  `YUV411_8`, `YUV422Packed` and `YUV444Packed`, and every backend reports the PFNC codes of
+  `YUV411_8_UYYVYY` (0x020C001E), `YUV422_8_UYVY` (0x0210001F) and `YUV8_UYV` (0x02180020),
+  not the `YCbCr` ones (0x020C003C, 0x02100043, 0x0218003A). The layouts are the same, so
+  the driver maps both families to the SFNC names, and the Spinnaker backend reads a
+  buffer's format from `GetTLPixelFormat()`.
+- **`GetNDArray()` refuses** `Mono12Packed`, `Mono12p` and both YCbCr 4:2:x formats with
+  `-1003` ("The current pixel format is not supported"). The driver shapes those from
+  `GetData()`, the bytes as sent, and keeps `GetNDArray()` for the rest.
+- **Changing format** takes 0.13 s, and the first fresh frame comes 0.18–0.24 s after
+  asking, on every backend. It resets `throughput_limit` to the new format's maximum, as
+  on the 50S5M ([Settings](#settings)).
+
+### Color
+
+On the CM3-U3-31S4C (firmware 1.12.3.00), 2026-11-19, unless noted.
+
+**The mosaic.** `PixelColorFilter` reads `BayerRG` in every pixel format, Mono included.
+The driver reports it as `color_filter`, in every frame's metadata and as
+`GenICamCamera.color_filter`; on a camera without the node it comes from the name of a
+Bayer format the camera offers, and it's `None` on a mono sensor. `OffsetX` and
+`OffsetY` step by 2, so a region of interest keeps the mosaic, but a preview that
+decimates or crops and strides on the host may not: the driver doesn't align those to
+it. Preview in `RGB8` or a YCbCr format for color ([preview.md](../preview.md#color-cameras-preview-in-rgb8-or-ycbcr)).
+
+**White balance.**
+
+- **Nodes:** `BalanceWhiteAuto` (`Off`, `Once`, `Continuous`; opens at `Continuous`), and
+  `BalanceRatio` behind `BalanceRatioSelector`. The selector lists `Red`, `Green` and
+  `Blue`, but `Green` is unavailable. `BalanceRatio` runs from 0.25 to 4, with no
+  increment or unit, and is writable only while `BalanceWhiteAuto` is `Off`; `Once` also
+  holds it read-only, and hadn't gone back to `Off` after 10 frames of a dark scene. Writes
+  work while acquiring. Every white balance node is unavailable in the Mono formats.
+- **Settings:** `BalanceWhiteAuto` (`Off` or `Continuous`; `Once` is left out),
+  `balance_ratio_red` and `balance_ratio_blue`. Each ratio read or write sets the
+  selector and puts it back, even if the access fails. The settings appear and disappear
+  with `pixel_format`.
+- **The ratios are relative to green,** and the camera keeps its smallest channel gain at
+  1: a ratio above 1 raises its channel, and one below 1 raises the other two instead.
+  With exposure and gain fixed in `BayerRG16`, red at 2 and 4 gave ×2.01 and ×4.09 of
+  red's signal, and blue ×2.02 and ×4.07; red at 0.5 left red and doubled green (×2.04)
+  and blue, and 0.25 gave green ×4.08. They apply to Bayer and processed formats alike.
+- **They scale the signal above the black level.** Raw frames carry a pedestal from
+  `BlackLevel`, 5.859 % of full scale: 3840 in 16 bits, 15 in 8, which a near-dark frame
+  reads. The processed formats keep it (`RGB8`'s darkest pixel read 22). The black level
+  isn't exposed ([#42](https://github.com/educelab/educelab-devices/issues/42)).
+- **Frame metadata** records `BalanceWhiteAuto` and both ratios. Reading a ratio takes
+  about 1.2 ms, so recording took 4.9 ms per capture through Spinnaker and GenTL and 6.8 ms
+  through Aravis. While auto is `Off` only the driver's own writes move the ratios, so it
+  keeps them and records in 0.8 and 1.2 ms; under `Continuous` it reads them for every
+  frame.
+
+**On-camera processing.** The processed formats (`RGB8`, YCbCr, and the Mono formats) can
+be sharpened, saturated, gamma-corrected, hue-shifted and passed through a LUT; Bayer
+output never is. The camera has no color matrix. As found, everything was at identity
+except sharpening: `SaturationEnabled` on at 100, `GammaEnabled` and `HueEnabled` off,
+`LUTEnable` off, defect correction off, and `SharpnessEnabled` on with
+`SharpnessAuto=Continuous` (which chose 880–1109).
+
+- **At identity, `RGB8` is a bilinear demosaic of the raw frame:** it matches OpenCV's
+  `cv2.cvtColor(bayer, cv2.COLOR_BayerBG2RGB)` of the `BayerRG8` frame per channel with
+  slope 1.001, offset about 0, and a residual of 1–2 counts, about the noise (static scene,
+  fixed exposure, gain and white balance, 8 frames averaged). OpenCV names a pattern by
+  its second row, so the camera's `BayerRG` is OpenCV's `BayerBG`; the other three codes
+  fit worse.
+- **Away from identity it isn't.** Taking each control from identity in turn, `RGB8`
+  against the same demosaic (mean difference 1.47 counts at identity):
+  - `Saturation` 200 doubled chroma (camera ÷ host 1.94), and 0 gave grey (0.004).
+    `SaturationEnabled` off is the same as 100.
+  - `Gamma` 0.5: mean difference 39.8 counts. `Gamma` is writable only while
+    `GammaEnabled` is on, and 1.0 changes nothing.
+  - `Hue` 30: colors rotated (2.06). `Hue` is writable only while `HueEnabled` is on.
+  - `Sharpness` 4095 with `SharpnessAuto=Off` doubled the residual (2.83); `Sharpness` 0
+    or `SharpnessEnabled` off was within the noise of auto, so auto sharpening is mild.
+  - Turning `SaturationEnabled` off and back on left `Saturation` at 85.94 (raw 880 of
+    1024), not the 100 it had.
+- **The driver opens a camera as found,** and exposes only `SharpnessEnabled` of these
+  ([#42](https://github.com/educelab/educelab-devices/issues/42)). A camera left processed
+  by another program (e.g. SpinView) sends processed `RGB8` and YCbCr; raw Bayer is the
+  only output it can't change.
+
 ### Timestamps
 
 - `image.GetTimeStamp()` counts nanoseconds on the camera's own counter, which starts at
@@ -441,8 +570,10 @@ once it is closed.
 | `exposure_time` | `ExposureTime` | s → µs (× 10^6) | Read-only while `ExposureAuto` isn't `Off`; range depends on pixel format and frame rate ([Settings](#settings)) |
 | `gain` | `Gain` | dB → dB | Read-only while `GainAuto` isn't `Off` |
 | `ExposureAuto`, `GainAuto` | same | symbol → symbol | Choices are `Off` and `Continuous`; `Once` is left out |
-| `SharpnessEnabled` | same | bool → bool | Offered while readable: in `Mono16` only on the CM3-U3-50S5M, which opens with it on |
-| `pixel_format` | `PixelFormat` | symbol → symbol | Only Mono8, Mono16, RGB8 and 8/16-bit Bayer; changing it pauses acquisition |
+| `SharpnessEnabled` | same | bool → bool | Offered while readable: in `Mono16` only on the CM3-U3-50S5M, and in every format but Bayer on the CM3-U3-31S4C; both open with it on ([Color](#color)) |
+| `BalanceWhiteAuto` | same | symbol → symbol | Choices are `Off` and `Continuous`; `Once` is left out. Recorded in frame metadata ([Color](#color)) |
+| `balance_ratio_red`, `balance_ratio_blue` | `BalanceRatio` with `BalanceRatioSelector` `Red`, `Blue` | ratio → ratio, unitless | Read-only unless `BalanceWhiteAuto` is `Off`; the selector is put back after each access. Recorded in frame metadata |
+| `pixel_format` | `PixelFormat` | symbol → symbol | Mono8, Mono12Packed, Mono12p, Mono16, RGB8, 8/16-bit and 12-bit packed Bayer, `YCbCr8_CbYCr`, `YCbCr422_8_CbYCrY` ([Pixel formats](#pixel-formats)); changing it pauses acquisition |
 | `width`, `height` | `Width`, `Height` | px → px | Read-only: the size of the frames a capture returns. Only preview sets a region of interest, and puts the capture's back ([usb3-vision.md](usb3-vision.md#preview)). 2448 × 2048 on the CM3-U3-50S5M, matching captured frames (all five, 2026-10-29) |
 | `sensor_width`, `sensor_height` | `SensorWidth`, `SensorHeight` | px → px | Read-only; left out on a camera without them. 2448 × 2048 on the CM3-U3-50S5M: as found, no crop (`OffsetX` = `OffsetY` = 0) |
 | `throughput_limit` | `DeviceLinkThroughputLimit` | MB/s → bytes/s (× 10^6) | Reads `None` while `DeviceLinkThroughputLimitMode` is Off; writing sets the mode On first ([Settings](#settings)) |
@@ -455,14 +586,17 @@ once it is closed.
 by every camera. The others are Spinnaker-only names, with units chosen so they read alike, not the native node
 names. On the CM3-U3-50S5M, `ExposureTime` is read-only under `ExposureAuto=Continuous`
 and writable again under `Off`, and every listed pixel format captures (hardware test,
-2026-10-19 and 2026-10-20).
+2026-10-19 and 2026-10-20); on the CM3-U3-31S4C every one it offers does (2026-11-19).
+White balance and sharpening come and go with the pixel format, and the settings with
+them.
 
 ### Behaviour
 
 - **`open()` changes the camera:** `StreamBufferHandlingMode=NewestOnly`,
-  `AcquisitionMode=Continuous`, `TriggerMode=Off`, and `PixelFormat` if the current
-  format isn't one of the driver's (RGB8 if offered, else the first supported). It never
-  changes exposure, gain, or the throughput limit; they keep what the camera last had.
+  `AcquisitionMode=Continuous`, `TriggerMode=Off`, and `PixelFormat` only if the current
+  format isn't one the driver shapes (then RGB8 if offered, else the first it shapes).
+  Everything else, exposure, gain, the throughput limit, white balance and the camera's
+  processing, keeps what the camera last had.
 - **Always acquiring:** `BeginAcquisition()` at `open()`, `EndAcquisition()` at
   `close()`, free-running with newest-only buffering ([Acquisition](#acquisition)),
   unless `trigger` is `Software`; then each capture fires `TriggerSoftware`, or
@@ -483,6 +617,8 @@ and writable again under `Off`, and every listed pixel format captures (hardware
   offset every 5 stale frames, until the timeout ([Capturing a frame](#capturing-a-frame)).
 - **Incomplete frames dropped,** except `SPINNAKER_IMAGE_STATUS_MISSING_TRAILER`, which is
   accepted and flagged as `missing_trailer`.
+- **Frame metadata** adds `color_filter` and, where the camera has them in its format,
+  `BalanceWhiteAuto` and the two ratios ([Color](#color)).
 - **Pixels copied,** and every image buffer released, before a frame is returned.
   `preview_frame()` keeps the pixel format, and is cropped and subsampled on request.
 - **Errors:** every `SpinnakerException` becomes a `DeviceError` with no `__cause__` or
@@ -507,13 +643,17 @@ and writable again under `Off`, and every listed pixel format captures (hardware
 - Frame rate: `AcquisitionFrameRateEnable`, `AcquisitionFrameRate`. The frame rate caps
   the longest exposure ([Settings](#settings)).
 - Turning `DeviceLinkThroughputLimitMode` off (set the maximum limit instead).
-- `ExposureAuto`/`GainAuto` `Once`, auto-exposure and auto-gain limits.
+- `ExposureAuto`/`GainAuto`/`BalanceWhiteAuto` `Once`, auto-exposure and auto-gain
+  limits, and auto white balance regions.
 - Triggering other than software triggering of single frames: hardware lines,
   `TriggerActivation`, `TriggerOverlap`, `TriggerDelay`, and other selectors. `open()`
   sets `TriggerMode=Off`.
-- Image geometry and processing: setting `Width` and `Height`, offsets, binning, black level, gamma,
-  white balance, PySpin's `ImageProcessor` conversions, and other pixel formats such as
-  packed 12-bit.
+- Image geometry: setting `Width` and `Height`, offsets, and binning.
+- On-camera processing: black level, saturation, gamma, hue, `SharpnessAuto` and
+  `Sharpness`, the LUT, and defect pixel correction
+  ([#42](https://github.com/educelab/educelab-devices/issues/42)); PySpin's
+  `ImageProcessor` conversions; and `YCbCr411_8_CbYYCrYY`
+  ([#43](https://github.com/educelab/educelab-devices/issues/43)).
 - Buffer handling other than newest-only, single-frame or multi-frame acquisition,
   chunk data, user sets, events and callbacks, and GigE settings.
 - Raw timestamps on demand (`TimestampLatch`); only the offset is exposed, as
@@ -612,6 +752,9 @@ and writable again under `Off`, and every listed pixel format captures (hardware
   bounds its retries by the capture timeout, and checks every frame.
 - **Using pixels after `Release()`:** `GetNDArray()` is a view of the SDK's buffer, so the
   driver copies it before releasing (assumed, from `pgs-scan`'s `.copy()`).
+- **`GetNDArray()` refuses packed and 4:2:x formats** with `-1003` (verified on the
+  CM3-U3-31S4C, SDK 4.4.0.246): the driver reads `GetData()` for them
+  ([Pixel formats](#pixel-formats)).
 - **numpy reference-count message at exit:** one `el-devices spinnaker` run ended with
   `*** Reference count error detected: an attempt was made to deallocate the dtype 4 (H)
   ***` (2026-10-20, after 100 Mono16 software-triggered captures from five cameras,
@@ -641,7 +784,9 @@ naming the camera and the valid range.
 - `--save-missing-trailer DIR` writes each frame accepted with a missing trailer to
   `DIR/<serial>-missing-trailer-<capture>.png`, plus one complete frame per camera,
   `DIR/<serial>-complete.png`, to compare against. PNGs are 8- or 16-bit grayscale (or
-  RGB), written without extra dependencies; Bayer frames are saved raw, as grayscale.
+  RGB), written without extra dependencies. Bayer frames are saved raw, as grayscale,
+  and so are YCbCr frames, each row the pixels' bytes in the camera's order. 12-bit
+  frames are shifted up to fill a 16-bit PNG, with their depth in an `sBIT` chunk.
 
 ```bash
 el-devices spinnaker                       # every camera, 20 captures each
@@ -740,6 +885,31 @@ left-aligned, another program streaming shows up as `-1011` rather than `-1005`,
 triggering beats free-running on a shared link, and frames with missing trailers are
 intact. Still open: the same facts for other models, and the frame-ID assumption
 (step 5, not yet run on any model).
+
+### CM3-U3-31S4C, 2026-11-19
+
+macOS 27 (Apple Silicon), Spinnaker SDK 4.4.0.246, Python 3.12.15, serial 19299005,
+firmware 1.12.3.00, alone on the lab Mac, aimed at the room. The scene moved during the
+first runs; only those on a static scene count below.
+
+- **`pytest -m hardware`:** Spinnaker 39 passed, 1 skipped; the same suite through
+  Aravis and GenTL, 38 passed, 1 skipped each
+  ([usb3-vision.md](usb3-vision.md#cm3-u3-31s4c-three-backends)). The white balance check
+  failed once in four Spinnaker runs, red's step ratio at the edge of its 1 ± 0.15. Bayer
+  previews correlate about 0.85 with the region they show (Mono8 0.95), close to the move
+  test's 0.8.
+- **Every format** captured 60 of 60 frames through `el-devices spinnaker` and
+  `el-devices genicam --backend aravis|gentl` ([Pixel formats](#pixel-formats)).
+- **Mono8** frames differ by 2.2 counts from one to the next; `Mono16` read as 8 bits
+  differs from `Mono8` by 2.0.
+- **White balance, color, and processing:** see [Color](#color).
+- **`link_recoveries`** (`USB3LinkRecoveryCount`) rises by about one with each open and
+  close through Spinnaker or its GenTL producer, rarely through Aravis, and not while
+  streaming (300 captures over three format changes added none); it read 138 at the end.
+  It stayed at 0 on the 50S5M rig, and no frames were lost
+  ([#44](https://github.com/educelab/educelab-devices/issues/44)).
+- Left in `BayerRG8` with `ExposureAuto`, `GainAuto` and `BalanceWhiteAuto` on
+  `Continuous`, and its processing as found.
 
 ### Last run
 

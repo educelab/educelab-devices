@@ -10,7 +10,13 @@ import numpy as np
 import pytest
 
 from contracts import FrameCameraContract
-from educelab.devices.cameras import PIXEL_FORMAT, GenICamCamera, aravis
+from educelab.devices.cameras import (
+    PIXEL_FORMAT,
+    GenICamCamera,
+    aravis,
+    gentl,
+    spinnaker,
+)
 from educelab.devices.cameras.aravis import AravisCamera
 from educelab.devices.cameras.gentl import GenTLCamera
 from educelab.devices.cameras.spinnaker import SpinnakerCamera
@@ -23,29 +29,42 @@ SERIAL = "19299005"
 WIDTH, HEIGHT = 16, 12
 
 
-def _fake(sim):
-    return GenICamCamera(SERIAL, FakeBackend([sim]))
+# Each attaches ``sim`` to a backend's fake library and returns a factory for
+# cameras on it. Loaders are patched too, since discover() is a classmethod.
 
 
-def _aravis(sim):
-    return AravisCamera(SERIAL, repository=FakeRepository([sim]))
+def _fake(sim, monkeypatch):
+    backend = FakeBackend([sim])
+    return lambda: GenICamCamera(SERIAL, backend)
 
 
-def _gentl(sim):
-    return GenTLCamera(SERIAL, producer=PRODUCER, genicam=FakeGenicam([sim]))
+def _aravis(sim, monkeypatch):
+    repository = FakeRepository([sim])
+    monkeypatch.setattr(aravis, "load_aravis", lambda: repository)
+    # A fake Aravis stream receives the frames still in flight within a few polls.
+    monkeypatch.setattr(aravis, "_DRAIN_QUIET_S", 0.01)
+    return lambda: AravisCamera(SERIAL, repository=repository)
 
 
-def _spinnaker(sim):
-    return SpinnakerCamera(SERIAL, pyspin=FakePySpin([sim]))
+def _gentl(sim, monkeypatch):
+    genicam = FakeGenicam([sim])
+    monkeypatch.setattr(gentl, "load_genicam", lambda: genicam)
+    monkeypatch.setattr(gentl, "find_producers", lambda: [PRODUCER])
+    return lambda: GenTLCamera(SERIAL, producer=PRODUCER, genicam=genicam)
+
+
+def _spinnaker(sim, monkeypatch):
+    pyspin = FakePySpin([sim])
+    monkeypatch.setattr(spinnaker, "load_pyspin", lambda: pyspin)
+    return lambda: SpinnakerCamera(SERIAL, pyspin=pyspin)
 
 
 @pytest.fixture(
     params=[_fake, _aravis, _gentl, _spinnaker], ids=lambda f: f.__name__[1:]
 )
 def make(request, monkeypatch):
-    # A fake Aravis stream receives the frames still in flight within a few polls.
-    monkeypatch.setattr(aravis, "_DRAIN_QUIET_S", 0.01)
-    return request.param
+    """A function from a fake camera to a factory of driver cameras on it."""
+    return lambda sim: request.param(sim, monkeypatch)
 
 
 @pytest.fixture
@@ -55,7 +74,7 @@ def sim():
 
 @pytest.fixture
 def camera(make, sim):
-    with make(sim) as camera:
+    with make(sim)() as camera:
         yield camera
 
 
@@ -234,5 +253,4 @@ class TestColorCM3Contract(FrameCameraContract):
 
     @pytest.fixture
     def make_device(self, make):
-        sim = cm3_31s4c(SERIAL, width=WIDTH, height=HEIGHT)
-        return lambda: make(sim)
+        return make(cm3_31s4c(SERIAL, width=WIDTH, height=HEIGHT))

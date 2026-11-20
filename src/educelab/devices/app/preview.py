@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from educelab.devices.app import _macos
 from educelab.devices.app._preview import positive_int
-from educelab.devices.errors import FocusLimitReached, import_optional
+from educelab.devices.errors import DeviceError, FocusLimitReached, import_optional
 
 if TYPE_CHECKING:
     import numpy as np
@@ -46,6 +46,7 @@ controls, with the window focused:
   drag, or w a s d     move the region
   r                    back to the whole sensor
   c                    stop, capture, and resume the preview
+  f and F              next and previous pixel format
   [ and ]              simulated: move the focus nearer or farther
   q or Esc             quit
 
@@ -253,6 +254,12 @@ def run(args: argparse.Namespace) -> int:
                     _capture(cv2, camera, args.window, limit)
                     camera.start_preview(view.request(), min_size=args.window)
                     feed.resume()
+                elif key in (ord("f"), ord("F")):
+                    feed.pause()
+                    try:
+                        _next_format(camera, 1 if key == ord("f") else -1)
+                    finally:
+                        feed.resume()
                 elif key in (ord("["), ord("]")) and focus is not None:
                     step = FOCUS_KEY_STEPS if key == ord("]") else -FOCUS_KEY_STEPS
                     try:
@@ -266,6 +273,26 @@ def run(args: argparse.Namespace) -> int:
         focus.close()
     cv2.destroyAllWindows()
     return 0
+
+
+def _next_format(camera: "Camera", step: int) -> None:
+    """Switch to the pixel format ``step`` places on in the camera's choices,
+    saying what happened. A refused change leaves the preview as it was."""
+    from educelab.devices.cameras import PIXEL_FORMAT
+
+    setting = camera.settings().get(PIXEL_FORMAT)
+    choices = list(setting.choices or ()) if setting is not None else []
+    if setting is None or setting.read_only or len(choices) < 2:
+        print(f"{camera!r} offers no other pixel format")
+        return
+    at = choices.index(setting.value) if setting.value in choices else -step
+    chosen = choices[(at + step) % len(choices)]
+    try:
+        camera.set_setting(PIXEL_FORMAT, chosen)
+    except DeviceError as exc:
+        print(f"pixel format {chosen} refused: {exc}")
+        return
+    print(f"pixel format {chosen}")
 
 
 class _Feed:

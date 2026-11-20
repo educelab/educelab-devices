@@ -181,6 +181,10 @@ frame = camera.capture_frame()
   the link a Bayer format needs ([Sharing a USB link](hardware/usb3-vision.md#sharing-a-usb-link)).
 - **Switching costs about 0.2 s each way:** 0.13 s for the format change and the rest
   for the first new frame. Budget for it in a capture's round trip (section 6).
+- **Compare them in `el-devices preview`:** `f` and `F` step through the camera's
+  pixel formats while it previews, and the overlay names the one showing. A change
+  during preview keeps the region and takes 0.15–0.21 s to the first new frame on the
+  CM3-U3-31S4C. The viewer shows YCbCr as its Y channel and Bayer as mono.
 - **To see exactly what the sensor delivers,** keep the Bayer format and demosaic it
   yourself: `cv2.COLOR_BayerBG2RGB` for the camera's `BayerRG` (OpenCV names a pattern
   by its second row).

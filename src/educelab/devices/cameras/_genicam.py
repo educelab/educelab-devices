@@ -363,6 +363,8 @@ _BALANCE_RATIOS = {"balance_ratio_red": "Red", "balance_ratio_blue": "Blue"}
 _SATURATION = {
     ("Chameleon3 CM3-U3-50S5M", "Mono16"): 65504,
     ("Chameleon3 CM3-U3-31S4C", "Mono16"): 65504,
+    ("Chameleon3 CM3-U3-31S4C", "Mono12Packed"): 4094,
+    ("Chameleon3 CM3-U3-31S4C", "Mono12p"): 4094,
 }
 # A geometry change re-rounds the exposure a little; less than this is a cut.
 _EXPOSURE_KEPT = 0.99
@@ -561,7 +563,8 @@ class GenICamCamera(FrameCamera):
     @property
     def color_filter(self) -> str | None:
         """The sensor's Bayer mosaic, e.g. ``"BayerRG"``, or ``None`` on a mono
-        sensor or one that can't say. Also in each frame's metadata.
+        sensor or one that can't say, whatever the pixel format. A frame's
+        ``color_filter`` instead names the mosaic only when its pixels hold one.
 
         From ``PixelColorFilter``, which some cameras report in every pixel
         format (the CM3-U3-31S4C does), or else the order in the name of a
@@ -754,9 +757,13 @@ class GenICamCamera(FrameCamera):
 
     def _read_color_filter(self) -> str | None:
         conn, node = self._connection, "PixelColorFilter"
-        if conn.is_readable(node):
-            found = self._read_enum(node)
-            return found if found in _COLOR_FILTERS else None
+        # Some cameras read None in their processed formats, so a value that
+        # names no mosaic falls through to the formats' names.
+        if (
+            conn.is_readable(node)
+            and (found := self._read_enum(node)) in _COLOR_FILTERS
+        ):
+            return found
         if not conn.is_readable("PixelFormat"):
             return None
         entries = self._enum_choices("PixelFormat", _PIXEL_FORMATS)
@@ -1270,7 +1277,7 @@ class GenICamCamera(FrameCamera):
         floor = self._preview_floor
         if floor is not None and self._timestamp_offset is not None:
             not_before = floor if not_before is None else max(not_before, floor)
-        frame = self._grab(not_before, self.capture_timeout)
+        frame = self._grab(not_before, self.capture_timeout, record=False)
         return PreviewFrame(
             np.ascontiguousarray(self._crop.apply(frame.pixels)),
             frame.pixel_format,
@@ -1399,13 +1406,17 @@ class GenICamCamera(FrameCamera):
 
     # --- Capture ----------------------------------------------------------------
 
-    def _grab(self, not_before: datetime | None, timeout: float) -> Frame:
+    def _grab(
+        self, not_before: datetime | None, timeout: float, *, record: bool = True
+    ) -> Frame:
         """Take the first complete frame no older than ``not_before``.
 
         The camera free-runs with newest-only buffering, so the first frame is
         often from before the call. Stale and incomplete frames are released
         and the next one taken until ``timeout`` runs out; the timestamp offset
         is re-measured after every `RETRIES_BEFORE_REMEASURE` stale frames.
+        ``record=False`` leaves white balance out of the metadata, for preview
+        frames, which don't keep it.
         """
         deadline = time.perf_counter() + timeout
         if not_before is not None:
@@ -1502,8 +1513,8 @@ class GenICamCamera(FrameCamera):
                     "timestamp_source": taken.timestamp_source,
                     "bit_depth": bit_depth(taken.pixel_format),
                     "full_scale": full_scale(taken.pixel_format, self._model),
-                    "color_filter": self._color_filter,
-                    **self._recorded_settings(),
+                    "color_filter": mosaic(taken.pixel_format),
+                    **(self._recorded_settings() if record else {}),
                 }
                 return Frame(
                     taken.pixels,
@@ -1986,6 +1997,8 @@ class _Selected(_Descriptor):
         conn = camera._connection
         if not conn.is_writable(self.selector):
             return None
+        if self.entry not in camera._enum_choices(self.selector, (self.entry,)):
+            return None
 
         def read() -> float | None:
             if not conn.is_readable(self.node):
@@ -1996,13 +2009,20 @@ class _Selected(_Descriptor):
 
     def _selected(self, camera: GenICamCamera, fn: Callable[[], T]) -> T:
         found = camera._read_enum(self.selector)
-        if found != self.entry:
-            camera._set_enum(self.selector, self.entry)
-        try:
+        if found == self.entry:
             return fn()
-        finally:
-            if found != self.entry:
+        camera._set_enum(self.selector, self.entry)
+        try:
+            result = fn()
+        except BaseException:
+            # Put it back, but report what failed first.
+            try:
                 camera._set_enum(self.selector, found)
+            except DeviceError as exc:
+                logger.warning("%r: %s not put back: %s", camera, self.selector, exc)
+            raise
+        camera._set_enum(self.selector, found)
+        return result
 
 
 @dataclass(frozen=True)
@@ -2210,6 +2230,13 @@ def pfnc_name(code: int) -> str:
         return _PFNC[code]
     except KeyError:
         raise DeviceError(f"unsupported pixel format 0x{code:08x}") from None
+
+
+def mosaic(pixel_format: str) -> str | None:
+    """The Bayer mosaic a frame in this format holds, e.g. ``"BayerRG"``, or
+    ``None`` if its pixels need no demosaicing."""
+    order = pixel_format[:7]
+    return order if order in _COLOR_FILTERS else None
 
 
 def bit_depth(pixel_format: str) -> int:

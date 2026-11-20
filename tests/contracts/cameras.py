@@ -259,7 +259,7 @@ class FrameCameraContract(CameraContract):
             pytest.skip("camera has no pixel_format setting")
         assert device.capture_frame().pixel_format == settings[PIXEL_FORMAT].value
 
-    def test_frames_name_the_sensors_mosaic(self, device):
+    def test_only_bayer_frames_name_a_mosaic(self, device):
         settings = device.settings()
         formats = [None]
         if PIXEL_FORMAT in settings and settings[PIXEL_FORMAT].choices:
@@ -269,10 +269,12 @@ class FrameCameraContract(CameraContract):
                 device.set_setting(PIXEL_FORMAT, pixel_format)
             frame = device.capture_frame()
             mosaic = frame.metadata["color_filter"]
-            assert mosaic is None or mosaic.startswith("Bayer")
-            # A raw Bayer format names the mosaic it shows.
+            # A hint for demosaicing: set only when the pixels are a mosaic.
             if frame.pixel_format.startswith("Bayer"):
+                assert mosaic is not None
                 assert frame.pixel_format.startswith(mosaic)
+            else:
+                assert mosaic is None
 
     def test_white_balance_ratios_are_set_with_auto_off(self, device):
         settings = device.settings()

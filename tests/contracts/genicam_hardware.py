@@ -582,17 +582,19 @@ class GenICamHardwareTests:
             assert first.max() <= 4095
             assert diff < max(8, 2 * noise)
 
-    def test_frames_name_the_same_mosaic_in_every_format(self, restore):
+    def test_only_bayer_frames_name_the_sensors_mosaic(self, restore):
         found = {}
         for fmt in restore.setting(PIXEL_FORMAT).choices or ():
             restore.set_setting(PIXEL_FORMAT, fmt)
             frame = restore.capture_frame(not_before=self.fresh(restore))
             found[fmt] = frame.metadata["color_filter"]
         print(f"\ncolor_filter by format: {found}")
-        assert len(set(found.values())) == 1
-        mosaic = next(iter(found.values()))
-        assert mosaic == restore.color_filter
-        assert all(f.startswith(mosaic) for f in found if f.startswith("Bayer"))
+        for fmt, mosaic in found.items():
+            if fmt.startswith("Bayer"):
+                assert mosaic == restore.color_filter
+                assert fmt.startswith(mosaic)
+            else:
+                assert mosaic is None
 
     def test_white_balance_ratios_move_their_channels(self, restore):
         if "balance_ratio_red" not in restore.settings():

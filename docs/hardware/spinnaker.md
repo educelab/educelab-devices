@@ -331,7 +331,7 @@ whole image's at that maximum.
 | Format | Frame array | `bit_depth`, `full_scale` | Max MB/s | frames/s |
 |---|---|---|---|---|
 | `Mono8` | `(H, W)` `uint8` | 8, 255 | 117.216 | 36.6 |
-| `Mono12Packed`, `Mono12p` | `(H, W)` `uint16`, unpacked | 12, 4095 | 175.232 | 36.6 |
+| `Mono12Packed`, `Mono12p` | `(H, W)` `uint16`, unpacked | 12, 4094 | 175.232 | 36.6 |
 | `Mono16` | `(H, W)` `uint16` | 16, 65504 | 195.424 | 31.0 |
 | `BayerRG8` | `(H, W)` `uint8` | 8, 255 | 177.408 | 55.6 |
 | `BayerRG16` | `(H, W)` `uint16` | 16, 65535 | 195.424 | 31.0 |
@@ -395,9 +395,11 @@ whole image's at that maximum.
 On the CM3-U3-31S4C (firmware 1.12.3.00), 2026-11-19, unless noted.
 
 **The mosaic.** `PixelColorFilter` reads `BayerRG` in every pixel format, Mono included.
-The driver reports it as `color_filter`, in every frame's metadata and as
-`GenICamCamera.color_filter`; on a camera without the node it comes from the name of a
-Bayer format the camera offers, and it's `None` on a mono sensor. `OffsetX` and
+The driver reports it as `GenICamCamera.color_filter`, whatever the format; on a camera
+without the node, or whose node names no mosaic in the format it opens in, it comes from
+the name of a Bayer format the camera offers, and it's `None` on a mono sensor. A frame's
+`color_filter` is a hint for demosaicing, like `full_scale` for levels: the mosaic in a
+Bayer format and `None` in every other, Mono, RGB and YCbCr included. `OffsetX` and
 `OffsetY` step by 2, so a region of interest keeps the mosaic, but a preview that
 decimates or crops and strides on the host may not: the driver doesn't align those to
 it. Preview in `RGB8` or a YCbCr format for color ([preview.md](../preview.md#color-cameras-preview-in-rgb8-or-ycbcr)).
@@ -424,7 +426,8 @@ it. Preview in `RGB8` or a YCbCr format for color ([preview.md](../preview.md#co
   `BlackLevel`, 5.859 % of full scale: 3840 in 16 bits, 15 in 8, which a near-dark frame
   reads. The processed formats keep it (`RGB8`'s darkest pixel read 22). The black level
   isn't exposed ([#42](https://github.com/educelab/educelab-devices/issues/42)).
-- **Frame metadata** records `BalanceWhiteAuto` and both ratios. Reading a ratio takes
+- **Frame metadata** records `BalanceWhiteAuto` and both ratios (captures only; preview
+  frames skip them). Reading a ratio takes
   about 1.2 ms, so recording took 4.9 ms per capture through Spinnaker and GenTL and 6.8 ms
   through Aravis. While auto is `Off` only the driver's own writes move the ratios, so it
   keeps them and records in 0.8 and 1.2 ms; under `Continuous` it reads them for every
@@ -631,7 +634,7 @@ them.
   offset every 5 stale frames, until the timeout ([Capturing a frame](#capturing-a-frame)).
 - **Incomplete frames dropped,** except `SPINNAKER_IMAGE_STATUS_MISSING_TRAILER`, which is
   accepted and flagged as `missing_trailer`.
-- **Frame metadata** adds `color_filter` and, where the camera has them in its format,
+- **Frame metadata** adds `color_filter` (in Bayer formats; `None` otherwise) and, where the camera has them in its format,
   `BalanceWhiteAuto` and the two ratios ([Color](#color)).
 - **Pixels copied,** and every image buffer released, before a frame is returned.
   `preview_frame()` keeps the pixel format, and is cropped and subsampled on request.

@@ -245,8 +245,8 @@ top and saturates at 65504.
 Frames come in the camera's layout; the library never converts color:
 
 - Mono and Bayer formats are `(height, width)`. A Bayer frame is the raw mosaic, and
-  `frame.metadata["color_filter"]` names it (`"BayerRG"` and so on), or is `None` on a
-  mono sensor. Demosaic it yourself; with OpenCV, mind that its pattern names are
+  `frame.metadata["color_filter"]` names it (`"BayerRG"` and so on). In every other
+  format it's `None`, so it says whether a frame needs demosaicing. Demosaic it yourself; with OpenCV, mind that its pattern names are
   shifted, so `"BayerRG"` is `cv2.COLOR_BayerBG2RGB`.
 - `RGB8` is `(height, width, 3)` in R, G, B order.
 - `YCbCr8_CbYCr` is `(height, width, 3)` in Cb, Y, Cr order, and `YCbCr422_8_CbYCrY` is
@@ -351,8 +351,9 @@ where the camera has the feature. `link_speed` is in MB/s: the camera's
 `DeviceLinkSpeed`, or the nominal rate of its USB speed (625 for USB 3, 60 for USB 2)
 on cameras that only name it. Settings that a camera offers only in some pixel formats
 (white balance isn't in Mono formats) appear and disappear with `pixel_format`. Frames
-record the white balance in their metadata, under the same names, and the sensor's
-mosaic as `color_filter`, also readable before a capture as `camera.color_filter`.
+record the white balance in their metadata, under the same names. The sensor's mosaic
+is `camera.color_filter` in any format, or `None` on a mono sensor; a frame's
+`color_filter` names it only when the frame is in a Bayer format.
 
 Cameras open as they're found: the driver changes only what it must to stream (the
 trigger and the region of interest, and a pixel format it can't shape), and leaves

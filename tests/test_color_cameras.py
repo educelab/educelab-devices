@@ -84,8 +84,9 @@ def camera(make, sim):
 # and the value a saturated pixel reads.
 FORMATS = {
     "Mono8": ((HEIGHT, WIDTH), np.uint8, 8, 255),
-    "Mono12Packed": ((HEIGHT, WIDTH), np.uint16, 12, 4095),
-    "Mono12p": ((HEIGHT, WIDTH), np.uint16, 12, 4095),
+    # Saturated at 4094, as in Mono16 (spinnaker.md).
+    "Mono12Packed": ((HEIGHT, WIDTH), np.uint16, 12, 4094),
+    "Mono12p": ((HEIGHT, WIDTH), np.uint16, 12, 4094),
     # 12 bits held at the top (spinnaker.md).
     "Mono16": ((HEIGHT, WIDTH), np.uint16, 16, 65504),
     "BayerRG8": ((HEIGHT, WIDTH), np.uint8, 8, 255),
@@ -123,11 +124,21 @@ def test_each_format_captures_in_its_layout(camera, sim, fmt):
 # --- Bayer pattern ------------------------------------------------------------
 
 
-@pytest.mark.parametrize("fmt", ["BayerRG8", "Mono8", "RGB8", "YCbCr422_8_CbYCrY"])
-def test_frames_name_the_sensors_mosaic_in_every_format(camera, fmt):
-    # The 31S4C's PixelColorFilter reads BayerRG even in Mono8 (spinnaker.md).
+@pytest.mark.parametrize(
+    ("fmt", "mosaic"),
+    [
+        ("BayerRG8", "BayerRG"),
+        ("BayerRG16", "BayerRG"),
+        ("Mono8", None),
+        ("RGB8", None),
+        ("YCbCr422_8_CbYCrY", None),
+    ],
+)
+def test_only_bayer_frames_name_a_mosaic(camera, fmt, mosaic):
     camera.set_setting(PIXEL_FORMAT, fmt)
-    assert camera.capture_frame().metadata["color_filter"] == "BayerRG"
+    assert camera.capture_frame().metadata["color_filter"] == mosaic
+    # The camera's own answer is the sensor's, whatever the format.
+    assert camera.color_filter == "BayerRG"
 
 
 def _core(**options):
@@ -136,7 +147,7 @@ def _core(**options):
 
 def test_without_the_node_the_mosaic_comes_from_a_bayer_format():
     with _core(formats=["Mono8", "BayerGB8", "BayerGB16"]) as camera:
-        assert camera.capture_frame().metadata["color_filter"] == "BayerGB"
+        assert camera.color_filter == "BayerGB"
 
 
 @pytest.mark.parametrize(
@@ -149,7 +160,14 @@ def test_without_the_node_the_mosaic_comes_from_a_bayer_format():
 )
 def test_a_mono_sensor_has_no_mosaic(options):
     with _core(**options) as camera:
+        assert camera.color_filter is None
         assert camera.capture_frame().metadata["color_filter"] is None
+
+
+def test_a_node_naming_no_mosaic_falls_back_to_a_bayer_format():
+    # Some cameras read None in their processed formats.
+    with _core(color_filter="None", color=True) as camera:
+        assert camera.color_filter == "BayerRG"
 
 
 # --- White balance ------------------------------------------------------------
@@ -227,6 +245,27 @@ def test_fixed_ratios_are_read_once_for_frame_metadata():
         assert camera.capture_frame().metadata[BLUE] == 1.25
         sim.nodes["BalanceRatio"].value["Blue"] = 1.0
         assert camera.capture_frame().metadata[BLUE] == 1.0
+
+
+def test_a_ratio_the_selector_lacks_is_left_out_of_frames():
+    sim = cm3_31s4c(SERIAL, width=WIDTH, height=HEIGHT)
+    sim.nodes["BalanceRatioSelector"].entries = ("Red",)
+    with GenICamCamera(SERIAL, FakeBackend([sim])) as camera:
+        metadata = camera.capture_frame().metadata
+        assert RED in metadata
+        assert BLUE not in metadata
+
+
+def test_preview_frames_skip_the_white_balance():
+    sim = cm3_31s4c(SERIAL, width=WIDTH, height=HEIGHT)
+    backend = FakeBackend([sim])
+    with GenICamCamera(SERIAL, backend) as camera:
+        camera.start_preview()
+        reads = backend.connections[-1].node_reads
+        reads.clear()
+        camera.preview_frame()
+        assert "BalanceRatio" not in reads
+        camera.stop_preview()
 
 
 def test_white_balance_comes_and_goes_with_the_pixel_format(camera):

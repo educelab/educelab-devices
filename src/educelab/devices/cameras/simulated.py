@@ -250,7 +250,9 @@ class SimulatedCamera(FrameCamera):
             "frame_number": self._frame_count,
             "bit_depth": 8 * np.dtype(dtype).itemsize,
             "full_scale": int(np.iinfo(dtype).max),
-            "color_filter": _COLOR_FILTER if self._color else None,
+            "color_filter": (
+                _COLOR_FILTER if pixel_format.startswith("Bayer") else None
+            ),
             **{
                 n: self._store[n].value
                 for n in (_BALANCE_AUTO, *_BALANCE_RATIOS)

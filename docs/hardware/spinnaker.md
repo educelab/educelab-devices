@@ -140,6 +140,7 @@ advice is not from Teledyne.
 - Installing PySpin: https://www.teledynevisionsolutions.com/support/support-center/technical-guidance/iis/installing-pyspin-for-the-spinnaker-sdk/
 - Getting Started with the Bumblebee X (Ubuntu 22.04 dependencies): https://www.teledynevisionsolutions.com/support/support-center/application-note/iis/getting-started-with-the-bumblebee-x/
 - Using Spinnaker on ARM and Embedded Systems (flirimaging group, USB-FS memory): https://www.teledynevisionsolutions.com/support/support-center/application-note/iis/using-spinnaker-on-arm-and-embedded-systems/
+- FLIR Chameleon3 USB3 Vision Technical Reference, version 5.0, revised 2017-01-26 (FLIR's PDF, `CM3-U3-Technical-Reference.pdf`): specifications per model (the CM3-U3-31S4C's sensor, 12-bit ADC and image processing on p. 4), the ADC (p. 6), Pixel Formats (8.1, p. 47), and White Balance (8.17, p. 71).
 
 Without PySpin, `educelab.devices.cameras.spinnaker` still imports; the first call that
 needs the SDK raises an `ImportError` that links here.
@@ -342,7 +343,10 @@ whole image's at that maximum.
   `BayerRG8`). Only a format it can't shape is replaced: `RGB8` if offered, else the
   first the driver shapes.
 - **The processed mono formats stop at 36.6 frames/s,** below what their link maximum
-  would carry; `BayerRG8` runs at 55.6.
+  would carry; `BayerRG8` runs at 55.6. The reference explains it: a raw (Bayer) format
+  bypasses the camera's FPGA color core, "but allows for faster frame rates", while Mono
+  on a color camera goes through it ([Chameleon3 Technical Reference](#sources), Pixel Formats). The sensor's 55 frames/s is
+  the spec.
 - **12-bit packed** formats unpack to `uint16` with the bits in the low end. Two pixels
   share three bytes, laid out two ways:
   - `Mono12Packed` (GigE Vision's): each pixel's high 8 bits in bytes 0 and 2, both low
@@ -354,14 +358,17 @@ whole image's at that maximum.
   about 0.55. Saturated pixels read 4094. The 12-bit packed Bayer formats
   (`Bayer{RG,GB,GR,BG}12Packed` and `...12p`) go through the same unpackers; no camera
   checked offers them.
-- **`Mono16` is the 12-bit image times 16:** the low 4 bits are always 0 and saturated
-  pixels read 65504 (4094 × 16), as on the 50S5M. Shifted right by 4 it matches
-  `Mono12p` and `Mono12Packed` of the same scene to within frame-to-frame noise (above),
-  so it carries nothing more, yet costs more: 31.0 frames/s at 195.3 MB/s against 36.6 at
-  172.9. Prefer a 12-bit format unless something downstream needs 16-bit words. Whether
-  the camera's values are identical pixel for pixel, rather than equal within noise,
-  isn't shown. `BayerRG16` reaches 65535 with odd values, so it isn't just 12 bits
-  shifted; it keeps `full_scale` 65535.
+- **`Mono16` is the 12-bit image times 16.** Every Chameleon3 but the 13Y3 has a 12-bit
+  ADC, and a deeper format gets its value left-aligned with the low bits padded
+  ([Chameleon3 Technical Reference](#sources), ADC and Pixel Formats). Measured to match: the low 4 bits are always 0,
+  saturated pixels read 65504 (4094 × 16, one step below the 65520 the reference gives as
+  the top), and `Mono16 >> 4` matches `Mono12p` and `Mono12Packed` of the same scene to
+  within frame-to-frame noise (above). So it carries nothing more, yet costs more: 31.0
+  frames/s at 195.3 MB/s against 36.6 at 172.9. Prefer a 12-bit format unless something
+  downstream needs 16-bit words. The same holds on the 50S5M.
+- **`BayerRG16` isn't padded as the reference says:** it reaches 65535 with odd values,
+  so it keeps `full_scale` 65535. Why is **unknown**; the white balance gain, which applies
+  to Bayer output (see Color), may be applied after the ADC.
 - **YCbCr frames keep the camera's bytes:** `YCbCr8_CbYCr` is Cb, Y, Cr per pixel (like
   GStreamer's `IYU2`), and `YCbCr422_8_CbYCrY` is Cb Y Cr Y over each pixel pair (FFmpeg's
   `uyvy422`, OpenCV's `UYVY`): channel 1 is Y, and channel 0 alternates Cb and Cr. Both are
@@ -401,7 +408,8 @@ it. Preview in `RGB8` or a YCbCr format for color ([preview.md](../preview.md#co
   `BalanceRatio` behind `BalanceRatioSelector`. The selector lists `Red`, `Green` and
   `Blue`, but `Green` is unavailable. `BalanceRatio` runs from 0.25 to 4, with no
   increment or unit, and is writable only while `BalanceWhiteAuto` is `Off`; `Once` also
-  holds it read-only, and hadn't gone back to `Off` after 10 frames of a dark scene. Writes
+  holds it read-only, and hadn't gone back to `Off` after 10 frames of a dark scene; the
+  reference says it runs a finite number of iterations and stops ([Chameleon3 Technical Reference](#sources), White Balance). Writes
   work while acquiring. Every white balance node is unavailable in the Mono formats.
 - **Settings:** `BalanceWhiteAuto` (`Off` or `Continuous`; `Once` is left out),
   `balance_ratio_red` and `balance_ratio_blue`. Each ratio read or write sets the
@@ -424,7 +432,8 @@ it. Preview in `RGB8` or a YCbCr format for color ([preview.md](../preview.md#co
 
 **On-camera processing.** The processed formats (`RGB8`, YCbCr, and the Mono formats) can
 be sharpened, saturated, gamma-corrected, hue-shifted and passed through a LUT; Bayer
-output never is. The camera has no color matrix. As found, everything was at identity
+output never is. That's the reference's list for the 31S4C, and its account: raw formats
+are "untouched by any on board processing" ([Chameleon3 Technical Reference](#sources)). The camera has no color matrix. As found, everything was at identity
 except sharpening: `SaturationEnabled` on at 100, `GammaEnabled` and `HueEnabled` off,
 `LUTEnable` off, defect correction off, and `SharpnessEnabled` on with
 `SharpnessAuto=Continuous` (which chose 880–1109).
